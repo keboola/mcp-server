@@ -139,32 +139,47 @@ _REJECTED_STATEMENTS = [
     'WITH "d" AS (DELETE FROM "t" RETURNING *) SELECT * FROM "d"',
     'BEGIN; DROP TABLE "t"; END',
     'SET x = 1',
+    'EXPLAIN DELETE FROM "t"',
+    # The Snowflake pipe operator `->>` chains statements: parsed, command and fallback paths.
+    'SELECT 1 ->> DELETE FROM "t"',
+    'SHOW GRANTS ->> DROP TABLE "t"',
+    'EXPLAIN SELECT 1 ->> DROP TABLE "t"',
+    'SELECT 1 ->> SELECT 2 ->> UNDROP TABLE "t"',
+    'DESCRIBE TABLE "t" ->> REVOKE ROLE "r" FROM USER "u"',
+    # Unparseable statements that start like a read but carry a state change.
+    'SELECT FROM WHERE COMMENT ON TABLE "t" IS \'x\'',
+    'SELECT FROM WHERE USE ROLE "accountadmin"',
+    'SELECT FROM WHERE COMMIT',
 ]
 
 
-@pytest.mark.parametrize('dialect', ['Snowflake', 'BigQuery'])
-@pytest.mark.parametrize('sql_query', _READ_ONLY_STATEMENTS)
-def test_validate_read_only_statement_allows(sql_query: str, dialect: str):
-    validate_read_only_statement(sql_query, dialect)
-
-
-@pytest.mark.parametrize('dialect', ['Snowflake', 'BigQuery'])
-@pytest.mark.parametrize('sql_query', _REJECTED_STATEMENTS)
-def test_validate_read_only_statement_rejects(sql_query: str, dialect: str):
-    with pytest.raises(InvalidArgumentError):
-        validate_read_only_statement(sql_query, dialect)
+_DIALECTS = ['Snowflake', 'BigQuery']
 
 
 @pytest.mark.parametrize(
     ('sql_query', 'dialect'),
-    [
+    [(sql_query, dialect) for sql_query in _READ_ONLY_STATEMENTS for dialect in _DIALECTS]
+    + [
         # Dialect-specific quoting keeps the smuggled statement inside one literal or identifier.
         ('SELECT $$; DROP TABLE t$$', 'Snowflake'),
         ('SELECT * FROM `project.dataset.t;DROP TABLE t`', 'BigQuery'),
     ],
 )
-def test_validate_read_only_statement_dialect_quoting(sql_query: str, dialect: str):
+def test_validate_read_only_statement_allows(sql_query: str, dialect: str):
     validate_read_only_statement(sql_query, dialect)
+
+
+@pytest.mark.parametrize(
+    ('sql_query', 'dialect'),
+    [(sql_query, dialect) for sql_query in _REJECTED_STATEMENTS for dialect in _DIALECTS]
+    + [
+        ('SELECT FROM WHERE UNDROP TABLE "t"', 'Snowflake'),
+        ("SELECT 1 EXPORT DATA OPTIONS (uri = 'gs://b/*') AS SELECT 1", 'BigQuery'),
+    ],
+)
+def test_validate_read_only_statement_rejects(sql_query: str, dialect: str):
+    with pytest.raises(InvalidArgumentError):
+        validate_read_only_statement(sql_query, dialect)
 
 
 @pytest.mark.asyncio
@@ -197,7 +212,6 @@ async def test_query_data_emits_progress_notification_with_job_id(mcp_context_cl
         return QueryResult(status='ok', data=SqlSelectData(columns=['a'], rows=[{'a': 1}]), message=None)
 
     manager = mocker.AsyncMock(WorkspaceManager)
-
     manager.get_sql_dialect.return_value = 'Snowflake'
     manager.execute_query.side_effect = fake_execute_query
     mcp_context_client.session.state[WorkspaceManager.STATE_KEY] = manager
@@ -245,7 +259,6 @@ async def test_query_data_skips_progress_when_no_token(mcp_context_client: Conte
         return QueryResult(status='ok', data=SqlSelectData(columns=['a'], rows=[{'a': 1}]), message=None)
 
     manager = mocker.AsyncMock(WorkspaceManager)
-
     manager.get_sql_dialect.return_value = 'Snowflake'
     manager.execute_query.side_effect = fake_execute_query
     mcp_context_client.session.state[WorkspaceManager.STATE_KEY] = manager
@@ -278,7 +291,6 @@ async def test_query_data_skips_progress_when_request_id_missing(mcp_context_cli
         return QueryResult(status='ok', data=SqlSelectData(columns=['a'], rows=[{'a': 1}]), message=None)
 
     manager = mocker.AsyncMock(WorkspaceManager)
-
     manager.get_sql_dialect.return_value = 'Snowflake'
     manager.execute_query.side_effect = fake_execute_query
     mcp_context_client.session.state[WorkspaceManager.STATE_KEY] = manager
@@ -1307,7 +1319,6 @@ class TestQueryCancellation:
             await asyncio.Event().wait()
 
         manager = AsyncMock(WorkspaceManager)
-
         manager.get_sql_dialect.return_value = 'Snowflake'
         manager.execute_query.side_effect = never_returns
         mcp_context_client.session.state[WorkspaceManager.STATE_KEY] = manager
@@ -1339,7 +1350,6 @@ class TestQueryCancellation:
             await asyncio.Event().wait()
 
         manager = AsyncMock(WorkspaceManager)
-
         manager.get_sql_dialect.return_value = 'Snowflake'
         manager.execute_query.side_effect = never_returns
         mcp_context_client.session.state[WorkspaceManager.STATE_KEY] = manager

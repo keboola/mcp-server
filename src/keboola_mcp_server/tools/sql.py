@@ -52,11 +52,21 @@ _WRITE_TOKENS = frozenset(
         TokenType.MERGE,
         TokenType.CREATE,
         TokenType.DROP,
+        TokenType.UNDROP,
         TokenType.ALTER,
         TokenType.TRUNCATE,
         TokenType.GRANT,
+        TokenType.REVOKE,
+        TokenType.COMMENT,
         TokenType.COPY,
+        TokenType.EXPORT,
+        TokenType.LOAD,
         TokenType.PUT,
+        TokenType.SET,
+        TokenType.USE,
+        TokenType.BEGIN,
+        TokenType.COMMIT,
+        TokenType.ROLLBACK,
         TokenType.EXECUTE,
         TokenType.COMMAND,
     }
@@ -67,9 +77,26 @@ _NOT_READ_ONLY_MSG = (
 )
 
 
-def _is_read_only_expression(expression: exp.Expression) -> bool:
+def _expand_commands(dialect: sqlglot.Dialect, tokens: list[Token]) -> list[Token]:
+    """The tokenizer keeps everything after a command keyword (`EXPLAIN`, BigQuery `SHOW`) as one raw string;
+    tokenize that string too, so the checks see what follows the keyword."""
+    expanded: list[Token] = []
+    commands = dialect.tokenizer_class.COMMANDS
+    for i, token in enumerate(tokens):
+        previous = tokens[i - 1] if i > 0 else None
+        if previous is not None and previous.token_type in commands and token.token_type == TokenType.STRING:
+            expanded.extend(_expand_commands(dialect, dialect.tokenize(token.text)))
+        else:
+            expanded.append(token)
+    return expanded
+
+
+def _is_read_only_expression(expression: exp.Expression, tokens: list[Token]) -> bool:
     if isinstance(expression, exp.Command):
-        return expression.name.upper() in _READ_ONLY_COMMANDS
+        # sqlglot keeps the rest of an unmodelled statement as raw text, so check its tokens instead.
+        return expression.name.upper() in _READ_ONLY_COMMANDS and not any(
+            token.token_type in _WRITE_TOKENS for token in tokens[1:]
+        )
     if not isinstance(expression, _READ_ONLY_EXPRESSIONS):
         return False
     if isinstance(expression, exp.Select) and expression.args.get('into'):
@@ -80,14 +107,19 @@ def _is_read_only_expression(expression: exp.Expression) -> bool:
 
 def _is_read_only_tokens(tokens: list[Token]) -> bool:
     """Keyword check for a single statement sqlglot cannot parse, so that valid SQL beyond its grammar is
-    left to the backend instead of being rejected here."""
+    left to the backend instead of being rejected here.
+
+    Allowing by default is safe only because a single Snowflake or BigQuery statement that starts with one of
+    `_READ_ONLY_FIRST_TOKENS` cannot run another statement except through the `->>` pipe (rejected before this
+    check) or a keyword in `_WRITE_TOKENS`. Re-check that before allowing another first token here.
+    """
     first = tokens[0]
     if first.token_type == TokenType.COMMAND:
-        # sqlglot tokenizes `EXPLAIN` and the rest of the statement as one command.
-        return first.text.upper() == 'EXPLAIN' and len(tokens) == 2
-    if first.token_type not in _READ_ONLY_FIRST_TOKENS:
+        if first.text.upper() != 'EXPLAIN':
+            return False
+    elif first.token_type not in _READ_ONLY_FIRST_TOKENS:
         return False
-    return not any(token.token_type in _WRITE_TOKENS for token in tokens)
+    return not any(token.token_type in _WRITE_TOKENS for token in tokens[1:])
 
 
 def validate_read_only_statement(sql_query: str, sql_dialect: str | None) -> None:
@@ -98,9 +130,9 @@ def validate_read_only_statement(sql_query: str, sql_dialect: str | None) -> Non
     are not counted. This is not a sandbox: side effects inside a SELECT (procedures, `SYSTEM$` functions)
     are limited by the workspace's database role.
     """
-    dialect = _SQLGLOT_DIALECTS.get((sql_dialect or '').lower())
+    dialect = sqlglot.Dialect.get_or_raise(_SQLGLOT_DIALECTS.get((sql_dialect or '').lower()))
     try:
-        tokens = sqlglot.Dialect.get_or_raise(dialect).tokenize(sql_query)
+        tokens = dialect.tokenize(sql_query)
     except TokenError as e:
         raise InvalidArgumentError(f'Cannot parse the SQL query: {e}. {_NOT_READ_ONLY_MSG}') from e
 
@@ -115,11 +147,20 @@ def validate_read_only_statement(sql_query: str, sql_dialect: str | None) -> Non
         raise InvalidArgumentError(f'Expected exactly one SQL statement, got {len(statements)}. {_NOT_READ_ONLY_MSG}')
 
     try:
-        expressions = [e for e in sqlglot.parse(sql_query, read=dialect) if e is not None]
+        statement = _expand_commands(dialect, statements[0])
+    except TokenError as e:
+        raise InvalidArgumentError(f'Cannot parse the SQL query: {e}. {_NOT_READ_ONLY_MSG}') from e
+    # The Snowflake pipe operator `->>` chains any statements, including writes, into one; sqlglot reads it as
+    # a JSON operator. BigQuery has no such operator.
+    if any(token.token_type == TokenType.DARROW for token in statement):
+        raise InvalidArgumentError(f'The pipe operator ->> is not allowed. {_NOT_READ_ONLY_MSG}')
+
+    try:
+        expressions = [e for e in dialect.parse(sql_query) if e is not None]
     except ParseError:
-        read_only = _is_read_only_tokens(statements[0])
+        read_only = _is_read_only_tokens(statement)
     else:
-        read_only = len(expressions) == 1 and _is_read_only_expression(expressions[0])
+        read_only = len(expressions) == 1 and _is_read_only_expression(expressions[0], statement)
     if not read_only:
         raise InvalidArgumentError(_NOT_READ_ONLY_MSG)
 
@@ -333,7 +374,12 @@ def add_sql_tools(mcp: FastMCP) -> None:
 async def query_data(
     sql_query: Annotated[
         str,
-        Field(description='One read-only SQL statement to run: SELECT, WITH ... SELECT, SHOW, DESCRIBE or EXPLAIN.'),
+        Field(
+            description=(
+                'One read-only SQL statement to run: SELECT or WITH ... SELECT; on Snowflake also SHOW, DESCRIBE '
+                'or EXPLAIN.'
+            )
+        ),
     ],
     query_name: Annotated[
         str,
@@ -359,8 +405,9 @@ async def query_data(
 ) -> QueryDataOutput:
     """
     Executes an SQL SELECT query to get the data from the underlying database.
-    Only one read-only statement (SELECT, WITH ... SELECT, SHOW, DESCRIBE or EXPLAIN) is accepted;
-    anything else, including multiple statements, is rejected before it reaches the database.
+    Only one read-only statement is accepted: SELECT or WITH ... SELECT, and on Snowflake also SHOW, DESCRIBE
+    or EXPLAIN (BigQuery has none of these; query INFORMATION_SCHEMA instead). Anything else, including
+    multiple statements, is rejected before it reaches the database.
 
     BEFORE QUERYING:
     * Always verify the table has a non-null fullyQualifiedName from get_tables tool.
