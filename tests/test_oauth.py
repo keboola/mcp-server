@@ -2833,6 +2833,8 @@ class TestAuthorizationServerMetadata:
             ('https://claude.ai/api/mcp/auth_callback', 'REGISTERED', 'expired'),
             ('https://claude.ai/api/mcp/auth_callback', 'REGISTERED', 'forged'),
             ('https://claude.ai/api/mcp/auth_callback', 'REGISTERED', 'garbage'),
+            # a JWT signed with the same secret that is not a state; it would crash on the missing 'state' key
+            ('https://claude.ai/api/mcp/auth_callback', 'REGISTERED', 'authorization_code'),
         ],
     )
     async def test_a_denial_is_relayed_only_for_a_live_flow_of_a_pre_registered_client(
@@ -2853,12 +2855,47 @@ class TestAuthorizationServerMetadata:
             state = provider._encode(provider._decode(state), key='another-key')
         elif state_change == 'garbage':
             state = 'not-a-jwt'
+        elif state_change == 'authorization_code':
+            state = self._authorization_code(provider, redirect_uri)
 
         assert provider.access_denied_redirect(state) is None
         response = await self._callback(provider, f'error=access_denied&state={state}')
         assert response.status_code == 400
         assert response.headers['content-type'].startswith('text/html')
         assert 'location' not in response.headers
+
+    @staticmethod
+    def _authorization_code(provider: SimpleOAuthProvider, redirect_uri: str) -> str:
+        """An MCP authorization code as `handle_oauth_callback` issues it: signed with the state's secret, carrying a live
+        `expires_at` and the client's `redirect_uri`, but no `state`. The client sees it, so it can send it back."""
+        return provider._encode(
+            {
+                'code': 'mcp_code',
+                'client_id': 'dcr-client-id',
+                'redirect_uri': redirect_uri,
+                'redirect_uri_provided_explicitly': True,
+                'expires_at': int(time.time() + 5 * 60),
+                'scopes': [],
+                'code_challenge': 'challenge',
+            }
+        )
+
+    @pytest.mark.asyncio
+    async def test_an_authorization_code_sent_back_as_the_state_is_refused_before_the_token_exchange(
+        self, provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from keboola_mcp_server import oauth as oauth_module
+
+        exchanges = []
+        transport = httpx.MockTransport(lambda rq: exchanges.append(rq) or httpx.Response(500))
+        monkeypatch.setattr(oauth_module, '_create_http_client', lambda **_kw: httpx.AsyncClient(transport=transport))
+        state = self._authorization_code(provider, 'https://claude.ai/api/mcp/auth_callback')
+
+        with pytest.raises(HTTPException) as excinfo:
+            await self._callback(provider, f'code=connection-code&state={state}')
+
+        assert excinfo.value.status_code == 400
+        assert exchanges == []
 
     def test_a_preflight_answer_is_left_alone(self, client) -> None:
         response = client.options(
