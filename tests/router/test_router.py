@@ -647,7 +647,11 @@ class TestMcpProxy:
         ],
     )
     @pytest.mark.parametrize('path', ['/mcp', '/mcp/'])
-    def test_routes_by_the_prefix_of_the_bearer_token(self, token: str, expected_upstream: str, path: str) -> None:
+    # RFC 7235 §2.1: the scheme is case-insensitive
+    @pytest.mark.parametrize('scheme', ['Bearer', 'bearer'])
+    def test_routes_by_the_prefix_of_the_bearer_token(
+        self, token: str, expected_upstream: str, path: str, scheme: str
+    ) -> None:
         # The allowlists are the contract with the regional server: without `Accept` and `Content-Type` it refuses
         # every MCP call, so each forwarded header is pinned in both directions.
         forwarded_response = {
@@ -663,7 +667,7 @@ class TestMcpProxy:
             headers={**forwarded_response, 'Set-Cookie': 'x=1', 'WWW-Authenticate': 'Bearer realm="stack"'},
         )
         forwarded_request = {
-            'authorization': f'Bearer {token}',
+            'authorization': f'{scheme} {token}',
             'content-type': 'application/json',
             'accept': 'application/json, text/event-stream',
             'mcp-session-id': 'sess-1',
