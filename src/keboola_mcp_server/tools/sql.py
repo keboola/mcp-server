@@ -6,6 +6,7 @@ from collections.abc import Awaitable, Mapping
 from io import StringIO
 from typing import Annotated
 
+import sqlglot
 from fastmcp import Context, FastMCP
 from mcp.types import (
     ProgressNotification,
@@ -14,8 +15,12 @@ from mcp.types import (
     ToolAnnotations,
 )
 from pydantic import BaseModel, Field
+from sqlglot import exp
+from sqlglot.errors import ParseError, TokenError
+from sqlglot.tokens import Token, TokenType
 from starlette.requests import Request
 
+from keboola_mcp_server.clients.base import InvalidArgumentError
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.mcp import PlainFunctionTool as FunctionTool
 from keboola_mcp_server.mcp import get_http_request_or_none
@@ -29,6 +34,94 @@ MAX_CHARS = 50_000
 # How often to check whether the HTTP client has disconnected during a long query.
 # Mirrors the 1 s job-poll cadence in `_Workspace.execute_query`.
 _DISCONNECT_POLL_INTERVAL = 1.0
+
+# Workspace dialect names (`WorkspaceManager.get_sql_dialect`) mapped to sqlglot dialects.
+_SQLGLOT_DIALECTS = {'snowflake': 'snowflake', 'bigquery': 'bigquery'}
+_READ_ONLY_EXPRESSIONS = (exp.Select, exp.SetOperation, exp.Subquery, exp.Show, exp.Describe)
+# Statements sqlglot cannot model fully are parsed as `exp.Command` named by their first keyword.
+_READ_ONLY_COMMANDS = frozenset({'SHOW', 'DESCRIBE', 'DESC', 'EXPLAIN'})
+_WRITE_EXPRESSIONS = (exp.Insert, exp.Update, exp.Delete, exp.Merge, exp.Create, exp.Drop, exp.Alter, exp.Command)
+_READ_ONLY_FIRST_TOKENS = frozenset(
+    {TokenType.SELECT, TokenType.WITH, TokenType.SHOW, TokenType.DESCRIBE, TokenType.DESC, TokenType.L_PAREN}
+)
+_WRITE_TOKENS = frozenset(
+    {
+        TokenType.INSERT,
+        TokenType.UPDATE,
+        TokenType.DELETE,
+        TokenType.MERGE,
+        TokenType.CREATE,
+        TokenType.DROP,
+        TokenType.ALTER,
+        TokenType.TRUNCATE,
+        TokenType.GRANT,
+        TokenType.COPY,
+        TokenType.PUT,
+        TokenType.EXECUTE,
+        TokenType.COMMAND,
+    }
+)
+_NOT_READ_ONLY_MSG = (
+    'query_data runs exactly one read-only statement: SELECT, WITH ... SELECT, SHOW, DESCRIBE or EXPLAIN. '
+    'Writes and other statements are not allowed; use a transformation to modify data.'
+)
+
+
+def _is_read_only_expression(expression: exp.Expression) -> bool:
+    if isinstance(expression, exp.Command):
+        return expression.name.upper() in _READ_ONLY_COMMANDS
+    if not isinstance(expression, _READ_ONLY_EXPRESSIONS):
+        return False
+    if isinstance(expression, exp.Select) and expression.args.get('into'):
+        return False  # SELECT ... INTO creates a table
+    # Data-modifying CTEs or subqueries.
+    return expression.find(*_WRITE_EXPRESSIONS) is None
+
+
+def _is_read_only_tokens(tokens: list[Token]) -> bool:
+    """Keyword check for a single statement sqlglot cannot parse, so that valid SQL beyond its grammar is
+    left to the backend instead of being rejected here."""
+    first = tokens[0]
+    if first.token_type == TokenType.COMMAND:
+        # sqlglot tokenizes `EXPLAIN` and the rest of the statement as one command.
+        return first.text.upper() == 'EXPLAIN' and len(tokens) == 2
+    if first.token_type not in _READ_ONLY_FIRST_TOKENS:
+        return False
+    return not any(token.token_type in _WRITE_TOKENS for token in tokens)
+
+
+def validate_read_only_statement(sql_query: str, sql_dialect: str | None) -> None:
+    """Raises `InvalidArgumentError` unless `sql_query` is exactly one SELECT, WITH ... SELECT, SHOW, DESCRIBE
+    or EXPLAIN statement in the given workspace dialect.
+
+    The sqlglot tokenizer drops comments and keeps string literals whole, so statements smuggled in either
+    are not counted. This is not a sandbox: side effects inside a SELECT (procedures, `SYSTEM$` functions)
+    are limited by the workspace's database role.
+    """
+    dialect = _SQLGLOT_DIALECTS.get((sql_dialect or '').lower())
+    try:
+        tokens = sqlglot.Dialect.get_or_raise(dialect).tokenize(sql_query)
+    except TokenError as e:
+        raise InvalidArgumentError(f'Cannot parse the SQL query: {e}. {_NOT_READ_ONLY_MSG}') from e
+
+    statements: list[list[Token]] = [[]]
+    for token in tokens:
+        if token.token_type == TokenType.SEMICOLON:
+            statements.append([])
+        else:
+            statements[-1].append(token)
+    statements = [statement for statement in statements if statement]
+    if len(statements) != 1:
+        raise InvalidArgumentError(f'Expected exactly one SQL statement, got {len(statements)}. {_NOT_READ_ONLY_MSG}')
+
+    try:
+        expressions = [e for e in sqlglot.parse(sql_query, read=dialect) if e is not None]
+    except ParseError:
+        read_only = _is_read_only_tokens(statements[0])
+    else:
+        read_only = len(expressions) == 1 and _is_read_only_expression(expressions[0])
+    if not read_only:
+        raise InvalidArgumentError(_NOT_READ_ONLY_MSG)
 
 
 async def _watch_for_http_disconnect(request: Request, poll_interval: float | None = None) -> None:
@@ -238,7 +331,10 @@ def add_sql_tools(mcp: FastMCP) -> None:
 
 @tool_errors()
 async def query_data(
-    sql_query: Annotated[str, Field(description='SQL SELECT query to run.')],
+    sql_query: Annotated[
+        str,
+        Field(description='One read-only SQL statement to run: SELECT, WITH ... SELECT, SHOW, DESCRIBE or EXPLAIN.'),
+    ],
     query_name: Annotated[
         str,
         Field(
@@ -263,6 +359,8 @@ async def query_data(
 ) -> QueryDataOutput:
     """
     Executes an SQL SELECT query to get the data from the underlying database.
+    Only one read-only statement (SELECT, WITH ... SELECT, SHOW, DESCRIBE or EXPLAIN) is accepted;
+    anything else, including multiple statements, is rejected before it reaches the database.
 
     BEFORE QUERYING:
     * Always verify the table has a non-null fullyQualifiedName from get_tables tool.
@@ -322,6 +420,7 @@ async def query_data(
     * Ensure valid filtering by checking actual data values first
     """
     workspace_manager = WorkspaceManager.from_state(ctx.session.state)
+    validate_read_only_statement(sql_query, await workspace_manager.get_sql_dialect())
 
     progress_token = _client_progress_token(ctx)
 
@@ -347,7 +446,7 @@ async def query_data(
         if result.data:
             data = result.data
         else:
-            # non-SELECT query, this should not really happen, because this tool is for running SELECT queries
+            # A read-only statement that returned no result set; the backend's message is all there is.
             data = SqlSelectData(columns=['message'], rows=[{'message': result.message}])
 
         # Convert to CSV

@@ -4894,6 +4894,8 @@ EXAMPLES:
 **Description**:
 
 Executes an SQL SELECT query to get the data from the underlying database.
+Only one read-only statement (SELECT, WITH ... SELECT, SHOW, DESCRIBE or EXPLAIN) is accepted;
+anything else, including multiple statements, is rejected before it reaches the database.
 
 BEFORE QUERYING:
 * Always verify the table has a non-null fullyQualifiedName from get_tables tool.
@@ -4959,7 +4961,7 @@ DATA VALIDATION:
   "additionalProperties": false,
   "properties": {
     "sql_query": {
-      "description": "SQL SELECT query to run.",
+      "description": "One read-only SQL statement to run: SELECT, WITH ... SELECT, SHOW, DESCRIBE or EXPLAIN.",
       "type": "string"
     },
     "query_name": {
