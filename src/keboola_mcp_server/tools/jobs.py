@@ -28,14 +28,18 @@ def add_job_tools(mcp: KeboolaMcpServer) -> None:
     mcp.add_tool(
         ToonCompactFunctionTool.from_function(
             get_jobs,
-            annotations=ToolAnnotations(readOnlyHint=True),
+            annotations=ToolAnnotations(
+                readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False
+            ),
             tags={JOB_TOOLS_TAG},
         )
     )
     mcp.add_tool(
         FunctionTool.from_function(
             run_job,
-            annotations=ToolAnnotations(destructiveHint=True),
+            annotations=ToolAnnotations(
+                readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=True
+            ),
             tags={JOB_TOOLS_TAG},
         )
     )
