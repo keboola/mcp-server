@@ -258,10 +258,13 @@ def create_router_app(
     address_counter = FixedWindowCounter(rate_limit_clock)
     credential_counter = FixedWindowCounter(rate_limit_clock, overflow_limit=_CREDENTIAL_OVERFLOW_LIMIT_PER_MINUTE)
 
-    def over_credential_limit(path: str, credential: str) -> bool:
+    def over_credential_limit(path: str, credential: str, limit: int | None = None) -> bool:
         key = credential_key(credential)
         return credential_counter.over_limit(
-            f'credential:{path}', key, settings.token_rate_limit_per_credential, log_key=f'sha256:{key[:12]}'
+            f'credential:{path}',
+            key,
+            settings.token_rate_limit_per_credential if limit is None else limit,
+            log_key=f'sha256:{key[:12]}',
         )
 
     async def forward(request: Request, stack: Stack, path: str, body: bytes) -> Response:
@@ -334,6 +337,7 @@ def create_router_app(
         resource_metadata_url=f'{issuer}/.well-known/oauth-protected-resource',
         connect_timeout_seconds=settings.upstream_timeout_seconds,
         read_timeout_seconds=settings.mcp_read_timeout_seconds,
+        over_limit=lambda token: over_credential_limit('/mcp', token, settings.mcp_rate_limit_per_token),
     )
 
     async def health_check(_request: Request) -> Response:

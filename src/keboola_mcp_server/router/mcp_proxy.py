@@ -8,6 +8,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.types import Receive, Scope, Send
 
+from keboola_mcp_server.router.rate_limit import too_many_requests
 from keboola_mcp_server.router.stacks import Stack, stack_key_of
 
 LOG = logging.getLogger(__name__)
@@ -74,12 +75,15 @@ def create_mcp_proxy(
     resource_metadata_url: str,
     connect_timeout_seconds: float,
     read_timeout_seconds: float,
+    over_limit: Callable[[str], bool],
 ) -> Callable[[Request], Awaitable[Response]]:
     """The `/mcp` handler.
 
     :param upstreams: One client per stack key: each has its own connection pool, so a stack that answers slowly
         uses up only its own connections, and the other stacks' users are not affected.
 
+    :param over_limit: Counts one request with a bearer token and says whether it is over the token's limit (the
+        token is counted by its hash, see `rate_limit.credential_key`).
     :param read_timeout_seconds: How long the stack may stay silent: before the response starts (a tool call that runs
         long) and between two chunks of a streamed one. Exceeded before the response starts, the client gets 504;
         later, the stream ends.
@@ -108,6 +112,8 @@ def create_mcp_proxy(
                 resource_metadata_url, error_description='The access token was not issued by this server.'
             )
         request.state.stack_key = stack.key
+        if over_limit(token):
+            return too_many_requests()
 
         url = f'{stack.upstream}/mcp' + (f'?{request.url.query}' if request.url.query else '')
         headers = {name: value for name in _FORWARDED_REQUEST_HEADERS if (value := request.headers.get(name))}

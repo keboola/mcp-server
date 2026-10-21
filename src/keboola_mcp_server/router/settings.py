@@ -10,6 +10,8 @@ from keboola_mcp_server.router.stacks import Stack, parse_stacks, router_issuer
 # token used a few times an hour, so a credential sent more often than this is being guessed or replayed.
 _DEFAULT_AUTHORIZE_RATE_LIMIT_PER_IP = 60
 _DEFAULT_TOKEN_RATE_LIMIT_PER_CREDENTIAL = 10
+# One plugin session's MCP requests: several tool calls a minute, each a handful of requests at most.
+_DEFAULT_MCP_RATE_LIMIT_PER_TOKEN = 600
 
 
 def _env(env: Mapping[str, str], *names: str) -> str | None:
@@ -54,6 +56,9 @@ class RouterSettings:
     mcp_read_timeout_seconds: float = 300.0
     """How long a stack may stay silent on `/mcp`, before its response starts (a long tool call) and between chunks.
     Whole seconds in the environment."""
+    mcp_rate_limit_per_token: int = _DEFAULT_MCP_RATE_LIMIT_PER_TOKEN
+    """Requests per minute to `/mcp` with one bearer token, counted by its SHA-256 (not per address: every ChatGPT
+    user calls from OpenAI's few egress addresses)."""
     mcp_max_connections: int = 1000
     """Connections to one stack that `/mcp` may hold at once, per replica; each request holds one until its answer
     ends. Above it a request waits up to `upstream_timeout_seconds` for a free one, then gets 503."""
@@ -89,6 +94,10 @@ class RouterSettings:
                 'KBC_ROUTER_MCP_READ_TIMEOUT_SECONDS', _env(env, 'KBC_ROUTER_MCP_READ_TIMEOUT_SECONDS')
             )
             or cls.mcp_read_timeout_seconds,
+            mcp_rate_limit_per_token=_positive_int(
+                'KBC_ROUTER_MCP_RATE_LIMIT_PER_TOKEN', _env(env, 'KBC_ROUTER_MCP_RATE_LIMIT_PER_TOKEN')
+            )
+            or _DEFAULT_MCP_RATE_LIMIT_PER_TOKEN,
             mcp_max_connections=_positive_int(
                 'KBC_ROUTER_MCP_MAX_CONNECTIONS', _env(env, 'KBC_ROUTER_MCP_MAX_CONNECTIONS')
             )

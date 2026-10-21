@@ -809,16 +809,25 @@ class TestMcpProxy:
         assert response.status_code == expected_status
         assert response.json()['error'] == 'temporarily_unavailable'
 
-    def test_a_client_over_the_limit_gets_429(self) -> None:
+    def test_a_token_over_the_limit_gets_429_while_another_token_from_the_same_ip_passes(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
         upstream = _Upstream(httpx.Response(200, json={}))
-        headers = {'Authorization': 'Bearer us-aws.opaque', 'X-Forwarded-For': '198.51.100.3'}
-        with _client(upstream, api_rate_limit_per_ip=2) as client:
-            statuses = [
-                client.post(path, json=_INITIALIZE, headers=headers).status_code for path in ('/mcp', '/mcp/', '/mcp')
-            ]
 
-        assert statuses == [200, 200, 429]  # both spellings count as one endpoint
-        assert len(upstream.requests) == 2
+        def call(client: TestClient, path: str, token: str) -> int:
+            headers = {'Authorization': f'Bearer {token}', 'X-Forwarded-For': '198.51.100.3'}
+            return client.post(path, json=_INITIALIZE, headers=headers).status_code
+
+        with caplog.at_level(logging.WARNING), _client(upstream, mcp_rate_limit_per_token=2) as client:
+            first = [call(client, path, 'us-aws.first') for path in ('/mcp', '/mcp/', '/mcp')]
+            second = call(client, '/mcp', 'us-aws.second')
+
+        assert first == [200, 200, 429]  # both spellings count as one endpoint
+        assert second == 200
+        assert len(upstream.requests) == 3
+        logged = '\n'.join(r.getMessage() for r in caplog.records)
+        assert 'Rate limit reached: group=credential:/mcp, key=sha256:' in logged
+        assert 'us-aws.first' not in logged
 
     @pytest.mark.parametrize(('method', 'expected_method'), [('GET', 'GET'), ('DELETE', 'DELETE')])
     def test_get_and_delete_are_forwarded(self, method: str, expected_method: str) -> None:
@@ -841,3 +850,4 @@ class TestMcpProxy:
         defaults = RouterSettings.from_env({'KBC_ROUTER_URL': ROUTER_URL})
         assert defaults.mcp_read_timeout_seconds == 300
         assert defaults.mcp_max_connections == 1000
+        assert defaults.mcp_rate_limit_per_token == 600
