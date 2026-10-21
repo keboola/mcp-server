@@ -23,6 +23,7 @@ from keboola_mcp_server.router import app as router_app
 from keboola_mcp_server.router import rate_limit
 from keboola_mcp_server.router.app import create_router_app
 from keboola_mcp_server.router.picker import render_picker
+from keboola_mcp_server.router.rate_limit import credential_key
 from keboola_mcp_server.router.settings import RouterSettings
 from keboola_mcp_server.router.stacks import DEFAULT_STACKS, parse_stacks, router_issuer, router_resource
 
@@ -954,7 +955,7 @@ class TestMcpProxy:
         assert 'us-aws.first' not in logged
 
     @pytest.mark.asyncio
-    async def test_a_token_may_hold_only_its_in_flight_slots(self) -> None:
+    async def test_a_token_may_hold_only_its_in_flight_slots(self, caplog: pytest.LogCaptureFixture) -> None:
         """A token whose slot holds a streamed answer gets 429 for the next request, another token does not, and the
         slot frees up when the answer ends: the rate limit alone would let one token's slow calls hold the pool. A
         stalled upload holds no slot (the body is read first), and a handler cancelled while the stack has not answered
@@ -1017,7 +1018,9 @@ class TestMcpProxy:
 
         stream = asyncio.create_task(call('us-aws.first', 'held'))
         await asyncio.wait_for(streaming.wait(), timeout=5)
-        refused = await call('us-aws.first')
+        with caplog.at_level(logging.WARNING):
+            refused = await call('us-aws.first')
+            refused_again = await call('us-aws.first')
         other = await call('us-aws.second')
         finish.set()
         streamed = await stream
@@ -1036,8 +1039,12 @@ class TestMcpProxy:
             await cancelled
         after_the_cancel = await call('us-aws.fourth')
 
-        assert refused['status'] == 429
+        assert refused['status'] == refused_again['status'] == 429
         assert (b'retry-after', b'1') in refused['headers']
+        # logged once while the token stays full, by its hash only
+        [line] = [r.getMessage() for r in caplog.records if 'Concurrency limit reached' in r.getMessage()]
+        assert line == f'[router] Concurrency limit reached: key=sha256:{credential_key("us-aws.first")[:12]}, limit=1'
+        assert 'us-aws.first' not in '\n'.join(r.getMessage() for r in caplog.records)
         assert [other['status'], streamed['status'], after['status']] == [200, 200, 200]
         assert [beside_the_upload['status'], after_the_cancel['status']] == [200, 200]
 
