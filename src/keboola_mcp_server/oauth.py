@@ -80,7 +80,7 @@ _ALLOWED_CURSOR_HOSTS = frozenset({'anysphere.cursor-retrieval', 'anysphere.curs
 # is still the sole authority on whether the pair is actually registered and active.
 #
 # Each entry ships only to stacks whose Connection release already registers its row. Otherwise validate answers 404
-# and `_authorize` refuses the client with the unregistered-client page: approving the literal id in Flow B would
+# and `_authorize` refuses the client (`error=pre_registered_client_missing`): approving the literal id in Flow B would
 # register it against this server's callback, a row no login can use (the check after approval asks about the
 # client's own URI, `_connection_redirect_uri`) and the Connection migration stops on (ChatGPT: DMD-2475).
 _WELL_KNOWN_CONNECTION_CLIENT_IDS: dict[str, str] = {
@@ -1433,18 +1433,23 @@ class SimpleOAuthProvider(OAuthProvider):
                 error_description='Could not verify OAuth client with Connection.',
             )
 
+        if registration is _ClientRegistration.NOT_REGISTERED and redirect_uri_str in _WELL_KNOWN_CONNECTION_CLIENT_IDS:
+            # The pre-registered row is missing, deactivated or without this URI on this stack; never approve the
+            # literal id (see `_WELL_KNOWN_CONNECTION_CLIENT_IDS`). WARNING whatever the approval switch: the stack is
+            # misdeployed, not the client unknown.
+            LOG.warning(
+                f'[authorize] Pre-registered client not registered in Connection, refused: client_id={_sanitize_client_id_for_log(client.client_id)}, '
+                f'redirect_uri={_sanitize_for_log(redirect_uri_str)}'
+            )
+            return construct_redirect_uri(
+                self._mcp_callback_url,
+                error='pre_registered_client_missing',
+                error_description='The pre-registered OAuth client is not registered on this stack.',
+            )
+
         if registration is _ClientRegistration.NOT_REGISTERED and not self._dynamic_client_approval:
             LOG.info(
                 f'[authorize] Unregistered client refused, dynamic client approval is off: client_id={_sanitize_client_id_for_log(client.client_id)}, '
-                f'redirect_uri={_sanitize_for_log(redirect_uri_str)}'
-            )
-            return self._unregistered_client_page()
-
-        if registration is _ClientRegistration.NOT_REGISTERED and redirect_uri_str in _WELL_KNOWN_CONNECTION_CLIENT_IDS:
-            # The pre-registered row is missing on this stack; never approve the literal id (see
-            # `_WELL_KNOWN_CONNECTION_CLIENT_IDS`).
-            LOG.warning(
-                f'[authorize] Pre-registered client not registered in Connection, refused: client_id={_sanitize_client_id_for_log(client.client_id)}, '
                 f'redirect_uri={_sanitize_for_log(redirect_uri_str)}'
             )
             return self._unregistered_client_page()

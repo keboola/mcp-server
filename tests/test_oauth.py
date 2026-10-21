@@ -1473,15 +1473,24 @@ class TestSimpleOAuthProvider:
         'redirect_uri',
         ['https://claude.ai/api/mcp/auth_callback', 'https://chatgpt.com/connector_platform_oauth_redirect'],
     )
-    async def test_authorize_refuses_a_pre_registered_client_missing_in_connection_even_with_approval_on(
-        self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch, redirect_uri: str
+    @pytest.mark.parametrize('approval_on', [True, False])
+    async def test_authorize_refuses_a_pre_registered_client_missing_in_connection_whatever_the_approval_switch(
+        self,
+        oauth_provider: SimpleOAuthProvider,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        redirect_uri: str,
+        approval_on: bool,
     ):
         """Deployed ahead of the Connection migration that registers the row: approving the literal id would leave a
-        row bound to this server's callback that no login can use and the migration stops on, so it fails closed."""
-        from keboola_mcp_server.oauth import _ClientRegistration
+        row bound to this server's callback that no login can use and the migration stops on, so it fails closed, is
+        logged at WARNING, and uses none of the daily approval budget."""
+        from keboola_mcp_server.oauth import _ApprovalBudget, _ClientRegistration
 
         self._stub_client_registration(monkeypatch, _ClientRegistration.NOT_REGISTERED)
-        monkeypatch.setattr(oauth_provider, '_dynamic_client_approval', True)
+        monkeypatch.setattr(oauth_provider, '_dynamic_client_approval', approval_on)
+        monkeypatch.setattr(oauth_provider, '_approval_daily_limit', 1)
+        monkeypatch.setattr(oauth_provider, '_approval_budget', _ApprovalBudget(1))
         client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
         params = AuthorizationParams(
             redirect_uri=AnyUrl(redirect_uri),
@@ -1491,12 +1500,16 @@ class TestSimpleOAuthProvider:
             scopes=None,
         )
 
-        url = urlparse(await oauth_provider.authorize(client, params))
+        with caplog.at_level(logging.INFO):
+            url = urlparse(await oauth_provider.authorize(client, params))
         query = parse_qs(url.query)
 
         assert url.netloc == urlparse(oauth_provider._mcp_callback_url).netloc
-        assert query['error'] == ['unregistered_client']
+        assert query['error'] == ['pre_registered_client_missing']
         assert 'pending_mcp_client' not in query
+        assert oauth_provider._approval_budget._granted_at == {}
+        [record] = [r for r in caplog.records if 'Pre-registered client not registered in Connection' in r.message]
+        assert record.levelno == logging.WARNING
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize('approval_on', [True, False])

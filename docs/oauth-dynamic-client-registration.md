@@ -18,6 +18,11 @@ for the full design.
   `/oauth/authorize` carrying a `pending_mcp_client` payload. A logged-in Keboola user sees an
   approval screen (client name + redirect URI) and must click **Allow** once; the approval is registered against this server's own `/oauth/callback` (the client's real redirect target is shown in the name), and the browser then continues straight to the consent screen, so the client never receives a code from the approval itself (AI-3995, needs Connection's `return_to_client_after_approval`). After that, the same
   `(client_id, redirect_uri)` pair is Flow A on every subsequent connection.
+  A pre-registered redirect URI (`_WELL_KNOWN_CONNECTION_CLIENT_IDS`) never takes Flow B: when Connection does not know
+  its row (a stack whose Connection release does not register it yet, or a deactivated row), it is refused on
+  `/oauth/callback?error=pre_registered_client_missing` and logged at WARNING (`Pre-registered client not registered in
+  Connection`), whatever `OAUTH_DYNAMIC_CLIENT_APPROVAL` says. Approving the literal id would register it against this
+  server's callback, a row no login can use and that stops the Connection migration registering it.
 
 Every client — regardless of flow — must first call `/register` (RFC 7591) to obtain an MCP-side
 `client_id`; this server derives its own short, stable id for talking to Connection from the
@@ -79,8 +84,9 @@ ignored there.
 **Release gate.** The removed hardcoded list accepted ChatGPT, Make, Devin, Onyx, n8n, Azure API Management and
 some customer-specific hosts by domain. Connection matches a full redirect URI, so before releasing, list the
 callbacks in use on each stack (the INFO line `[authorize] Registered client proceeding to consent` of the previous
-release) and pre-register the ones that matter, or schedule an approval window. ChatGPT's callback is per
-connector and cannot be pre-registered as a constant.
+release) and pre-register the ones that matter, or schedule an approval window. ChatGPT uses the stable callback
+`https://chatgpt.com/connector_platform_oauth_redirect` for an authorization server that returns RFC 9207 `iss`
+(DMD-2468), pre-registered in Connection as `chatgpt` (DMD-2475).
 
 ## Endpoints (on the MCP server, `https://mcp.<stack-hostname>`)
 
