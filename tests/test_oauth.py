@@ -600,6 +600,22 @@ class TestSimpleOAuthProvider:
         auth_code_raw['redirect_uri'] = str(auth_code_raw['redirect_uri'])  # AnyUrl is not JSON serializable
         return auth_code_raw
 
+    @staticmethod
+    def consent_state(*, typed: bool = True) -> Mapping[str, Any]:
+        """The consent state `authorize()` encodes; untyped: one issued before the `typ` claim, alive until its TTL."""
+        state = {
+            'typ': 'state',
+            'redirect_uri': 'foo://bar',
+            'redirect_uri_provided_explicitly': 'True',
+            'scopes': [],
+            'code_challenge': 'foo-code-challenge',
+            'state': 'client-state',
+            'client_id': 'foo-client-id',
+            'expires_at': time.time() + 5 * 60,
+            'projectless': True,
+        }
+        return state if typed else {k: v for k, v in state.items() if k != 'typ'}
+
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         ('auth_code', 'key', 'expected'),
@@ -616,6 +632,11 @@ class TestSimpleOAuthProvider:
             (code := authorization_code(expires_at=1), JWT_KEY, _ExtendedAuthorizationCode.model_validate(code)),
             # wrong encryption key
             (code := authorization_code(), '!@#$%^&', None),
+            # typed, as handle_oauth_callback issues it now
+            (code := {**authorization_code(), 'typ': 'code'}, JWT_KEY, _ExtendedAuthorizationCode.model_validate(code)),
+            # a consent state is signed with the same secret: an unknown code (invalid_grant), not a validation error
+            (consent_state(), JWT_KEY, None),
+            (consent_state(typed=False), JWT_KEY, None),
         ],
     )
     async def test_load_authorization_code(
@@ -2919,22 +2940,6 @@ class TestAuthorizationServerMetadata:
 
         assert excinfo.value.status_code == 400
         assert exchanges == []
-
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize('typed', [True, False])
-    async def test_a_consent_state_sent_as_the_authorization_code_is_no_code(
-        self, provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch, typed: bool
-    ) -> None:
-        """Both are signed with the same secret: a consent state at /token must be an unknown code (invalid_grant),
-        not a validation error. Untyped: a state issued before the `typ` claim."""
-        state = await self._consent_state(
-            provider, monkeypatch, 'https://claude.ai/api/mcp/auth_callback', 'REGISTERED'
-        )
-        if not typed:
-            state = provider._encode({k: v for k, v in provider._decode(state).items() if k != 'typ'})
-        client = OAuthClientInformationFull(client_id='dcr-client-id', redirect_uris=[AnyUrl('https://claude.ai/cb')])
-
-        assert await provider.load_authorization_code(client, state) is None
 
     def test_a_preflight_answer_is_left_alone(self, client) -> None:
         response = client.options(

@@ -1574,7 +1574,9 @@ class SimpleOAuthProvider(OAuthProvider):
         try:
             auth_code_raw = self._decode(authorization_code)
         except jwt.InvalidTokenError:
-            LOG.debug(f'[load_authorization_code] Invalid authorization_code: {authorization_code}', exc_info=True)
+            LOG.debug(
+                f'[load_authorization_code] Invalid authorization_code, length={len(authorization_code)}', exc_info=True
+            )
             return None
         # A consent state sent as the code is signed with the same secret but is no code: /token answers invalid_grant.
         if _jwt_kind(auth_code_raw) != 'code':
