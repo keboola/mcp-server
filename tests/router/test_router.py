@@ -1,6 +1,5 @@
 import json
 import logging
-from html import escape
 from urllib.parse import parse_qs, parse_qsl, urlparse
 
 import httpx
@@ -124,42 +123,49 @@ class TestAuthorize:
 
         assert response.status_code == 200
         assert response.headers['content-type'].startswith('text/html')
-        upstreams = ' '.join(s.upstream for s in DEFAULT_STACKS)
         assert response.headers['content-security-policy'] == (
-            f"default-src 'self'; form-action 'self' {upstreams}; frame-ancestors 'none'; base-uri 'none'; "
-            "object-src 'none'"
+            "default-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'"
         )
         assert response.headers['referrer-policy'] == 'no-referrer'
         assert 'location' not in response.headers
+        assert '<form' not in response.text
 
-    def test_the_picker_is_a_get_form_carrying_every_parameter(self) -> None:
-        """The submit a browser would send (the form's fields as a query string) reaches the chosen stack with every
-        original parameter, in order, duplicates and blanks included."""
+    @staticmethod
+    def _links(page: str) -> dict[str, str]:
+        """The picker's stack links: link text (the stack name) -> href, as a browser would read them."""
         from html.parser import HTMLParser
 
-        class Form(HTMLParser):
+        class Links(HTMLParser):
             def __init__(self) -> None:
                 super().__init__()
-                self.form: dict[str, str] = {}
-                self.hidden: list[tuple[str, str]] = []
+                self.links: dict[str, str] = {}
+                self._href: str | None = None
 
             def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-                values = {k: v or '' for k, v in attrs}
-                if tag == 'form':
-                    self.form = values
-                elif tag == 'input' and values.get('type') == 'hidden':
-                    self.hidden.append((values['name'], values['value']))
+                if tag == 'a':
+                    self._href = dict(attrs).get('href') or ''
 
+            def handle_data(self, data: str) -> None:
+                if self._href is not None and data.strip():
+                    self.links[data.strip()] = self._href
+                    self._href = None
+
+        parser = Links()
+        parser.feed(page)
+        return parser.links
+
+    def test_each_stack_is_a_link_carrying_every_parameter(self) -> None:
+        """Following a stack's link reaches that stack with every original parameter, in order, duplicates and blanks
+        included."""
         with _client() as client:
             page = client.get(f'/authorize?{self.QUERY}&stack=no-such-stack')
-            form = Form()
-            form.feed(page.text)
-            submit = client.get(form.form['action'], params=[*form.hidden, ('stack', 'eu-gcp')])
+            links = self._links(page.text)
+            followed = client.get(links['EU Frankfurt GCP'])
 
-        assert form.form == {'method': 'get', 'action': '/authorize'}
-        assert form.hidden == parse_qsl(self.QUERY, keep_blank_values=True)
-        assert submit.status_code == 302
-        location = urlparse(submit.headers['location'])
+        assert set(links) == {s.name for s in DEFAULT_STACKS}
+        assert all(href.startswith('/authorize?') for href in links.values())
+        assert followed.status_code == 302
+        location = urlparse(followed.headers['location'])
         assert f'{location.scheme}://{location.netloc}' == 'https://mcp.europe-west3.gcp.keboola.com'
         assert parse_qsl(location.query, keep_blank_values=True) == [
             *parse_qsl(self.QUERY, keep_blank_values=True),
@@ -176,7 +182,9 @@ class TestAuthorize:
         assert cookie.startswith('keboola_mcp_stack=eu-gcp;')
         for attribute in ('Max-Age=7776000', 'Path=/authorize', 'Secure', 'HttpOnly', 'SameSite=lax'):
             assert attribute in cookie
-        assert 'value="eu-gcp" required checked' in picker.text
+        assert picker.text.count('class="stack last-used"') == 1
+        assert '<a class="stack last-used" href="/authorize?' in picker.text
+        assert 'stack=eu-gcp"' in picker.text.split('last-used')[1].split('>')[0]
 
     def test_a_post_is_not_served(self) -> None:
         with _client() as client:
@@ -191,18 +199,38 @@ class TestAuthorize:
             ('state', '"><script>alert(1)</script>'),
             ('redirect_uri', "' onmouseover='alert(1)"),
             ('"><b>', '<b>&"d"'),
+            # an encoded `&stack=` must stay inside its value, never become a parameter of its own
+            ('state', 'x&stack=us-gcp'),
+            ('stack', 'evil-stack'),
         ],
     )
-    def test_the_picker_escapes_hostile_parameters(self, name: str, value: str) -> None:
+    def test_the_picker_links_are_escaped_and_cannot_gain_a_parameter(self, name: str, value: str) -> None:
         page = render_picker(stacks=DEFAULT_STACKS, params=[(name, value)], preselected=None)
+        links = self._links(page)
 
         assert '<script>' not in page
         assert '<b>' not in page
         assert value not in page
-        assert f'<input type="hidden" name="{escape(name, quote=True)}" value="{escape(value, quote=True)}">' in page
         for stack in DEFAULT_STACKS:
-            assert stack.name in page
+            query = parse_qsl(urlparse(links[stack.name]).query, keep_blank_values=True)
+            # the original parameter unchanged (the request's own `stack` dropped), the link's stack last and alone
+            assert query == ([] if name == 'stack' else [(name, value)]) + [('stack', stack.key)]
             assert stack.login_host in page
+
+    def test_a_hostile_query_string_through_the_route(self) -> None:
+        hostile = 'state=%22%3E%3Cscript%3Ealert(1)%3C%2Fscript%3E&redirect_uri=x%26stack%3Dus-gcp'
+        with _client() as client:
+            page = client.get(f'/authorize?{hostile}')
+            followed = client.get(self._links(page.text)['EU Frankfurt AWS'])
+
+        assert '<script>' not in page.text
+        location = urlparse(followed.headers['location'])
+        assert f'{location.scheme}://{location.netloc}' == 'https://mcp.eu-central-1.keboola.com'
+        assert parse_qsl(location.query) == [
+            ('state', '"><script>alert(1)</script>'),
+            ('redirect_uri', 'x&stack=us-gcp'),
+            ('via', 'router'),
+        ]
 
     def test_the_picker_stylesheet_is_served_by_the_router_itself(self) -> None:
         with _client() as client:

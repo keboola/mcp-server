@@ -21,7 +21,7 @@ from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, R
 from starlette.routing import Route, request_response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from keboola_mcp_server.router.picker import PICKER_CSS, PICKER_STYLESHEET_PATH, picker_headers, render_picker
+from keboola_mcp_server.router.picker import PICKER_CSS, PICKER_HEADERS, PICKER_STYLESHEET_PATH, render_picker
 from keboola_mcp_server.router.rate_limit import (
     FixedWindowCounter,
     PerAddressRateLimitMiddleware,
@@ -191,8 +191,6 @@ def create_router_app(
         params = [(k, v) for k, v in parse_qsl(query_string, keep_blank_values=True) if k not in ('stack', 'via')]
         return f'{stack.upstream}/authorize?{urlencode([*params, ("via", "router")])}'
 
-    headers_of_picker = picker_headers(stacks.values())
-
     def picker(request: Request) -> Response:
         cookie = request.cookies.get(_STACK_COOKIE)
         return HTMLResponse(
@@ -201,11 +199,11 @@ def create_router_app(
                 params=parse_qsl(request.url.query, keep_blank_values=True),
                 preselected=cookie if cookie in stacks else None,
             ),
-            headers=headers_of_picker,
+            headers=PICKER_HEADERS,
         )
 
     async def authorize(request: Request) -> Response:
-        # The picker's own submit and a link that names the stack (the reviewer link) look the same: a stack from the
+        # A picker link and any other link that names the stack (the reviewer link) look the same: a stack from the
         # table skips the picker; any other value shows it.
         if (stack := stacks.get(request.query_params.get('stack') or '')) is None:
             return picker(request)
