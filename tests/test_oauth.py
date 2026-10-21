@@ -3552,6 +3552,62 @@ class TestRouterFlows:
                 router_url=router_url,
             )
 
+    def test_a_router_flow_keeps_its_issuer_and_prefix_through_denial_and_approval(
+        self, provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The other two ways a router flow comes back: a Deny relayed to the client, and the approval of a client
+        Connection did not know yet (Flow B), which continues into consent with the same state."""
+        from keboola_mcp_server import oauth as oauth_module
+        from keboola_mcp_server.oauth import _ClientRegistration
+
+        league = httpx.MockTransport(
+            lambda _rq: httpx.Response(200, json={'access_token': 'la', 'refresh_token': 'lr', 'expires_in': 3600})
+        )
+        monkeypatch.setattr(oauth_module, '_create_http_client', lambda **_kw: httpx.AsyncClient(transport=league))
+        query = self._authorize_query(via='router', resource='https://mcp-router.example.com/mcp')
+        _client, consent = self._login_until_connection(provider, monkeypatch, query, 'REGISTERED')
+        denial = urlparse(provider.access_denied_redirect(consent['state'][0]))
+        assert parse_qs(denial.query)['iss'] == [provider._router_issuer]
+
+        provider._dynamic_client_approval = True
+        _client, approval = self._login_until_connection(provider, monkeypatch, query, 'NOT_REGISTERED')
+        TestSimpleOAuthProvider._stub_client_registration(monkeypatch, _ClientRegistration.REGISTERED)
+        consent_url = asyncio.run(provider.handle_oauth_callback(None, approval['state'][0]))
+        redirect = asyncio.run(
+            provider.handle_oauth_callback('connection-code', parse_qs(urlparse(consent_url).query)['state'][0])
+        )
+        response = parse_qs(urlparse(redirect).query)
+        assert response['iss'] == [provider._router_issuer]
+        assert response['code'][0].startswith('eu-aws.')
+
+    def test_via_router_in_a_form_body_counts_too(
+        self, provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        query = self._authorize_query(via='router', resource='https://mcp-router.example.com/mcp')
+        _client, consent = self._login_until_connection(provider, monkeypatch, query, 'REGISTERED', post=True)
+
+        assert provider._decode(consent['state'][0])['router'] is True
+
+    def _login_until_connection(
+        self,
+        provider: SimpleOAuthProvider,
+        monkeypatch: pytest.MonkeyPatch,
+        query: dict[str, str],
+        registration: str,
+        *,
+        post: bool = False,
+    ) -> tuple[Any, dict[str, list[str]]]:
+        from starlette.applications import Starlette
+        from starlette.testclient import TestClient
+
+        from keboola_mcp_server.oauth import _ClientRegistration
+
+        TestSimpleOAuthProvider._stub_client_registration(monkeypatch, _ClientRegistration[registration])
+        client = TestClient(Starlette(routes=provider.get_routes()), base_url=self.OWN_URL, follow_redirects=False)
+        answer = client.post('/authorize', data=query) if post else client.get('/authorize', params=query)
+        assert answer.status_code == 302, answer.text
+        return client, parse_qs(urlparse(answer.headers['location']).query)
+
     @pytest.mark.parametrize(('client_id', 'revoked'), [('chatgpt-dcr-id', True), ('another-client', False)])
     def test_revoke_takes_a_public_client_and_only_its_own_tokens(
         self, monkeypatch: pytest.MonkeyPatch, client_id: str, revoked: bool

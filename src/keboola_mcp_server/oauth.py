@@ -30,7 +30,6 @@ from mcp.server.auth.provider import (
     TokenError,
     construct_redirect_uri,
 )
-from mcp.server.auth.routes import cors_middleware
 from mcp.server.auth.settings import ClientRegistrationOptions, RevocationOptions
 from mcp.server.transport_security import DEFAULT_MAX_REQUEST_BODY_SIZE, RequestBodyLimitMiddleware
 from mcp.shared.auth import InvalidRedirectUriError, OAuthClientInformationFull, OAuthToken
@@ -38,9 +37,10 @@ from pydantic import AnyHttpUrl, AnyUrl
 from starlette.datastructures import Headers
 from starlette.exceptions import HTTPException
 from starlette.middleware import Middleware
+from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
-from starlette.routing import Route, get_route_path
+from starlette.routing import Route, get_route_path, request_response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from keboola_mcp_server.auth_login import (
@@ -1019,6 +1019,10 @@ class _PatchAuthServerMetadata:
                     methods = metadata.get('token_endpoint_auth_methods_supported')
                     if isinstance(methods, list) and 'none' not in methods:
                         metadata['token_endpoint_auth_methods_supported'] = ['none', *methods]
+                    # The same public clients revoke their tokens without a secret too (`SimpleOAuthProvider._revoke`).
+                    revocation = metadata.get('revocation_endpoint_auth_methods_supported')
+                    if isinstance(revocation, list) and 'none' not in revocation:
+                        metadata['revocation_endpoint_auth_methods_supported'] = ['none', *revocation]
                     # Every authorization response to the client carries `iss`: see `SimpleOAuthProvider.issuer`.
                     metadata['authorization_response_iss_parameter_supported'] = True
                     body = json.dumps(metadata).encode()
@@ -1046,6 +1050,18 @@ class _CaptureParameter:
     body is replayed to the wrapped handler unchanged."""
 
     def __init__(self, app: ASGIApp, *, name: str, var: ContextVar[tuple[str, ...]], in_query: bool = False) -> None:
+        # Inside the body limit, so that it never buffers more than the SDK's handler would accept.
+        app = _CaptureParameterWithinLimit(app, name=name, var=var, in_query=in_query)
+        self._app = RequestBodyLimitMiddleware(app, DEFAULT_MAX_REQUEST_BODY_SIZE)
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        await self._app(scope, receive, send)
+
+
+class _CaptureParameterWithinLimit:
+    """`_CaptureParameter` behind the body limit."""
+
+    def __init__(self, app: ASGIApp, *, name: str, var: ContextVar[tuple[str, ...]], in_query: bool) -> None:
         self._app = app
         self._name = name
         self._var = var
@@ -1260,8 +1276,12 @@ class SimpleOAuthProvider(OAuthProvider):
                 endpoint = _CaptureParameter(route.endpoint, name='resource', var=_TOKEN_REQUEST_RESOURCES)
                 route = Route(route.path, endpoint=endpoint, methods=route.methods)
             elif isinstance(route, Route) and route.path == '/revoke':
-                endpoint = RequestBodyLimitMiddleware(
-                    cors_middleware(self._revoke, ['POST', 'OPTIONS']), DEFAULT_MAX_REQUEST_BODY_SIZE
+                # CORS outermost, as the SDK does, so that a 413 still carries its headers.
+                endpoint = CORSMiddleware(
+                    RequestBodyLimitMiddleware(request_response(self._revoke), DEFAULT_MAX_REQUEST_BODY_SIZE),
+                    allow_origins=['*'],
+                    allow_methods=['POST', 'OPTIONS'],
+                    allow_headers=['Mcp-Protocol-Version'],
                 )
                 route = Route(route.path, endpoint=endpoint, methods=['POST', 'OPTIONS'])
             elif isinstance(route, Route) and route.path == '/authorize':
@@ -1345,6 +1365,10 @@ class SimpleOAuthProvider(OAuthProvider):
 
     def _prefixed(self, value: str) -> str:
         """A code or token for the router: this stack's key in front, so that the router knows where to send it."""
+        if self._stack_key is None:
+            # A router flow begun on a replica that takes them and finished on one that does not (a rollout or a
+            # rollback within the lifetime of a state): refuse it rather than hand out a code nobody can route.
+            raise HTTPException(400, 'This server does not take router flows. Please try connecting again.')
         return f'{self._stack_key}{STACK_KEY_SEPARATOR}{value}'
 
     def _unprefixed(self, value: str) -> str:
@@ -2188,6 +2212,8 @@ class SimpleOAuthProvider(OAuthProvider):
         """
         Revokes a token by deleting its session from the Postgres store (soft-delete via
         `revoked_at`) -- both the access and refresh token immediately stop resolving.
+
+        The provider interface's revocation; the `/revoke` route itself is `_revoke`.
 
         :param token: The token to be revoked (access or refresh; `token_type_hint` is advisory).
         :param token_type_hint: An optional hint about the type of the token.
