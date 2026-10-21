@@ -645,6 +645,7 @@ class TestMcpProxy:
         assert json.loads(sent.content) == _INITIALIZE
         assert sent.headers['authorization'] == f'Bearer {token}'
         assert sent.headers['mcp-protocol-version'] == '2025-06-18'
+        assert sent.headers['accept-encoding'] == 'identity'
         for header in ('x-forwarded-for', 'cookie', 'x-storage-api-url'):
             assert header not in sent.headers
 
@@ -730,19 +731,73 @@ class TestMcpProxy:
         assert b'progress' in bodies[0]
         assert b'"result"' in bodies[1]
 
+    @pytest.mark.asyncio
+    async def test_a_client_that_goes_away_closes_the_upstream_stream(self) -> None:
+        closed = asyncio.Event()
+
+        async def endless_events():
+            try:
+                while True:
+                    yield b'event: ping\ndata: {}\n\n'
+                    await asyncio.sleep(0.01)
+            finally:
+                closed.set()
+
+        upstream = _Upstream(
+            httpx.Response(200, headers={'Content-Type': 'text/event-stream'}, content=endless_events())
+        )
+        router_settings = RouterSettings(router_url=ROUTER_URL, stacks=parse_stacks(None))
+        app = create_router_app(router_settings, upstream_transport=httpx.MockTransport(upstream))
+        messages = [{'type': 'http.request', 'body': b'', 'more_body': False}]
+        first_chunk = asyncio.Event()
+
+        async def receive() -> dict:
+            if messages:
+                return messages.pop()
+            await first_chunk.wait()
+            return {'type': 'http.disconnect'}
+
+        async def send(message: dict) -> None:
+            if message['type'] == 'http.response.body' and message.get('body'):
+                first_chunk.set()
+
+        scope = {
+            'type': 'http',
+            'asgi': {'version': '3.0', 'spec_version': '2.3'},
+            'http_version': '1.1',
+            'method': 'GET',
+            'scheme': 'https',
+            'server': ('mcp-router.example.com', 443),
+            'client': ('203.0.113.5', 50000),
+            'path': '/mcp',
+            'raw_path': b'/mcp',
+            'root_path': '',
+            'query_string': b'',
+            'headers': [(b'authorization', b'Bearer eu-aws.opaque')],
+        }
+        await asyncio.wait_for(app(scope, receive, send), timeout=5)
+        await asyncio.wait_for(closed.wait(), timeout=5)
+
     @pytest.mark.parametrize(
         ('failure', 'expected_status'),
         [
             (httpx.ReadTimeout('a long tool call'), 504),
             (httpx.ConnectTimeout('slow'), 504),
             (httpx.ConnectError('down'), 502),
+            # the router's own pool is full: not the stack's fault
+            (httpx.PoolTimeout('pool'), 503),
         ],
     )
-    def test_an_upstream_failure_is_a_gateway_error(self, failure: Exception, expected_status: int) -> None:
+    @pytest.mark.parametrize('path', ['/mcp', '/token'])
+    def test_an_upstream_failure_is_a_gateway_error(self, failure: Exception, expected_status: int, path: str) -> None:
         with _client(_Upstream(failure)) as client:
-            response = client.post('/mcp', json=_INITIALIZE, headers={'Authorization': 'Bearer us-aws.opaque'})
+            if path == '/mcp':
+                response = client.post(path, json=_INITIALIZE, headers={'Authorization': 'Bearer us-aws.opaque'})
+            else:
+                response = client.post(path, data={'grant_type': 'refresh_token', 'refresh_token': 'us-aws.rt'})
 
         assert response.status_code == expected_status
+        assert response.json()['error'] == 'temporarily_unavailable'
 
     def test_a_client_over_the_limit_gets_429(self) -> None:
         upstream = _Upstream(httpx.Response(200, json={}))
@@ -757,13 +812,14 @@ class TestMcpProxy:
 
     @pytest.mark.parametrize(('method', 'expected_method'), [('GET', 'GET'), ('DELETE', 'DELETE')])
     def test_get_and_delete_are_forwarded(self, method: str, expected_method: str) -> None:
-        upstream = _Upstream(httpx.Response(405))
+        upstream = _Upstream(httpx.Response(405, headers={'Allow': 'POST'}))
         with _client(upstream) as client:
             response = client.request(
                 method, '/mcp', headers={'Authorization': 'Bearer us-aws.opaque', 'Mcp-Session-Id': 'sess-1'}
             )
 
         assert response.status_code == 405
+        assert response.headers['allow'] == 'POST'
         [sent] = upstream.requests
         assert sent.method == expected_method
         assert sent.headers['mcp-session-id'] == 'sess-1'
@@ -772,4 +828,6 @@ class TestMcpProxy:
         settings = RouterSettings.from_env({'KBC_ROUTER_URL': ROUTER_URL, 'KBC_ROUTER_MCP_READ_TIMEOUT_SECONDS': '900'})
 
         assert settings.mcp_read_timeout_seconds == 900
-        assert RouterSettings.from_env({'KBC_ROUTER_URL': ROUTER_URL}).mcp_read_timeout_seconds == 300
+        defaults = RouterSettings.from_env({'KBC_ROUTER_URL': ROUTER_URL})
+        assert defaults.mcp_read_timeout_seconds == 300
+        assert defaults.mcp_max_connections == 1000

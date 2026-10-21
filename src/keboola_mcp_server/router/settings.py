@@ -52,7 +52,11 @@ class RouterSettings:
     upstream_timeout_seconds: float = 30.0
     """Connecting to a stack, and its whole answer on `/token` and `/revoke`."""
     mcp_read_timeout_seconds: float = 300.0
-    """How long a stack may stay silent on `/mcp`, before its response starts (a long tool call) and between chunks."""
+    """How long a stack may stay silent on `/mcp`, before its response starts (a long tool call) and between chunks.
+    Whole seconds in the environment."""
+    mcp_max_connections: int = 1000
+    """Connections to the stacks that `/mcp` may hold at once, per replica; each request holds one until its answer
+    ends. Above it a request waits up to `upstream_timeout_seconds` for a free one, then gets 503."""
 
     @property
     def issuer(self) -> str:
@@ -84,7 +88,11 @@ class RouterSettings:
             mcp_read_timeout_seconds=_positive_int(
                 'KBC_ROUTER_MCP_READ_TIMEOUT_SECONDS', _env(env, 'KBC_ROUTER_MCP_READ_TIMEOUT_SECONDS')
             )
-            or 300.0,
+            or cls.mcp_read_timeout_seconds,
+            mcp_max_connections=_positive_int(
+                'KBC_ROUTER_MCP_MAX_CONNECTIONS', _env(env, 'KBC_ROUTER_MCP_MAX_CONNECTIONS')
+            )
+            or cls.mcp_max_connections,
             trusted_proxy_hops=_positive_int(
                 'KBC_OAUTH_TRUSTED_PROXY_HOPS', _env(env, 'KBC_OAUTH_TRUSTED_PROXY_HOPS', 'OAUTH_TRUSTED_PROXY_HOPS')
             )

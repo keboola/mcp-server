@@ -1,6 +1,6 @@
 """The router app (`--mode=router`): OAuth metadata, `/register`, the stack picker on `/authorize`, and `/token`,
-`/revoke` and `/mcp` routed by the stack key prefix. It holds no Keboola credentials, no database and no session state, and talks
-only to the MCP servers in its stack table, never to Connection."""
+`/revoke` and `/mcp` routed by the stack key prefix. It holds no Keboola credentials, no database and no session
+state, and talks only to the MCP servers in its stack table, never to Connection."""
 
 import contextlib
 import logging
@@ -80,7 +80,7 @@ class _RequestLogMiddleware:
             await self._app(scope, receive, send_and_record)
         finally:
             path = scope['path'] if scope['path'] in self._known_paths else '<other>'
-            method = scope['method'] if scope['method'] in ('GET', 'POST', 'OPTIONS', 'HEAD') else '<other>'
+            method = scope['method'] if scope['method'] in ('GET', 'POST', 'DELETE', 'OPTIONS', 'HEAD') else '<other>'
             LOG.info(
                 f'[router] {method} {path} status={status} stack_key={state.get("stack_key") or "-"} '
                 f'duration_ms={(time.perf_counter() - started) * 1000:.0f}'
@@ -177,6 +177,13 @@ def create_router_app(
         timeout=httpx.Timeout(settings.upstream_timeout_seconds),
         follow_redirects=False,
     )
+    # Its own pool: an MCP request holds a connection for as long as its answer lasts (a long tool call, an SSE
+    # stream), and those must not use up the connections that logins and refreshes need.
+    mcp_upstream = httpx.AsyncClient(
+        transport=upstream_transport,
+        follow_redirects=False,
+        limits=httpx.Limits(max_connections=settings.mcp_max_connections, max_keepalive_connections=100),
+    )
 
     async def protected_resource_metadata(_request: Request) -> Response:
         return JSONResponse(
@@ -258,6 +265,9 @@ def create_router_app(
         headers = {name: value for name in _FORWARDED_REQUEST_HEADERS if (value := request.headers.get(name))}
         try:
             answer = await upstream.post(f'{stack.upstream}{path}', content=body, headers=headers)
+        except httpx.PoolTimeout:
+            LOG.warning(f'[router] No free connection in the router\'s own pool: stack_key={stack.key}, path={path}')
+            return _oauth_error('temporarily_unavailable', 'The router is busy. Try again.', 503)
         except httpx.TimeoutException:
             LOG.warning(f'[router] Upstream timed out: stack_key={stack.key}, path={path}')
             return _oauth_error('temporarily_unavailable', 'The Keboola stack did not answer in time.', 504)
@@ -316,7 +326,7 @@ def create_router_app(
 
     mcp_proxy = create_mcp_proxy(
         stacks=stacks,
-        upstream=upstream,
+        upstream=mcp_upstream,
         resource_metadata_url=f'{issuer}/.well-known/oauth-protected-resource',
         connect_timeout_seconds=settings.upstream_timeout_seconds,
         read_timeout_seconds=settings.mcp_read_timeout_seconds,
@@ -336,6 +346,7 @@ def create_router_app(
             yield
         finally:
             await upstream.aclose()
+            await mcp_upstream.aclose()
 
     limits: dict[str, int] = {}
     if settings.authorize_rate_limit_per_ip:

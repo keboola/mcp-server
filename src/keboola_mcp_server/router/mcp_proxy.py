@@ -25,7 +25,7 @@ _FORWARDED_REQUEST_HEADERS = (
 )
 # Never the stack's `WWW-Authenticate`: it names the stack's own metadata, and a client following it would leave the
 # router's authorization server.
-_FORWARDED_RESPONSE_HEADERS = ('content-type', 'cache-control', 'mcp-session-id', 'mcp-protocol-version')
+_FORWARDED_RESPONSE_HEADERS = ('content-type', 'cache-control', 'mcp-session-id', 'mcp-protocol-version', 'allow')
 
 
 def _bearer_token(request: Request) -> str | None:
@@ -80,6 +80,10 @@ def create_mcp_proxy(
         except httpx.HTTPError as e:
             # The status line is already out; all that is left is to end the stream.
             LOG.warning(f'[router] Upstream stream interrupted: stack_key={stack.key}: {type(e).__name__}')
+        finally:
+            # Also when the client went away: Starlette skips the background task on some disconnect paths, and an
+            # unclosed answer keeps its pooled connection.
+            await answer.aclose()
 
     async def proxy(request: Request) -> Response:
         token = _bearer_token(request)
@@ -93,11 +97,16 @@ def create_mcp_proxy(
 
         url = f'{stack.upstream}/mcp' + (f'?{request.url.query}' if request.url.query else '')
         headers = {name: value for name in _FORWARDED_REQUEST_HEADERS if (value := request.headers.get(name))}
+        # Byte for byte: a compressed answer would be decompressed here, and the decompressor may hold SSE bytes back.
+        headers['accept-encoding'] = 'identity'
         upstream_request = upstream.build_request(
             request.method, url, content=await request.body(), headers=headers, timeout=timeout
         )
         try:
             answer = await upstream.send(upstream_request, stream=True)
+        except httpx.PoolTimeout:
+            LOG.warning(f"[router] No free connection in the router's own pool: stack_key={stack.key}, path=/mcp")
+            return _gateway_error(503, 'The router is busy. Try again.')
         except httpx.TimeoutException:
             LOG.warning(f'[router] Upstream timed out: stack_key={stack.key}, path=/mcp')
             return _gateway_error(504, 'The Keboola stack did not answer in time.')
