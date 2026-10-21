@@ -256,11 +256,13 @@ def create_router_app(
 
     # Three counters, each with its own cap on distinct keys: a flood on one kind must not stop the counting of another.
     # /mcp has its own because its prefix is public and its traffic the highest. Only known-stack credentials count.
+    # Past the cap /mcp fails open instead of sharing an overflow bucket: such a bucket would refuse the tool calls of
+    # every session not yet counted in the window, and random tokens let through only get a 401 from their stack.
     address_counter = FixedWindowCounter(rate_limit_clock)
     oauth_credential_counter = FixedWindowCounter(
         rate_limit_clock, overflow_limit=_CREDENTIAL_OVERFLOW_LIMIT_PER_MINUTE
     )
-    mcp_token_counter = FixedWindowCounter(rate_limit_clock, overflow_limit=_CREDENTIAL_OVERFLOW_LIMIT_PER_MINUTE)
+    mcp_token_counter = FixedWindowCounter(rate_limit_clock)
 
     def over_credential_limit(counter: FixedWindowCounter, path: str, credential: str, limit: int) -> bool:
         key = credential_key(credential)

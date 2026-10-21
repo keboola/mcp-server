@@ -824,11 +824,11 @@ class TestMcpProxy:
 
         assert first == [200, 200, 429]  # both spellings count as one endpoint
         assert second == 200
-        with _client(_Upstream(httpx.Response(200, json={})), mcp_rate_limit_per_token=1) as client:
+        with _client(_Upstream(httpx.Response(200, json={})), now=125.0, mcp_rate_limit_per_token=1) as client:
             headers = {'Authorization': 'Bearer us-aws.third'}
             refused = [client.post('/mcp', json=_INITIALIZE, headers=headers) for _ in range(2)][-1]
         assert refused.status_code == 429
-        assert refused.headers['retry-after'] == '60'  # the seconds left in the window (the test clock is at 120 s)
+        assert refused.headers['retry-after'] == '55'  # the seconds left in the window (the test clock is at 125 s)
         assert len(upstream.requests) == 3
         logged = '\n'.join(r.getMessage() for r in caplog.records)
         assert 'Rate limit reached: group=credential:/mcp, key=sha256:' in logged
@@ -843,6 +843,8 @@ class TestMcpProxy:
             'unknown_prefix_not_counted',
             # random tokens on /mcp (a public prefix) do not switch off the throttle on refresh tokens
             'mcp_flood_keeps_token_limit',
+            # past the key cap /mcp fails open: no session is refused because others filled the map
+            'mcp_past_the_cap_fails_open',
         ],
     )
     def test_the_mcp_limit_is_kept_apart(self, case: str, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -853,7 +855,7 @@ class TestMcpProxy:
             auth = {**headers, 'Authorization': f'Bearer {token}'}
             return client.post('/mcp', json=_INITIALIZE, headers=auth).status_code
 
-        if case == 'mcp_flood_keeps_token_limit':
+        if case in ('mcp_flood_keeps_token_limit', 'mcp_past_the_cap_fails_open'):
             monkeypatch.setattr(rate_limit, '_MAX_TRACKED_KEYS', 1)
         with _client(
             upstream, api_rate_limit_per_ip=1, mcp_rate_limit_per_token=1, token_rate_limit_per_credential=1
@@ -867,6 +869,9 @@ class TestMcpProxy:
                     200,
                     429,
                 ]
+            elif case == 'mcp_past_the_cap_fails_open':
+                mcp(client, 'us-aws.first')
+                assert [mcp(client, 'us-aws.later') for _ in range(3)] == [200, 200, 200]
             else:
                 mcp(client, 'us-aws.random')
                 refresh = {'grant_type': 'refresh_token', 'refresh_token': 'us-aws.rt'}
