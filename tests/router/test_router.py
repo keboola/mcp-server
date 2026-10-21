@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 from urllib.parse import parse_qs, parse_qsl, urlparse
@@ -594,3 +595,181 @@ class TestSettings:
     @pytest.mark.parametrize(('args', 'mode'), [([], 'server'), (['--mode', 'router'], 'router')])
     def test_cli_mode(self, args: list[str], mode: str) -> None:
         assert parse_args(args).mode == mode
+
+
+_INITIALIZE = {'jsonrpc': '2.0', 'id': 1, 'method': 'initialize', 'params': {}}
+_PRM = 'resource_metadata="https://mcp-router.example.com/.well-known/oauth-protected-resource"'
+_STACK_PRM = 'resource_metadata="https://mcp.eu-central-1.keboola.com/.well-known/oauth-protected-resource"'
+_NOT_ISSUED_CHALLENGE = (
+    f'Bearer error="invalid_token", error_description="The access token was not issued by this server.", {_PRM}'
+)
+
+
+class TestMcpProxy:
+    @pytest.mark.parametrize(
+        ('token', 'expected_upstream'),
+        [
+            ('eu-aws.opaque', 'https://mcp.eu-central-1.keboola.com/mcp'),
+            ('us-gcp.opaque', 'https://mcp.us-east4.gcp.keboola.com/mcp'),
+        ],
+    )
+    @pytest.mark.parametrize('path', ['/mcp', '/mcp/'])
+    def test_routes_by_the_prefix_of_the_bearer_token(self, token: str, expected_upstream: str, path: str) -> None:
+        answer = httpx.Response(
+            200,
+            json={'jsonrpc': '2.0', 'id': 1, 'result': {}},
+            headers={'Mcp-Session-Id': 'sess-1', 'Set-Cookie': 'x=1', 'WWW-Authenticate': 'Bearer realm="stack"'},
+        )
+        upstream = _Upstream(answer)
+        with _client(upstream) as client:
+            response = client.post(
+                path,
+                json=_INITIALIZE,
+                headers={
+                    'Authorization': f'Bearer {token}',
+                    'Accept': 'application/json, text/event-stream',
+                    'Mcp-Protocol-Version': '2025-06-18',
+                    'X-Forwarded-For': '203.0.113.5',
+                    'Cookie': 'keboola_mcp_stack=us-aws',
+                    'X-Storage-Api-Url': 'https://connection.keboola.com',
+                },
+            )
+
+        assert response.status_code == 200
+        assert response.json() == {'jsonrpc': '2.0', 'id': 1, 'result': {}}
+        assert response.headers['mcp-session-id'] == 'sess-1'
+        assert 'set-cookie' not in response.headers
+        assert 'www-authenticate' not in response.headers
+        [sent] = upstream.requests
+        assert str(sent.url) == expected_upstream
+        assert json.loads(sent.content) == _INITIALIZE
+        assert sent.headers['authorization'] == f'Bearer {token}'
+        assert sent.headers['mcp-protocol-version'] == '2025-06-18'
+        for header in ('x-forwarded-for', 'cookie', 'x-storage-api-url'):
+            assert header not in sent.headers
+
+    @pytest.mark.parametrize(
+        ('authorization', 'upstream_answer', 'expected_challenge'),
+        [
+            (None, None, f'Bearer {_PRM}'),
+            ('Basic dXNlcjpwYXNz', None, f'Bearer {_PRM}'),
+            ('Bearer no-prefix', None, _NOT_ISSUED_CHALLENGE),
+            ('Bearer xx-unknown.opaque', None, _NOT_ISSUED_CHALLENGE),
+            # the stack refused the token: the client is sent back to the router's metadata, never the stack's
+            (
+                'Bearer eu-aws.revoked',
+                httpx.Response(401, headers={'WWW-Authenticate': f'Bearer {_STACK_PRM}'}),
+                f'Bearer error="invalid_token", error_description="The access token is not valid.", {_PRM}',
+            ),
+        ],
+    )
+    def test_401_points_to_the_router_metadata(
+        self, authorization: str | None, upstream_answer: httpx.Response | None, expected_challenge: str
+    ) -> None:
+        upstream = _Upstream(upstream_answer)
+        with _client(upstream) as client:
+            response = client.post(
+                '/mcp', json=_INITIALIZE, headers={'Authorization': authorization} if authorization else {}
+            )
+
+        assert response.status_code == 401
+        assert response.headers['www-authenticate'] == expected_challenge
+        assert response.json()['error'] == 'invalid_token'
+        assert len(upstream.requests) == (1 if upstream_answer is not None else 0)
+
+    @pytest.mark.asyncio
+    async def test_a_streamed_response_reaches_the_client_chunk_by_chunk(self) -> None:
+        """The second event is held back by the stack until the client has the first one: a proxy that buffered the
+        response would never deliver the first, and the test would time out."""
+        first_delivered = asyncio.Event()
+
+        async def events():
+            yield b'event: message\ndata: {"jsonrpc":"2.0","method":"notifications/progress"}\n\n'
+            await first_delivered.wait()
+            yield b'event: message\ndata: {"jsonrpc":"2.0","id":1,"result":{}}\n\n'
+
+        upstream = _Upstream(httpx.Response(200, headers={'Content-Type': 'text/event-stream'}, content=events()))
+        router_settings = RouterSettings(router_url=ROUTER_URL, stacks=parse_stacks(None))
+        app = create_router_app(router_settings, upstream_transport=httpx.MockTransport(upstream))
+        sent: list[dict] = []
+
+        requests = [{'type': 'http.request', 'body': json.dumps(_INITIALIZE).encode(), 'more_body': False}]
+
+        async def receive() -> dict:
+            if requests:
+                return requests.pop()
+            await asyncio.Event().wait()  # the client stays connected
+            raise AssertionError('unreachable')
+
+        async def send(message: dict) -> None:
+            sent.append(message)
+            if message['type'] == 'http.response.body' and b'progress' in message.get('body', b''):
+                first_delivered.set()
+
+        scope = {
+            'type': 'http',
+            'asgi': {'version': '3.0'},
+            'http_version': '1.1',
+            'method': 'POST',
+            'scheme': 'https',
+            'server': ('mcp-router.example.com', 443),
+            'client': ('203.0.113.5', 50000),
+            'path': '/mcp',
+            'raw_path': b'/mcp',
+            'root_path': '',
+            'query_string': b'',
+            'headers': [(b'authorization', b'Bearer eu-aws.opaque'), (b'content-type', b'application/json')],
+        }
+        await asyncio.wait_for(app(scope, receive, send), timeout=5)
+
+        [start] = [m for m in sent if m['type'] == 'http.response.start']
+        assert start['status'] == 200
+        assert (b'content-type', b'text/event-stream') in start['headers']
+        bodies = [m['body'] for m in sent if m['type'] == 'http.response.body' and m.get('body')]
+        assert len(bodies) == 2
+        assert b'progress' in bodies[0]
+        assert b'"result"' in bodies[1]
+
+    @pytest.mark.parametrize(
+        ('failure', 'expected_status'),
+        [
+            (httpx.ReadTimeout('a long tool call'), 504),
+            (httpx.ConnectTimeout('slow'), 504),
+            (httpx.ConnectError('down'), 502),
+        ],
+    )
+    def test_an_upstream_failure_is_a_gateway_error(self, failure: Exception, expected_status: int) -> None:
+        with _client(_Upstream(failure)) as client:
+            response = client.post('/mcp', json=_INITIALIZE, headers={'Authorization': 'Bearer us-aws.opaque'})
+
+        assert response.status_code == expected_status
+
+    def test_a_client_over_the_limit_gets_429(self) -> None:
+        upstream = _Upstream(httpx.Response(200, json={}))
+        headers = {'Authorization': 'Bearer us-aws.opaque', 'X-Forwarded-For': '198.51.100.3'}
+        with _client(upstream, api_rate_limit_per_ip=2) as client:
+            statuses = [
+                client.post(path, json=_INITIALIZE, headers=headers).status_code for path in ('/mcp', '/mcp/', '/mcp')
+            ]
+
+        assert statuses == [200, 200, 429]  # both spellings count as one endpoint
+        assert len(upstream.requests) == 2
+
+    @pytest.mark.parametrize(('method', 'expected_method'), [('GET', 'GET'), ('DELETE', 'DELETE')])
+    def test_get_and_delete_are_forwarded(self, method: str, expected_method: str) -> None:
+        upstream = _Upstream(httpx.Response(405))
+        with _client(upstream) as client:
+            response = client.request(
+                method, '/mcp', headers={'Authorization': 'Bearer us-aws.opaque', 'Mcp-Session-Id': 'sess-1'}
+            )
+
+        assert response.status_code == 405
+        [sent] = upstream.requests
+        assert sent.method == expected_method
+        assert sent.headers['mcp-session-id'] == 'sess-1'
+
+    def test_the_read_timeout_is_configurable(self) -> None:
+        settings = RouterSettings.from_env({'KBC_ROUTER_URL': ROUTER_URL, 'KBC_ROUTER_MCP_READ_TIMEOUT_SECONDS': '900'})
+
+        assert settings.mcp_read_timeout_seconds == 900
+        assert RouterSettings.from_env({'KBC_ROUTER_URL': ROUTER_URL}).mcp_read_timeout_seconds == 300

@@ -1,5 +1,5 @@
-"""The router app (`--mode=router`): OAuth metadata, `/register`, the stack picker on `/authorize`, and `/token` and
-`/revoke` routed by the stack key prefix. It holds no Keboola credentials, no database and no session state, and talks
+"""The router app (`--mode=router`): OAuth metadata, `/register`, the stack picker on `/authorize`, and `/token`,
+`/revoke` and `/mcp` routed by the stack key prefix. It holds no Keboola credentials, no database and no session state, and talks
 only to the MCP servers in its stack table, never to Connection."""
 
 import contextlib
@@ -11,7 +11,7 @@ from urllib.parse import parse_qs, parse_qsl, urlencode
 import httpx
 from mcp.server.auth.handlers.register import RegistrationHandler
 from mcp.server.auth.settings import ClientRegistrationOptions
-from mcp.server.transport_security import RequestBodyLimitMiddleware
+from mcp.server.transport_security import DEFAULT_MAX_REQUEST_BODY_SIZE, RequestBodyLimitMiddleware
 from mcp.shared.auth import OAuthClientInformationFull
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
@@ -22,6 +22,7 @@ from starlette.routing import Route, request_response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from keboola_mcp_server.router.picker import PICKER_CSS, PICKER_HEADERS, PICKER_STYLESHEET_PATH, render_picker
+from keboola_mcp_server.router.mcp_proxy import create_mcp_proxy
 from keboola_mcp_server.router.rate_limit import (
     FixedWindowCounter,
     PerAddressRateLimitMiddleware,
@@ -95,12 +96,23 @@ class _StatelessClients:
         return None
 
 
+# The MCP transport's headers a browser-based client sends and reads, on top of what the OAuth endpoints need.
+_MCP_CORS_ALLOW_HEADERS = ['Authorization', 'Content-Type', 'Mcp-Protocol-Version', 'Mcp-Session-Id', 'Last-Event-Id']
+_MCP_CORS_EXPOSE_HEADERS = ['Mcp-Session-Id', 'Mcp-Protocol-Version', 'WWW-Authenticate']
+
+
 def _endpoint(
-    handler: Callable[[Request], Awaitable[Response]], *, methods: list[str], cross_origin: bool
+    handler: Callable[[Request], Awaitable[Response]],
+    *,
+    methods: list[str],
+    cross_origin: bool,
+    max_body_bytes: int = _MAX_BODY_BYTES,
+    mcp: bool = False,
 ) -> tuple[ASGIApp, list[str]]:
-    """The ASGI app and the methods of a route: the body capped at `_MAX_BODY_BYTES` (413 above it), and with
-    `cross_origin`, CORS for browser-based MCP clients, which read the metadata and call `/register` and `/token`
-    from another origin (as the SDK does on the regional server; never on `/authorize`, which is navigated to)."""
+    """The ASGI app and the methods of a route: the body capped at `max_body_bytes` (413 above it), and with
+    `cross_origin`, CORS for browser-based MCP clients, which read the metadata and call `/register`, `/token` and
+    `/mcp` from another origin (as the SDK does on the regional server; never on `/authorize`, which is navigated to).
+    """
     served = [*methods, 'HEAD'] if 'GET' in methods else methods
 
     async def only_its_methods(request: Request) -> Response:
@@ -110,13 +122,18 @@ def _endpoint(
             return Response(status_code=405, headers={'Allow': ', '.join(served)})
         return await handler(request)
 
-    app: ASGIApp = RequestBodyLimitMiddleware(request_response(only_its_methods), _MAX_BODY_BYTES)
+    app: ASGIApp = RequestBodyLimitMiddleware(request_response(only_its_methods), max_body_bytes)
     if not cross_origin:
         return app, methods
     allowed = [*methods, 'OPTIONS']
-    return CORSMiddleware(
-        app, allow_origins=['*'], allow_methods=allowed, allow_headers=['Mcp-Protocol-Version']
-    ), allowed
+    cors = CORSMiddleware(
+        app,
+        allow_origins=['*'],
+        allow_methods=allowed,
+        allow_headers=_MCP_CORS_ALLOW_HEADERS if mcp else ['Mcp-Protocol-Version'],
+        expose_headers=_MCP_CORS_EXPOSE_HEADERS if mcp else [],
+    )
+    return cors, allowed
 
 
 def _form_fields(body: bytes) -> dict[str, list[str]]:
@@ -297,6 +314,14 @@ def create_router_app(
     async def picker_stylesheet(_request: Request) -> Response:
         return Response(PICKER_CSS, media_type='text/css', headers={'Cache-Control': 'public, max-age=3600'})
 
+    mcp_proxy = create_mcp_proxy(
+        stacks=stacks,
+        upstream=upstream,
+        resource_metadata_url=f'{issuer}/.well-known/oauth-protected-resource',
+        connect_timeout_seconds=settings.upstream_timeout_seconds,
+        read_timeout_seconds=settings.mcp_read_timeout_seconds,
+    )
+
     async def health_check(_request: Request) -> Response:
         return JSONResponse({'status': 'ok'})
 
@@ -341,11 +366,21 @@ def create_router_app(
     for path, handler, methods, cross_origin in endpoints:
         app, allowed = _endpoint(handler, methods=methods, cross_origin=cross_origin)
         routes.append(Route(path, app, methods=allowed))
+    # The MCP endpoint under both spellings a client may be configured with (the trailing-slash redirect is off).
+    mcp_app, mcp_methods = _endpoint(
+        mcp_proxy,
+        methods=['GET', 'POST', 'DELETE'],
+        cross_origin=True,
+        max_body_bytes=DEFAULT_MAX_REQUEST_BODY_SIZE,
+        mcp=True,
+    )
+    mcp_paths = ('/mcp', '/mcp/')
+    routes.extend(Route(path, mcp_app, methods=mcp_methods) for path in mcp_paths)
 
     router_app = Starlette(
         routes=routes,
         middleware=[
-            Middleware(_RequestLogMiddleware, known_paths=frozenset(path for path, *_ in endpoints)),
+            Middleware(_RequestLogMiddleware, known_paths=frozenset([*(path for path, *_ in endpoints), *mcp_paths])),
             Middleware(
                 PerAddressRateLimitMiddleware,
                 limits=limits,

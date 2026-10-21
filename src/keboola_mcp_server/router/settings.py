@@ -50,6 +50,9 @@ class RouterSettings:
     trusted_proxy_hops: int = 1
     """How many proxies in front of the router append to `X-Forwarded-For` (see `oauth.caller_address`)."""
     upstream_timeout_seconds: float = 30.0
+    """Connecting to a stack, and its whole answer on `/token` and `/revoke`."""
+    mcp_read_timeout_seconds: float = 300.0
+    """How long a stack may stay silent on `/mcp`, before its response starts (a long tool call) and between chunks."""
 
     @property
     def issuer(self) -> str:
@@ -78,6 +81,10 @@ class RouterSettings:
             api_rate_limit_per_ip=_positive_int(
                 'KBC_ROUTER_API_RATE_LIMIT_PER_IP', _env(env, 'KBC_ROUTER_API_RATE_LIMIT_PER_IP')
             ),
+            mcp_read_timeout_seconds=_positive_int(
+                'KBC_ROUTER_MCP_READ_TIMEOUT_SECONDS', _env(env, 'KBC_ROUTER_MCP_READ_TIMEOUT_SECONDS')
+            )
+            or 300.0,
             trusted_proxy_hops=_positive_int(
                 'KBC_OAUTH_TRUSTED_PROXY_HOPS', _env(env, 'KBC_OAUTH_TRUSTED_PROXY_HOPS', 'OAUTH_TRUSTED_PROXY_HOPS')
             )
