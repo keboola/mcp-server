@@ -72,6 +72,12 @@ def _truncate_data(qr: QueryResult, max_rows: int | None, max_chars: int | None)
             ),
             'id,name,email\r\n1,John,john@foo.com\r\n2,Joe,joe@bar.com\r\n',  # CSV
         ),
+        (
+            'show tables;',
+            'Table List',
+            QueryResult(status='ok', data=None, message='no result set'),
+            'message\r\nno result set\r\n',  # CSV
+        ),
     ],
 )
 async def test_query_data(
@@ -141,9 +147,6 @@ _REJECTED_STATEMENTS = [
     'EXPLAIN DELETE FROM "t"',
     # The Snowflake pipe operator `->>` chains statements: parsed, command and fallback paths.
     'SELECT 1 ->> DELETE FROM "t"',
-    # sqlglot reads `{# ... #}` as a comment; the backends do not.
-    'SELECT 1 {# ; DROP TABLE "t"; #}',
-    'SELECT 1 {# ->> DROP TABLE "t" #}',
     'SHOW GRANTS ->> DROP TABLE "t"',
     'EXPLAIN SELECT 1 ->> DROP TABLE "t"',
     'SELECT 1 ->> SELECT 2 ->> UNDROP TABLE "t"',
@@ -165,6 +168,7 @@ _DIALECTS = ['Snowflake', 'BigQuery']
         # Dialect-specific quoting keeps the smuggled statement inside one literal or identifier.
         ('SELECT $$; DROP TABLE t$$', 'Snowflake'),
         ("SELECT $1 FROM @s/dir/file.csv (FILE_FORMAT => 'csv')", 'Snowflake'),
+        ('SELECT $1 FROM @"my st"/dir/f.csv', 'Snowflake'),
         ('SELECT * FROM `project.dataset.t;DROP TABLE t`', 'BigQuery'),
     ],
 )
@@ -181,6 +185,12 @@ def test_validate_read_only_statement_allows(sql_query: str, dialect: str):
         ('SELECT $1 FROM @s/a//b; DROP TABLE "t"', 'Snowflake'),
         ('SELECT $1 FROM @~/a--b; DROP TABLE "t"', 'Snowflake'),
         ('SELECT $1 FROM @s/a/*b; DROP TABLE "t"; */', 'Snowflake'),
+        ('SELECT $1 FROM @"my st"/a//b; DROP TABLE "t"', 'Snowflake'),
+        ('SELECT $1 FROM @db."my schema".st/a--b; DROP TABLE "t"', 'Snowflake'),
+        # sqlglot reads `{# ... #}` as a comment; Snowflake does not, BigQuery reads `#` as a line comment.
+        ('SELECT 1 {# ; DROP TABLE "t"; #}', 'Snowflake'),
+        ('SELECT 1 {# ->> DROP TABLE "t" #}', 'Snowflake'),
+        ("SELECT 1 {# '\n; DROP TABLE d.t; SELECT '' --'", 'BigQuery'),
         ("SELECT 1 EXPORT DATA OPTIONS (uri = 'gs://b/*') AS SELECT 1", 'BigQuery'),
         # BigQuery escapes a backtick in a quoted identifier with a backslash.
         ('SELECT 1 AS `\\``; DROP TABLE d.t; SELECT 1 #`', 'BigQuery'),
@@ -191,6 +201,12 @@ def test_validate_read_only_statement_allows(sql_query: str, dialect: str):
 def test_validate_read_only_statement_rejects(sql_query: str, dialect: str):
     with pytest.raises(InvalidArgumentError):
         validate_read_only_statement(sql_query, dialect)
+
+
+@pytest.mark.parametrize('dialect', ['Redshift', None])
+def test_validate_read_only_statement_unknown_dialect(dialect: str | None):
+    with pytest.raises(ValueError, match='unsupported SQL dialect'):
+        validate_read_only_statement('SELECT 1', dialect)
 
 
 @pytest.mark.asyncio

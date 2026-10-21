@@ -3,7 +3,7 @@ import contextlib
 import csv
 import logging
 import re
-from collections.abc import Awaitable, Mapping
+from collections.abc import Awaitable, Iterator, Mapping
 from io import StringIO
 from typing import Annotated, ClassVar
 
@@ -53,7 +53,7 @@ _EXPLAIN_OPTIONS = re.compile(r'^\s*USING\s+\w+\s', re.IGNORECASE)
 _UNUSUAL_LINE_BREAKS = re.compile('[\x0b\x0c\x85\u2028\u2029]')
 # Snowflake reads an unquoted stage path up to whitespace, sqlglot as tokens, so `//`, `--` or `/*` inside
 # the path would start a comment for sqlglot only.
-_STAGE_PATH = re.compile(r'[^\s;()]*')
+_STAGE_PATH = re.compile(r'(?:"(?:[^"]|"")*"|[^\s;()"])*')
 _COMMENT_STARTS = ('//', '--', '/*')
 _READ_ONLY_EXPRESSIONS = (exp.Select, exp.SetOperation, exp.Subquery, exp.Show, exp.Describe)
 # Statements sqlglot cannot model fully are parsed as `exp.Command` named by their first keyword.
@@ -136,6 +136,18 @@ def _is_read_only_tokens(tokens: list[Token]) -> bool:
     return not any(token.token_type in _WRITE_TOKENS for token in tokens[1:])
 
 
+@contextlib.contextmanager
+def _quiet_sqlglot() -> Iterator[None]:
+    """Silences sqlglot's 'unsupported syntax' warning, which quotes the user's SQL, for an allowed SHOW or DESCRIBE."""
+    sqlglot_logger = logging.getLogger('sqlglot')
+    level = sqlglot_logger.level
+    sqlglot_logger.setLevel(logging.ERROR)
+    try:
+        yield
+    finally:
+        sqlglot_logger.setLevel(level)
+
+
 def validate_read_only_statement(sql_query: str, sql_dialect: str | None) -> None:
     """Raises `InvalidArgumentError` unless `sql_query` is exactly one SELECT, WITH ... SELECT, SHOW, DESCRIBE
     or EXPLAIN statement in the given workspace dialect.
@@ -149,9 +161,9 @@ def validate_read_only_statement(sql_query: str, sql_dialect: str | None) -> Non
     if _UNUSUAL_LINE_BREAKS.search(sql_query):
         raise InvalidArgumentError(f'The SQL query contains an unsupported line break character. {_NOT_READ_ONLY_MSG}')
     dialect = sqlglot.Dialect.get_or_raise(sqlglot_dialect)
-    # sqlglot treats `{# ... #}` as a (Jinja) comment in every dialect; neither backend does, so expose its content
-    # to the checks. Replacing two characters with two others keeps all other token boundaries.
-    _validate_statement(dialect, sql_query.replace('{#', '{x'))
+    # sqlglot treats `{# ... #}` as a (Jinja) comment in every dialect; neither backend does. With a space, sqlglot
+    # reads it as the backend does: `{` and then `#` (a BigQuery line comment, nothing on Snowflake).
+    _validate_statement(dialect, sql_query.replace('{#', '{ #'))
 
 
 def _validate_statement(dialect: sqlglot.Dialect, sql_query: str) -> None:
@@ -195,7 +207,9 @@ def _validate_statement(dialect: sqlglot.Dialect, sql_query: str) -> None:
 
     try:
         # A comment after the final `;` comes back as an `exp.Semicolon`.
-        expressions = [e for e in dialect.parse(sql_query) if e is not None and not isinstance(e, exp.Semicolon)]
+        with _quiet_sqlglot():
+            parsed = dialect.parse(sql_query)
+        expressions = [e for e in parsed if e is not None and not isinstance(e, exp.Semicolon)]
     except ParseError:
         read_only = _is_read_only_tokens(statement)
     else:
