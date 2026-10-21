@@ -824,6 +824,11 @@ class TestMcpProxy:
 
         assert first == [200, 200, 429]  # both spellings count as one endpoint
         assert second == 200
+        with _client(_Upstream(httpx.Response(200, json={})), mcp_rate_limit_per_token=1) as client:
+            headers = {'Authorization': 'Bearer us-aws.third'}
+            refused = [client.post('/mcp', json=_INITIALIZE, headers=headers) for _ in range(2)][-1]
+        assert refused.status_code == 429
+        assert refused.headers['retry-after'] == '60'  # the seconds left in the window (the test clock is at 120 s)
         assert len(upstream.requests) == 3
         logged = '\n'.join(r.getMessage() for r in caplog.records)
         assert 'Rate limit reached: group=credential:/mcp, key=sha256:' in logged
