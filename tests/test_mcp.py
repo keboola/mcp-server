@@ -2339,7 +2339,9 @@ class TestDirectoryToolProfile:
             tool_name='run_sync_action', directory_profile=True, **common
         )
         assert not ToolsFilteringMiddleware.authorize_tool_call(tool_name='run_job', directory_profile=True, **common)
-        assert not ToolsFilteringMiddleware.authorize_tool_call(tool_name='run_sync_action', **common)
+        assert not ToolsFilteringMiddleware.authorize_tool_call(
+            tool_name='run_sync_action', directory_profile=False, **common
+        )
 
 
 class TestUnauthorizedDropsARevokedSession:

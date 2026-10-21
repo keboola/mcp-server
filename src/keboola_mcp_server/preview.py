@@ -17,6 +17,7 @@ from keboola_mcp_server.mcp import (
     ServerState,
     SessionStateMiddleware,
     ToolsFilteringMiddleware,
+    is_directory_request,
     project_has_semantic_models,
 )
 from keboola_mcp_server.tools import data_apps as data_app_tools
@@ -320,6 +321,7 @@ async def preview_config_diff(rq: Request) -> Response:
         features=ToolsFilteringMiddleware.get_project_features(token_info),
         is_oauth=bool(client.bearer_token),
         is_main_branch=client.branch_id is None,
+        directory_profile=is_directory_request(rq),
     )
     if denial:
         LOG.info(f'[preview_config_diff] Tool authorization denied (project/role/branch): {preview_rq.tool_name}')

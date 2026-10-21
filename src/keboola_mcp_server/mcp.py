@@ -428,10 +428,14 @@ def get_http_request_or_none() -> Request | None:
 
 
 def is_directory_session() -> bool:
+    """`is_directory_request` for the request of the MCP call being handled."""
+    return is_directory_request(get_http_request_or_none())
+
+
+def is_directory_request(http_rq: Request | None) -> bool:
     """Whether the request comes from a session bound to the global router's resource (`ProxyAccessToken.
     directory_profile`), which gets only the `DIRECTORY_TOOLS`. Read from the session row through the bearer token,
     before and independently of any Keboola token verification, so no fallback path can widen it."""
-    http_rq = get_http_request_or_none()
     user = http_rq.scope.get('user') if http_rq is not None else None
     return (
         isinstance(user, AuthenticatedUser)
@@ -1486,7 +1490,7 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         features: set[str],
         is_oauth: bool,
         is_main_branch: bool,
-        directory_profile: bool = False,
+        directory_profile: bool,
     ) -> str | None:
         """
         Decide whether a call to ``tool_name`` is allowed given the project features, the token role,
