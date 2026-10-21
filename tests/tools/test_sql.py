@@ -176,6 +176,8 @@ _DIALECTS = ['Snowflake', 'BigQuery']
         ('SELECT $1 FROM @db."my schema".st/f.csv', 'Snowflake'),
         ('SELECT $1 FROM @%"My Table"/f.csv', 'Snowflake'),
         ('SELECT $1 FROM @~/f.csv, @s/g.csv', 'Snowflake'),
+        ('SELECT ' + 'REPLACE(' * 60 + '"c"' + ", 'a', 'b')" * 60 + ' FROM "t"', 'Snowflake'),
+        ('SELECT ' + '(' * 200 + '1' + ')' * 200, 'Snowflake'),  # too deep to parse, left to the backend
         ('SELECT * FROM (SELECT $1 FROM @s/a)', 'Snowflake'),
         ('SELECT * FROM `project.dataset.t;DROP TABLE t`', 'BigQuery'),
     ],
@@ -205,7 +207,8 @@ def test_validate_read_only_statement_allows(sql_query: str, dialect: str):
         ('SELECT $1 FROM @s/a\xa0--b; DROP TABLE "t"', 'Snowflake'),  # non-ASCII whitespace is part of the path
         ("SELECT $1 FROM @s/f.csv(FILE_FORMAT=>'x')", 'Snowflake'),  # a quote needs whitespace before it
         ('EXPLAIN EXPLAIN SELECT 1', 'Snowflake'),
-        ('SELECT ' + '(' * 5000 + '1' + ')' * 5000, 'Snowflake'),
+        ('SELECT $1 FROM @s/$$ ; DROP TABLE "t"; $$', 'Snowflake'),
+        ('SELECT $1 FROM @s/a;/* ; DROP TABLE "t"; */', 'Snowflake'),
         # sqlglot reads `{# ... #}` as a comment; Snowflake does not, BigQuery reads `#` as a line comment.
         ('SELECT 1 {# ; DROP TABLE "t"; #}', 'Snowflake'),
         ('SELECT 1 {# ->> DROP TABLE "t" #}', 'Snowflake'),
@@ -236,10 +239,12 @@ def test_validate_read_only_statement_rejects_long_query(dialect: str):
 
 
 def test_validate_read_only_statement_is_linear():
-    # 24 KB of stage references; a per-reference rescan of the query took seconds here.
-    sql_query = 'SELECT ' + ','.join(['@a'] * 8000)
+    # 90 KB of stage references, rejected after the stage scan and before parsing: rescanning the path at each
+    # reference took seconds here.
+    sql_query = 'SELECT ' + ','.join(['@a'] * 30000) + '; SELECT 1'
     start = time.perf_counter()
-    validate_read_only_statement(sql_query, 'Snowflake')
+    with pytest.raises(InvalidArgumentError, match='exactly one SQL statement'):
+        validate_read_only_statement(sql_query, 'Snowflake')
     assert time.perf_counter() - start < 5
 
 

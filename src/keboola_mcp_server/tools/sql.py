@@ -57,12 +57,12 @@ MAX_SQL_QUERY_LENGTH = 4_000_000
 # Snowflake reads an unquoted stage path up to whitespace, sqlglot reads it as tokens. Where the two could disagree,
 # fail closed: outside quoted names in the stage-name part, a path must not contain a quote or a comment start.
 _QUOTED_NAME = r'"(?:[^"]|"")*"'
-_UNQUOTED_NAME = r'[^ \t\n\r;/."\']*'
+_UNQUOTED_NAME = r'[^ \t\n\r/."\']*'
 _STAGE_PATH = re.compile(
-    rf'(?P<name>[~%]?(?:{_QUOTED_NAME}|{_UNQUOTED_NAME})(?:\.(?:{_QUOTED_NAME}|{_UNQUOTED_NAME}))*)(?P<rest>[^ \t\n\r;]*)'
+    rf'(?P<name>[~%]?(?:{_QUOTED_NAME}|{_UNQUOTED_NAME})(?:\.(?:{_QUOTED_NAME}|{_UNQUOTED_NAME}))*)(?P<rest>[^ \t\n\r]*)'
 )
 _QUOTED_NAME_RE = re.compile(_QUOTED_NAME)
-_UNSAFE_IN_STAGE_PATH = ('"', "'", '//', '--', '/*')
+_UNSAFE_IN_STAGE_PATH = ('"', "'", '$$', '//', '--', '/*')
 _READ_ONLY_EXPRESSIONS = (exp.Select, exp.SetOperation, exp.Subquery, exp.Show, exp.Describe)
 # Statements sqlglot cannot model fully are parsed as `exp.Command` named by their first keyword.
 _READ_ONLY_COMMANDS = frozenset({'SHOW', 'DESCRIBE', 'DESC'})
@@ -132,7 +132,7 @@ def _check_stage_paths(sql_query: str, tokens: list[Token]) -> None:
         unquoted = _QUOTED_NAME_RE.sub('x', path.group('name')) + path.group('rest')
         if any(unsafe in unquoted for unsafe in _UNSAFE_IN_STAGE_PATH):
             raise InvalidArgumentError(
-                'Stage paths must not contain quotes or comment starts (//, --, /*) outside quoted stage names; '
+                'Stage paths must not contain quotes, $$ or comment starts (//, --, /*) outside quoted stage names; '
                 'put whitespace between the path and what follows it.'
             )
 
@@ -256,7 +256,8 @@ def _validate_statement(dialect: sqlglot.Dialect, sql_query: str, *, explained: 
         with _QUIET_SQLGLOT.active():
             parsed = dialect.parser().parse(tokens, sql_query)
         expressions = [e for e in parsed if e is not None and not isinstance(e, exp.Semicolon)]
-    except ParseError:
+    except (ParseError, RecursionError):
+        # The tokenizer and the stage scan are not recursive, so the keyword fallback still applies.
         read_only = _is_read_only_tokens(statement)
     else:
         read_only = len(expressions) == 1 and _is_read_only_expression(expressions[0], statement)
