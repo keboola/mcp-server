@@ -98,7 +98,7 @@ def _endpoint(
         # The route also accepts OPTIONS for CORS, and CORS answers only a real preflight itself: any other OPTIONS
         # would reach the handler, which would treat it as the POST it serves.
         if request.method not in served:
-            return Response(status_code=405, headers={'Allow': ', '.join(methods)})
+            return Response(status_code=405, headers={'Allow': ', '.join(served)})
         return await handler(request)
 
     app: ASGIApp = RequestBodyLimitMiddleware(request_response(only_its_methods), _MAX_BODY_BYTES)
@@ -199,7 +199,7 @@ def create_router_app(
         )
 
     async def authorize(request: Request) -> Response:
-        if request.method == 'GET':
+        if request.method in ('GET', 'HEAD'):
             # A reviewer link (or any link) can name the stack and skip the picker; any other value shows the picker.
             if (stack := stacks.get(request.query_params.get('stack') or '')) is None:
                 return picker(request)
