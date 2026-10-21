@@ -732,6 +732,24 @@ class TestMcpProxy:
         assert b'progress' in bodies[0]
         assert b'"result"' in bodies[1]
 
+    def test_each_stack_gets_its_own_mcp_pool(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Built without a test transport, as in production: an injected transport ignores `limits`, so every other
+        test shares one pool whatever the app configures."""
+        created: list[dict] = []
+
+        class RecordingClient(httpx.AsyncClient):
+            def __init__(self, **kwargs) -> None:
+                super().__init__(**kwargs)
+                created.append(kwargs)
+
+        monkeypatch.setattr(httpx, 'AsyncClient', RecordingClient)
+        create_router_app(RouterSettings(router_url=ROUTER_URL, stacks=parse_stacks(None), mcp_max_connections=7))
+
+        [oauth, *mcp] = created
+        assert 'limits' not in oauth  # /token and /revoke keep httpx's default pool of their own
+        assert len(mcp) == len(DEFAULT_STACKS)
+        assert all(kwargs['limits'].max_connections == 7 and kwargs['transport'] is None for kwargs in mcp)
+
     def test_a_stack_silent_after_the_first_chunk_ends_the_stream(self) -> None:
         """Past the status line a timeout can only end the stream: the client keeps what it got, and the error does
         not escape the app."""
