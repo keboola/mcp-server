@@ -20,9 +20,9 @@ from keboola_mcp_server.oauth import caller_address
 LOG = logging.getLogger(__name__)
 
 WINDOW_SECONDS = 60
-# Distinct keys counted per window. A flood of fresh keys beyond it is let through rather than allowed to grow the map
-# without bound.
+# Distinct keys tracked per window, so that a flood of made-up keys cannot grow the map without bound.
 _MAX_TRACKED_KEYS = 100_000
+_OVERFLOW_KEY = '*overflow*'
 
 
 def credential_key(credential: str) -> str:
@@ -30,37 +30,31 @@ def credential_key(credential: str) -> str:
     return hashlib.sha256(credential.encode()).hexdigest()
 
 
-def too_many_requests() -> Response:
+def too_many_requests(retry_after: int = WINDOW_SECONDS) -> Response:
+    """:param retry_after: Seconds until the window that refused the request ends."""
     return JSONResponse(
-        {'error': 'temporarily_unavailable', 'error_description': 'Too many requests. Try again in a minute.'},
+        {'error': 'temporarily_unavailable', 'error_description': 'Too many requests. Try again later.'},
         status_code=429,
-        headers={'Retry-After': str(WINDOW_SECONDS)},
+        headers={'Retry-After': str(retry_after)},
     )
 
 
 class FixedWindowCounter:
     """Requests per (group, key) in fixed one-minute windows."""
 
-    def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
+    def __init__(self, clock: Callable[[], float] = time.monotonic, *, overflow_limit: int | None = None) -> None:
+        """:param overflow_limit: Once the window tracks the maximum of distinct keys, a new key is counted against one
+        shared key of its group with this limit. None lets it through uncounted."""
         self._clock = clock
+        self._overflow_limit = overflow_limit
         self._window = 0
-        self._dropped = 0
+        self._capped = False
+        self._uncounted = 0
         self._counts: dict[tuple[str, str], int] = {}
 
-    def hit(self, group: str, key: str) -> int:
-        """Counts one request and returns the count of this window, 0 for a key beyond the tracked maximum."""
-        window = int(self._clock() // WINDOW_SECONDS)
-        if window != self._window:
-            self._window, self._counts = window, {}
-            if self._dropped:
-                LOG.warning(f'[router] {self._dropped} requests were not counted: too many distinct keys')
-                self._dropped = 0
-        counted = (group, key)
-        if counted not in self._counts and len(self._counts) >= _MAX_TRACKED_KEYS:
-            self._dropped += 1
-            return 0
-        self._counts[counted] = self._counts.get(counted, 0) + 1
-        return self._counts[counted]
+    def seconds_left(self) -> int:
+        """Seconds until the current window ends, at least 1: the Retry-After of a refused request."""
+        return max(1, WINDOW_SECONDS - int(self._clock() % WINDOW_SECONDS))
 
     def over_limit(self, group: str, key: str, limit: int, *, log_key: str) -> bool:
         """Counts one request; whether it is over `limit`. Logged once per key and window, so a flood does not flood
@@ -68,10 +62,25 @@ class FixedWindowCounter:
 
         :param log_key: What the log line names the key by: an address, or a shortened credential hash.
         """
-        hits = self.hit(group, key)
-        if hits == limit + 1:
-            LOG.warning(f'[router] Rate limit reached: group={group}, key={log_key}, limit={limit}/min')
-        return hits > limit
+        window = int(self._clock() // WINDOW_SECONDS)
+        if window != self._window:
+            if self._uncounted:
+                LOG.warning(f'[router] {self._uncounted} requests were not counted: too many distinct keys')
+            self._window, self._counts, self._capped, self._uncounted = window, {}, False, 0
+        counted, bucket_limit, bucket_log_key = (group, key), limit, log_key
+        if counted not in self._counts and len(self._counts) >= _MAX_TRACKED_KEYS:
+            if not self._capped:
+                self._capped = True
+                outcome = 'not counted' if self._overflow_limit is None else 'counted in the overflow bucket'
+                LOG.warning(f'[router] {_MAX_TRACKED_KEYS} distinct keys this minute: new keys are {outcome}')
+            if self._overflow_limit is None:
+                self._uncounted += 1
+                return False
+            counted, bucket_limit, bucket_log_key = (group, _OVERFLOW_KEY), self._overflow_limit, _OVERFLOW_KEY
+        hits = self._counts[counted] = self._counts.get(counted, 0) + 1
+        if hits == bucket_limit + 1:
+            LOG.warning(f'[router] Rate limit reached: group={group}, key={bucket_log_key}, limit={bucket_limit}/min')
+        return hits > bucket_limit
 
 
 class PerAddressRateLimitMiddleware:
@@ -96,4 +105,4 @@ class PerAddressRateLimitMiddleware:
         if address is None or not self._counter.over_limit(f'address:{path}', address, limit, log_key=address):
             await self._app(scope, receive, send)
             return
-        await too_many_requests()(scope, receive, send)
+        await too_many_requests(self._counter.seconds_left())(scope, receive, send)

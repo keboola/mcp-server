@@ -7,6 +7,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from keboola_mcp_server.cli import parse_args
+from keboola_mcp_server.router import app as router_app
 from keboola_mcp_server.router import rate_limit
 from keboola_mcp_server.router.app import create_router_app
 from keboola_mcp_server.router.picker import render_picker
@@ -30,13 +31,13 @@ class _Upstream:
         return self._response
 
 
-def _client(upstream: _Upstream | None = None, **settings) -> TestClient:
+def _client(upstream: _Upstream | None = None, *, now: float = 120.0, **settings) -> TestClient:
     router_settings = RouterSettings(router_url=ROUTER_URL, stacks=parse_stacks(None), **settings)
     app = create_router_app(
         router_settings,
         upstream_transport=httpx.MockTransport(upstream or _Upstream()),
         # one rate-limit window for the whole test, so a minute boundary cannot reset the counts halfway
-        rate_limit_clock=lambda: 120.0,
+        rate_limit_clock=lambda: now,
     )
     return TestClient(app, base_url=ROUTER_URL, follow_redirects=False)
 
@@ -500,15 +501,35 @@ class TestRateLimits:
         assert preflight.status_code == 200  # a real preflight is answered by CORS and not counted
         assert preflight.headers['access-control-allow-origin'] == '*'
 
-    def test_keys_beyond_the_cap_are_not_counted(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_retry_after_is_the_rest_of_the_window(self) -> None:
+        refresh = {'grant_type': 'refresh_token', 'refresh_token': 'us-aws.rt'}
+        with _client(now=125.0, authorize_rate_limit_per_ip=1, token_rate_limit_per_credential=1) as client:
+            authorize = [client.get('/authorize', headers={'X-Forwarded-For': '203.0.113.1'}) for _ in range(2)][-1]
+            token = [client.post('/token', data=refresh) for _ in range(2)][-1]
+
+        assert authorize.status_code == token.status_code == 429
+        assert authorize.headers['retry-after'] == token.headers['retry-after'] == '55'
+
+    def test_keys_beyond_the_cap(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A new address beyond the cap is let through uncounted. New credentials beyond it share one overflow bucket
+        with its own limit, so a flood of made-up credentials cannot switch the /token and /revoke limit off; a
+        credential counted before keeps its own count, and a refused request is not forwarded."""
         monkeypatch.setattr(rate_limit, '_MAX_TRACKED_KEYS', 1)
-        with _client(authorize_rate_limit_per_ip=1) as client:
-            statuses = [
+        monkeypatch.setattr(router_app, '_CREDENTIAL_OVERFLOW_LIMIT_PER_MINUTE', 1)
+        upstream = _Upstream(httpx.Response(200, json={}))
+        with _client(upstream, authorize_rate_limit_per_ip=1, token_rate_limit_per_credential=2) as client:
+            addresses = [
                 client.get('/authorize', headers={'X-Forwarded-For': address}).status_code
                 for address in ('203.0.113.1', '203.0.113.1', '203.0.113.2', '203.0.113.2')
             ]
+            credentials = [
+                client.post('/revoke', data={'token': f'us-aws.{credential}'}).status_code
+                for credential in ('known', 'new-1', 'new-2', 'new-3', 'known', 'known')
+            ]
 
-        assert statuses == [200, 429, 200, 200]
+        assert addresses == [200, 429, 200, 200]
+        assert credentials == [200, 200, 429, 429, 200, 429]
+        assert len(upstream.requests) == 3
 
 
 class TestSettings:

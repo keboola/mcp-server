@@ -43,6 +43,10 @@ _MAX_BODY_BYTES = 64 * 1024
 # let a caller pick the address the regional server counts.
 _FORWARDED_REQUEST_HEADERS = ('content-type', 'accept', 'authorization')
 _FORWARDED_RESPONSE_HEADERS = ('content-type', 'cache-control', 'pragma', 'www-authenticate')
+# Requests per minute, path and replica shared by the new credentials that arrive after 100k distinct ones were counted
+# in that minute. It caps what is forwarded beyond the cap at ~17/s per path and replica; the first 100k still reach
+# upstream. Credentials counted before the cap keep their own count, but a new one may be refused until a flood stops.
+_CREDENTIAL_OVERFLOW_LIMIT_PER_MINUTE = 1_000
 # The parameter of each grant that carries the stack key prefix.
 _GRANT_TOKEN_PARAMETER = {'authorization_code': 'code', 'refresh_token': 'refresh_token'}
 _PUBLIC_AND_SECRET_CLIENT_AUTH = ['none', 'client_secret_post', 'client_secret_basic']
@@ -222,11 +226,9 @@ def create_router_app(
         )
         return response
 
-    # Two counters, each with its own cap on distinct keys: a flood of distinct credentials must not stop the counting of
-    # addresses. Only a credential that names a known stack is counted: anything else is answered without an upstream
-    # call, and counting it would only fill the map.
+    # Separate caps, so a flood of credentials cannot stop the counting of addresses; only known-stack credentials count.
     address_counter = FixedWindowCounter(rate_limit_clock)
-    credential_counter = FixedWindowCounter(rate_limit_clock)
+    credential_counter = FixedWindowCounter(rate_limit_clock, overflow_limit=_CREDENTIAL_OVERFLOW_LIMIT_PER_MINUTE)
 
     def over_credential_limit(path: str, credential: str) -> bool:
         key = credential_key(credential)
@@ -269,7 +271,7 @@ def create_router_app(
             # Answered here, without asking any stack: no stack issued a grant without a known prefix.
             return _oauth_error('invalid_grant', f'The {parameter} was not issued by this authorization server.')
         if over_credential_limit('/token', value):
-            return too_many_requests()
+            return too_many_requests(credential_counter.seconds_left())
         return await forward(request, stack, '/token', body)
 
     async def revoke(request: Request) -> Response:
@@ -284,7 +286,7 @@ def create_router_app(
             # RFC 7009 §2.2: an unknown token is answered with 200, there is nothing to revoke.
             return Response(status_code=200)
         if over_credential_limit('/revoke', value):
-            return too_many_requests()
+            return too_many_requests(credential_counter.seconds_left())
         return await forward(request, stack, '/revoke', body)
 
     async def openai_apps_challenge(_request: Request) -> Response:
