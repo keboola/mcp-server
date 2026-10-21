@@ -884,6 +884,37 @@ class TestMcpProxy:
                     429,
                 ]
 
+    @pytest.mark.parametrize('path', ['/mcp', '/mcp/', '/token'])
+    def test_a_browser_client_may_call_and_read_the_mcp_transport(self, path: str) -> None:
+        """A preflight for the MCP transport's headers is allowed, and a cross-origin answer exposes the headers the
+        client must read: without them a browser refuses the request or hides the session id."""
+        origin = {'Origin': 'https://app.example'}
+        requested = 'authorization, content-type, mcp-protocol-version, mcp-session-id, last-event-id'
+        answer = httpx.Response(200, json={}, headers={'Mcp-Session-Id': 'sess-1'})
+        with _client(_Upstream(answer)) as client:
+            preflight = client.options(
+                path,
+                headers={
+                    **origin,
+                    'Access-Control-Request-Method': 'POST',
+                    'Access-Control-Request-Headers': requested,
+                },
+            )
+            call = client.post('/mcp', json=_INITIALIZE, headers={**origin, 'Authorization': 'Bearer us-aws.opaque'})
+
+        assert preflight.status_code == 200
+        assert preflight.headers['access-control-allow-origin'] == '*'
+        assert {h.strip().lower() for h in preflight.headers['access-control-allow-headers'].split(',')} >= set(
+            requested.split(', ')
+        )
+        assert call.status_code == 200
+        assert {h.strip().lower() for h in call.headers['access-control-expose-headers'].split(',')} >= {
+            'mcp-session-id',
+            'mcp-protocol-version',
+            'www-authenticate',
+            'retry-after',
+        }
+
     @pytest.mark.parametrize(('method', 'expected_method'), [('GET', 'GET'), ('DELETE', 'DELETE')])
     def test_get_and_delete_are_forwarded(self, method: str, expected_method: str) -> None:
         upstream = _Upstream(httpx.Response(405, headers={'Allow': 'POST'}))

@@ -92,9 +92,10 @@ class _StatelessClients:
         return None
 
 
-# The MCP transport's headers a browser-based client sends and reads, on top of what the OAuth endpoints need.
-_MCP_CORS_ALLOW_HEADERS = ['Authorization', 'Content-Type', 'Mcp-Protocol-Version', 'Mcp-Session-Id', 'Last-Event-Id']
-_MCP_CORS_EXPOSE_HEADERS = ['Mcp-Session-Id', 'Mcp-Protocol-Version', 'WWW-Authenticate', 'Retry-After']
+# One set for every cross-origin route: what a browser-based client sends to and reads from the MCP transport and the
+# OAuth endpoints (`Authorization` carries client_secret_basic on `/token` too, `Retry-After` comes with any 429).
+_CORS_ALLOW_HEADERS = ['Authorization', 'Content-Type', 'Mcp-Protocol-Version', 'Mcp-Session-Id', 'Last-Event-Id']
+_CORS_EXPOSE_HEADERS = ['Mcp-Session-Id', 'Mcp-Protocol-Version', 'WWW-Authenticate', 'Retry-After']
 
 
 def _endpoint(
@@ -103,7 +104,6 @@ def _endpoint(
     methods: list[str],
     cross_origin: bool,
     max_body_bytes: int = _MAX_BODY_BYTES,
-    mcp: bool = False,
 ) -> tuple[ASGIApp, list[str]]:
     """The ASGI app and the methods of a route: the body capped at `max_body_bytes` (413 above it), and with
     `cross_origin`, CORS for browser-based MCP clients, which read the metadata and call `/register`, `/token` and
@@ -126,8 +126,8 @@ def _endpoint(
         app,
         allow_origins=['*'],
         allow_methods=allowed,
-        allow_headers=_MCP_CORS_ALLOW_HEADERS if mcp else ['Mcp-Protocol-Version'],
-        expose_headers=_MCP_CORS_EXPOSE_HEADERS if mcp else [],
+        allow_headers=_CORS_ALLOW_HEADERS,
+        expose_headers=_CORS_EXPOSE_HEADERS,
     )
     return cors, allowed
 
@@ -375,7 +375,6 @@ def create_router_app(
         methods=['GET', 'POST', 'DELETE'],
         cross_origin=True,
         max_body_bytes=DEFAULT_MAX_REQUEST_BODY_SIZE,
-        mcp=True,
     )
     mcp_paths = ('/mcp', '/mcp/')
     routes.extend(Route(path, mcp_app, methods=mcp_methods) for path in mcp_paths)
