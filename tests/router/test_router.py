@@ -551,8 +551,13 @@ class TestSettings:
                 'KBC_ROUTER_API_RATE_LIMIT_PER_IP': '600',
                 'KBC_ROUTER_TOKEN_RATE_LIMIT_PER_CREDENTIAL': '20',
                 'KBC_OAUTH_TRUSTED_PROXY_HOPS': '2',
+                'KBC_ROUTER_MCP_READ_TIMEOUT_SECONDS': '900',
+                'KBC_ROUTER_MCP_MAX_CONNECTIONS': '50',
+                'KBC_ROUTER_MCP_RATE_LIMIT_PER_TOKEN': '120',
+                'KBC_ROUTER_MCP_MAX_IN_FLIGHT_PER_TOKEN': '5',
             }
         )
+        defaults = RouterSettings.from_env({'KBC_ROUTER_URL': ROUTER_URL})
 
         assert settings.issuer == ROUTER_URL
         assert list(settings.stacks) == ['dev']
@@ -560,9 +565,17 @@ class TestSettings:
         assert settings.authorize_rate_limit_per_ip == 60
         assert settings.api_rate_limit_per_ip == 600
         assert settings.token_rate_limit_per_credential == 20
-        assert RouterSettings.from_env({'KBC_ROUTER_URL': ROUTER_URL}).token_rate_limit_per_credential == 10
+        assert defaults.token_rate_limit_per_credential == 10
         assert settings.trusted_proxy_hops == 2
-        assert list(RouterSettings.from_env({'KBC_ROUTER_URL': ROUTER_URL}).stacks) == [s.key for s in DEFAULT_STACKS]
+        assert list(defaults.stacks) == [s.key for s in DEFAULT_STACKS]
+        mcp = (
+            'mcp_read_timeout_seconds',
+            'mcp_max_connections',
+            'mcp_rate_limit_per_token',
+            'mcp_max_in_flight_per_token',
+        )
+        assert [getattr(settings, name) for name in mcp] == [900, 50, 120, 5]
+        assert [getattr(defaults, name) for name in mcp] == [300, 1000, 600, 20]
 
     @pytest.mark.parametrize(
         'env',
@@ -671,6 +684,8 @@ class TestMcpProxy:
         assert sent.headers['accept-encoding'] == 'identity'
         for header in ('x-forwarded-for', 'cookie', 'x-storage-api-url'):
             assert header not in sent.headers
+        # a long tool call may keep the stack silent for the /mcp read timeout, not the 30 s of /token
+        assert sent.extensions['timeout'] == {'connect': 30.0, 'read': 300.0, 'write': 30.0, 'pool': 30.0}
 
     @pytest.mark.parametrize(
         ('authorization', 'upstream_answer', 'expected_challenge'),
@@ -1068,12 +1083,3 @@ class TestMcpProxy:
         [sent] = upstream.requests
         assert sent.method == expected_method
         assert sent.headers['mcp-session-id'] == 'sess-1'
-
-    def test_the_read_timeout_is_configurable(self) -> None:
-        settings = RouterSettings.from_env({'KBC_ROUTER_URL': ROUTER_URL, 'KBC_ROUTER_MCP_READ_TIMEOUT_SECONDS': '900'})
-
-        assert settings.mcp_read_timeout_seconds == 900
-        defaults = RouterSettings.from_env({'KBC_ROUTER_URL': ROUTER_URL})
-        assert defaults.mcp_read_timeout_seconds == 300
-        assert defaults.mcp_max_connections == 1000
-        assert defaults.mcp_rate_limit_per_token == 600
