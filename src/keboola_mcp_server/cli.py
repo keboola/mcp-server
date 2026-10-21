@@ -46,6 +46,14 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
+        '--mode',
+        choices=['server', 'router'],
+        default='server',
+        help='"server" serves the MCP tools of one stack; "router" serves the global MCP URL of the ChatGPT plugin, '
+        'which sends each user to their own stack\'s MCP server (configured by the KBC_ROUTER_* environment '
+        'variables, always over HTTP).',
+    )
+    parser.add_argument(
         '--transport',
         choices=['stdio', 'streamable-http', 'http-compat'],
         default='stdio',
@@ -614,6 +622,27 @@ async def _run_gc_sessions() -> None:
     print(f'✓ Expired rate-limit counters removed: {purged}')
 
 
+async def _run_router(*, host: str, port: int, log_config: pathlib.Path | None) -> None:
+    """Runs the router (`--mode=router`). It reads only the `KBC_ROUTER_*` variables: no Keboola credentials, no
+    database."""
+    import uvicorn
+
+    from keboola_mcp_server.router.app import create_router_app
+    from keboola_mcp_server.router.settings import RouterSettings
+
+    settings = RouterSettings.from_env(os.environ)
+    app = create_router_app(settings)
+    # No access log: it would carry the query strings of /authorize (`state`, the PKCE challenge). The router logs one
+    # metadata-only line per request itself.
+    config = uvicorn.Config(
+        app, host=host, port=port, log_config=log_config, access_log=False, timeout_graceful_shutdown=0, lifespan='on'
+    )
+    LOG.info(
+        f'Starting the MCP router on http://{host}:{port}/: issuer={settings.issuer}, stacks={", ".join(settings.stacks)}'
+    )
+    await uvicorn.Server(config).serve()
+
+
 async def run_server(args: list[str] | None = None) -> None:
     """Runs the MCP server in async mode."""
     parsed_args = parse_args(args)
@@ -671,6 +700,14 @@ async def run_server(args: list[str] | None = None) -> None:
 
     if parsed_args.command == 'gc-sessions':
         await _run_gc_sessions()
+        return
+
+    if parsed_args.mode == 'router':
+        try:
+            await _run_router(host=parsed_args.host, port=parsed_args.port, log_config=log_config)
+        except Exception:
+            LOG.exception('Router failed')
+            sys.exit(1)
         return
 
     try:

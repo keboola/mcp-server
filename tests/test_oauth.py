@@ -2996,13 +2996,13 @@ class TestSharedRateLimits:
     ],
 )
 def test_caller_address(forwarded_for: str, hops: int, client: tuple[str, int] | None, expected: str | None) -> None:
-    from keboola_mcp_server.oauth import _caller_address
+    from keboola_mcp_server.oauth import caller_address
 
     scope = {'type': 'http', 'headers': [(b'x-forwarded-for', forwarded_for.encode())] if forwarded_for else []}
     if client:
         scope['client'] = client
 
-    assert _caller_address(scope, hops) == expected
+    assert caller_address(scope, hops) == expected
 
 
 class TestAuthorizeRateLimitMiddleware:
