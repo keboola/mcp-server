@@ -1457,6 +1457,36 @@ class TestSimpleOAuthProvider:
             assert 'pending_mcp_client' not in query
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        'redirect_uri',
+        ['https://claude.ai/api/mcp/auth_callback', 'https://chatgpt.com/connector_platform_oauth_redirect'],
+    )
+    async def test_authorize_refuses_a_pre_registered_client_missing_in_connection_even_with_approval_on(
+        self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch, redirect_uri: str
+    ):
+        """Deployed ahead of the Connection migration that registers the row: approving the literal id would leave a
+        row bound to this server's callback that no login can use and the migration stops on, so it fails closed."""
+        from keboola_mcp_server.oauth import _ClientRegistration
+
+        self._stub_client_registration(monkeypatch, _ClientRegistration.NOT_REGISTERED)
+        monkeypatch.setattr(oauth_provider, '_dynamic_client_approval', True)
+        client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
+        params = AuthorizationParams(
+            redirect_uri=AnyUrl(redirect_uri),
+            redirect_uri_provided_explicitly=True,
+            code_challenge='challenge',
+            state='client-state',
+            scopes=None,
+        )
+
+        url = urlparse(await oauth_provider.authorize(client, params))
+        query = parse_qs(url.query)
+
+        assert url.netloc == urlparse(oauth_provider._mcp_callback_url).netloc
+        assert query['error'] == ['unregistered_client']
+        assert 'pending_mcp_client' not in query
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize('approval_on', [True, False])
     @pytest.mark.parametrize('registration', ['REGISTERED', 'NOT_REGISTERED', 'ERROR'])
     async def test_authorize_never_logs_the_derived_connection_client_id(
@@ -3170,8 +3200,9 @@ class TestAuthorizationServerMetadata:
     @pytest.mark.parametrize(
         ('redirect_uri', 'registration', 'state_change'),
         [
-            # not approved by anyone yet: sending the browser there would be an open redirect
-            ('https://claude.ai/api/mcp/auth_callback', 'NOT_REGISTERED', None),
+            # not approved by anyone yet: sending the browser there would be an open redirect (authorize no longer
+            # issues a pending state for this URI, but one signed earlier is still live)
+            ('https://claude.ai/api/mcp/auth_callback', 'REGISTERED', 'pending'),
             # approved, but possibly by the very user who wants the redirect
             ('https://attacker.example/cb', 'REGISTERED', None),
             ('https://claude.ai/api/mcp/auth_callback', 'REGISTERED', 'expired'),
@@ -3222,6 +3253,8 @@ class TestAuthorizationServerMetadata:
 
     @classmethod
     def _change_state(cls, provider: SimpleOAuthProvider, state: str, change: str | None, redirect_uri: str) -> str:
+        if change == 'pending':
+            return provider._encode({**provider._decode(state), 'pending': True})
         if change == 'expired':
             return provider._encode({**provider._decode(state), 'expires_at': time.time() - 1})
         if change == 'forged':
