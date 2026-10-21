@@ -732,6 +732,22 @@ class TestMcpProxy:
         assert b'progress' in bodies[0]
         assert b'"result"' in bodies[1]
 
+    def test_a_stack_silent_after_the_first_chunk_ends_the_stream(self) -> None:
+        """Past the status line a timeout can only end the stream: the client keeps what it got, and the error does
+        not escape the app."""
+        first = b'event: message\ndata: {"jsonrpc":"2.0","method":"notifications/progress"}\n\n'
+
+        async def events():
+            yield first
+            raise httpx.ReadTimeout('the stack went silent')
+
+        upstream = _Upstream(httpx.Response(200, headers={'Content-Type': 'text/event-stream'}, content=events()))
+        with _client(upstream) as client:
+            response = client.post('/mcp', json=_INITIALIZE, headers={'Authorization': 'Bearer eu-aws.opaque'})
+
+        assert response.status_code == 200
+        assert response.content == first
+
     @pytest.mark.asyncio
     @pytest.mark.parametrize('spec_version', ['2.3', '2.4'])
     async def test_a_client_that_goes_away_closes_the_upstream_stream(self, spec_version: str) -> None:
