@@ -1156,16 +1156,23 @@ class TestMcpProxy:
             'retry-after',
         }
 
-    @pytest.mark.parametrize(('method', 'expected_method'), [('GET', 'GET'), ('DELETE', 'DELETE')])
-    def test_get_and_delete_are_forwarded(self, method: str, expected_method: str) -> None:
+    @pytest.mark.parametrize('method', ['GET', 'DELETE'])
+    @pytest.mark.parametrize('path', ['/mcp', '/mcp/'])
+    def test_get_and_delete_are_forwarded_and_logged(
+        self, method: str, path: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """`/mcp` is the busiest route: its request-log line must name its method, path and stack, never
+        `<other>` or `stack_key=-`."""
         upstream = _Upstream(httpx.Response(405, headers={'Allow': 'POST'}))
-        with _client(upstream) as client:
+        with caplog.at_level(logging.INFO), _client(upstream) as client:
             response = client.request(
-                method, '/mcp', headers={'Authorization': 'Bearer us-aws.opaque', 'Mcp-Session-Id': 'sess-1'}
+                method, path, headers={'Authorization': 'Bearer us-aws.opaque', 'Mcp-Session-Id': 'sess-1'}
             )
 
         assert response.status_code == 405
         assert response.headers['allow'] == 'POST'
         [sent] = upstream.requests
-        assert sent.method == expected_method
+        assert sent.method == method
         assert sent.headers['mcp-session-id'] == 'sess-1'
+        [line] = [r.getMessage() for r in caplog.records if ' status=' in r.getMessage()]
+        assert line.startswith(f'[router] {method} {path} status=405 stack_key=us-aws duration_ms=')
