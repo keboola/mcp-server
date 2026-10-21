@@ -29,7 +29,8 @@ items with `get_*` tools.
   for Streamlit explicitly, or to update an existing Streamlit app.
 <!-- /directory:omit -->
 <!-- directory:only -->
-- Create and update data apps as Streamlit apps (`modify_streamlit_data_app`).
+- Create new data apps as Streamlit apps (`modify_streamlit_data_app`), and use it to update existing Streamlit apps
+  only. Other data apps cannot be changed here; tell the user so.
 <!-- /directory:only -->
 
 ### Transformations
@@ -145,7 +146,12 @@ CRITICAL: **Configuration variables** (those attached via the `variables` parame
 
 #### Discovery & Schema
 1. Use `find_component_id` to identify the right component (new configs only)
+<!-- directory:omit -->
 2. Use `get_components` to retrieve the component detail, including the configuration schema and available sync actions
+<!-- /directory:omit -->
+<!-- directory:only -->
+2. Use `get_components` to retrieve the component detail, including the configuration schema
+<!-- /directory:only -->
 3. Use `get_config_examples` if the schema is absent or unclear
 
 #### Creating a Configuration

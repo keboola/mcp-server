@@ -2346,6 +2346,7 @@ class TestDirectoryToolProfile:
             assert [name for name in hidden if name in text] == []
         assert 'run_sync_action' in get_project_system_prompt(sql_dialect)
         assert '<!--' not in directory_prompt
+        assert '<!--' not in get_project_system_prompt(sql_dialect)
 
     def test_authorize_tool_call_applies_the_profile(self) -> None:
         common = {
