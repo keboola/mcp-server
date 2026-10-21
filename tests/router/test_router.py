@@ -622,20 +622,35 @@ class TestMcpProxy:
     )
     @pytest.mark.parametrize('path', ['/mcp', '/mcp/'])
     def test_routes_by_the_prefix_of_the_bearer_token(self, token: str, expected_upstream: str, path: str) -> None:
+        # The allowlists are the contract with the regional server: without `Accept` and `Content-Type` it refuses
+        # every MCP call, so each forwarded header is pinned in both directions.
+        forwarded_response = {
+            'content-type': 'application/json',
+            'cache-control': 'no-cache',
+            'mcp-session-id': 'sess-1',
+            'mcp-protocol-version': '2025-06-18',
+            'allow': 'GET, POST, DELETE',
+        }
         answer = httpx.Response(
             200,
-            json={'jsonrpc': '2.0', 'id': 1, 'result': {}},
-            headers={'Mcp-Session-Id': 'sess-1', 'Set-Cookie': 'x=1', 'WWW-Authenticate': 'Bearer realm="stack"'},
+            content=json.dumps({'jsonrpc': '2.0', 'id': 1, 'result': {}}).encode(),
+            headers={**forwarded_response, 'Set-Cookie': 'x=1', 'WWW-Authenticate': 'Bearer realm="stack"'},
         )
+        forwarded_request = {
+            'authorization': f'Bearer {token}',
+            'content-type': 'application/json',
+            'accept': 'application/json, text/event-stream',
+            'mcp-session-id': 'sess-1',
+            'mcp-protocol-version': '2025-06-18',
+            'last-event-id': 'event-41',
+        }
         upstream = _Upstream(answer)
         with _client(upstream) as client:
             response = client.post(
-                path,
-                json=_INITIALIZE,
+                f'{path}?transport=streamable&a=1',
+                content=json.dumps(_INITIALIZE).encode(),
                 headers={
-                    'Authorization': f'Bearer {token}',
-                    'Accept': 'application/json, text/event-stream',
-                    'Mcp-Protocol-Version': '2025-06-18',
+                    **forwarded_request,
                     'X-Forwarded-For': '203.0.113.5',
                     'Cookie': 'keboola_mcp_stack=us-aws',
                     'X-Storage-Api-Url': 'https://connection.keboola.com',
@@ -644,14 +659,15 @@ class TestMcpProxy:
 
         assert response.status_code == 200
         assert response.json() == {'jsonrpc': '2.0', 'id': 1, 'result': {}}
-        assert response.headers['mcp-session-id'] == 'sess-1'
+        for name, value in forwarded_response.items():
+            assert response.headers[name] == value
         assert 'set-cookie' not in response.headers
         assert 'www-authenticate' not in response.headers
         [sent] = upstream.requests
-        assert str(sent.url) == expected_upstream
+        assert str(sent.url) == f'{expected_upstream}?transport=streamable&a=1'
         assert json.loads(sent.content) == _INITIALIZE
-        assert sent.headers['authorization'] == f'Bearer {token}'
-        assert sent.headers['mcp-protocol-version'] == '2025-06-18'
+        for name, value in forwarded_request.items():
+            assert sent.headers[name] == value
         assert sent.headers['accept-encoding'] == 'identity'
         for header in ('x-forwarded-for', 'cookie', 'x-storage-api-url'):
             assert header not in sent.headers
