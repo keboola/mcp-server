@@ -72,12 +72,6 @@ def _truncate_data(qr: QueryResult, max_rows: int | None, max_chars: int | None)
             ),
             'id,name,email\r\n1,John,john@foo.com\r\n2,Joe,joe@bar.com\r\n',  # CSV
         ),
-        (
-            'explain select 1;',
-            'Query Plan',
-            QueryResult(status='ok', data=None, message='plan computed'),
-            'message\r\nplan computed\r\n',  # CSV
-        ),
     ],
 )
 async def test_query_data(
@@ -110,6 +104,8 @@ _READ_ONLY_STATEMENTS = [
     'SELECT 1 /* ; DROP TABLE t */',
     'SELECT 1 -- ; DROP TABLE t',
     '-- leading comment\nSELECT 1;;',
+    'SELECT 1; -- trailing comment',
+    'SHOW TABLES; /* trailing comment */',
     'SELECT FROM WHERE',  # unparseable, left to the backend's syntax error
 ]
 _REJECTED_STATEMENTS = [
@@ -141,6 +137,7 @@ _REJECTED_STATEMENTS = [
     'WITH "d" AS (DELETE FROM "t" RETURNING *) SELECT * FROM "d"',
     'BEGIN; DROP TABLE "t"; END',
     'SET x = 1',
+    'SELECT 1 -- x\u2028; DROP TABLE "t"',
     'EXPLAIN DELETE FROM "t"',
     # The Snowflake pipe operator `->>` chains statements: parsed, command and fallback paths.
     'SELECT 1 ->> DELETE FROM "t"',
@@ -167,6 +164,7 @@ _DIALECTS = ['Snowflake', 'BigQuery']
     + [
         # Dialect-specific quoting keeps the smuggled statement inside one literal or identifier.
         ('SELECT $$; DROP TABLE t$$', 'Snowflake'),
+        ("SELECT $1 FROM @s/dir/file.csv (FILE_FORMAT => 'csv')", 'Snowflake'),
         ('SELECT * FROM `project.dataset.t;DROP TABLE t`', 'BigQuery'),
     ],
 )
@@ -179,6 +177,10 @@ def test_validate_read_only_statement_allows(sql_query: str, dialect: str):
     [(sql_query, dialect) for sql_query in _REJECTED_STATEMENTS for dialect in _DIALECTS]
     + [
         ('SELECT FROM WHERE UNDROP TABLE "t"', 'Snowflake'),
+        # Snowflake reads an unquoted stage path up to whitespace.
+        ('SELECT $1 FROM @s/a//b; DROP TABLE "t"', 'Snowflake'),
+        ('SELECT $1 FROM @~/a--b; DROP TABLE "t"', 'Snowflake'),
+        ('SELECT $1 FROM @s/a/*b; DROP TABLE "t"; */', 'Snowflake'),
         ("SELECT 1 EXPORT DATA OPTIONS (uri = 'gs://b/*') AS SELECT 1", 'BigQuery'),
         # BigQuery escapes a backtick in a quoted identifier with a backslash.
         ('SELECT 1 AS `\\``; DROP TABLE d.t; SELECT 1 #`', 'BigQuery'),

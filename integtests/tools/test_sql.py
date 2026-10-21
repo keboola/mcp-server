@@ -5,6 +5,7 @@ from io import StringIO
 import pytest
 from fastmcp import Context
 
+from keboola_mcp_server.clients.base import InvalidArgumentError
 from keboola_mcp_server.tools.sql import QueryDataOutput, query_data
 from keboola_mcp_server.tools.storage.tools import get_buckets, get_tables
 from keboola_mcp_server.workspace import WorkspaceManager
@@ -54,7 +55,15 @@ async def test_query_data(mcp_context: Context):
 async def test_query_data_invalid_query(mcp_context: Context):
     """Tests that `query_data` properly handles invalid SQL queries."""
 
-    invalid_sql = 'INVALID SQL SYNTAX SELECT * FROM'
+    invalid_sql = 'SELECT FROM WHERE'
 
     with pytest.raises(ValueError, match='Failed to run SQL query'):
         await query_data(sql_query=invalid_sql, query_name='Invalid Query Test', ctx=mcp_context)
+
+
+@pytest.mark.asyncio
+async def test_query_data_rejects_write(mcp_context: Context):
+    """Tests that `query_data` rejects a write before it reaches the workspace."""
+
+    with pytest.raises(InvalidArgumentError, match='exactly one read-only statement'):
+        await query_data(sql_query='DROP TABLE "no_such_table"', query_name='Rejected Write', ctx=mcp_context)

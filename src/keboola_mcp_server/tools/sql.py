@@ -18,6 +18,7 @@ from mcp.types import (
 from pydantic import BaseModel, Field
 from sqlglot import exp
 from sqlglot.dialects.bigquery import BigQuery
+from sqlglot.dialects.snowflake import Snowflake
 from sqlglot.errors import ParseError, TokenError
 from sqlglot.tokens import Token, TokenType
 from starlette.requests import Request
@@ -48,6 +49,12 @@ class _BackendBigQuery(BigQuery):
 # Workspace dialect names (`WorkspaceManager.get_sql_dialect`) mapped to sqlglot dialects.
 _SQLGLOT_DIALECTS: dict[str, type[sqlglot.Dialect] | str] = {'snowflake': 'snowflake', 'bigquery': _BackendBigQuery}
 _EXPLAIN_OPTIONS = re.compile(r'^\s*USING\s+\w+\s', re.IGNORECASE)
+# sqlglot ends line comments only at \n and \r; reject other line breaks a backend might end them at.
+_UNUSUAL_LINE_BREAKS = re.compile('[\x0b\x0c\x85\u2028\u2029]')
+# Snowflake reads an unquoted stage path up to whitespace, sqlglot as tokens, so `//`, `--` or `/*` inside
+# the path would start a comment for sqlglot only.
+_STAGE_PATH = re.compile(r'[^\s;()]*')
+_COMMENT_STARTS = ('//', '--', '/*')
 _READ_ONLY_EXPRESSIONS = (exp.Select, exp.SetOperation, exp.Subquery, exp.Show, exp.Describe)
 # Statements sqlglot cannot model fully are parsed as `exp.Command` named by their first keyword.
 _READ_ONLY_COMMANDS = frozenset({'SHOW', 'DESCRIBE', 'DESC'})
@@ -137,7 +144,11 @@ def validate_read_only_statement(sql_query: str, sql_dialect: str | None) -> Non
     smuggled in either are not counted. This is not a sandbox: side effects inside a SELECT (procedures,
     `SYSTEM$` functions) are limited by the workspace's database role.
     """
-    dialect = sqlglot.Dialect.get_or_raise(_SQLGLOT_DIALECTS.get((sql_dialect or '').lower()))
+    if (sqlglot_dialect := _SQLGLOT_DIALECTS.get((sql_dialect or '').lower())) is None:
+        raise ValueError(f'Cannot check SQL statements for the unsupported SQL dialect "{sql_dialect}".')
+    if _UNUSUAL_LINE_BREAKS.search(sql_query):
+        raise InvalidArgumentError(f'The SQL query contains an unsupported line break character. {_NOT_READ_ONLY_MSG}')
+    dialect = sqlglot.Dialect.get_or_raise(sqlglot_dialect)
     # sqlglot treats `{# ... #}` as a (Jinja) comment in every dialect; neither backend does, so expose its content
     # to the checks. Replacing two characters with two others keeps all other token boundaries.
     _validate_statement(dialect, sql_query.replace('{#', '{x'))
@@ -148,6 +159,13 @@ def _validate_statement(dialect: sqlglot.Dialect, sql_query: str) -> None:
         tokens = dialect.tokenize(sql_query)
     except TokenError as e:
         raise InvalidArgumentError(f'Cannot parse the SQL query: {e}. {_NOT_READ_ONLY_MSG}') from e
+
+    if isinstance(dialect, Snowflake):
+        for token in tokens:
+            if token.token_type == TokenType.PARAMETER and token.text == '@':
+                stage_path = _STAGE_PATH.match(sql_query, token.end + 1).group()
+                if any(comment in stage_path for comment in _COMMENT_STARTS):
+                    raise InvalidArgumentError(f'Quote stage paths that contain {", ".join(_COMMENT_STARTS)}.')
 
     statements: list[list[Token]] = [[]]
     for token in tokens:
@@ -176,7 +194,8 @@ def _validate_statement(dialect: sqlglot.Dialect, sql_query: str) -> None:
         return
 
     try:
-        expressions = [e for e in dialect.parse(sql_query) if e is not None]
+        # A comment after the final `;` comes back as an `exp.Semicolon`.
+        expressions = [e for e in dialect.parse(sql_query) if e is not None and not isinstance(e, exp.Semicolon)]
     except ParseError:
         read_only = _is_read_only_tokens(statement)
     else:
