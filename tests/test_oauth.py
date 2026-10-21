@@ -2810,6 +2810,7 @@ class TestAuthorizationServerMetadata:
         provider: SimpleOAuthProvider,
         client,
         monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
         response_kind: str,
         expected_params: set[str],
     ) -> None:
@@ -2827,7 +2828,8 @@ class TestAuthorizationServerMetadata:
         else:
             query = f'error=access_denied&error_description=The+user+denied+the+request&state={state}'
 
-        response = await self._callback(provider, query)
+        with caplog.at_level(logging.DEBUG, logger='keboola_mcp_server.oauth'):
+            response = await self._callback(provider, query)
 
         assert response.status_code == 302
         location = urlparse(response.headers['location'])
@@ -2837,6 +2839,12 @@ class TestAuthorizationServerMetadata:
         assert response_params['state'] == ['client-state']
         if response_kind == 'access_denied':
             assert response_params['error'] == ['access_denied']
+        else:
+            # the code carries the Connection tokens, readable without the key
+            code = response_params['code'][0]
+            assert code not in caplog.text
+            assert 'league-at' not in caplog.text
+            assert 'league-rt' not in caplog.text
 
         issuer = response_params['iss'][0]
         assert issuer == provider.issuer

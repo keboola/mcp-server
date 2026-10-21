@@ -1533,7 +1533,8 @@ class SimpleOAuthProvider(OAuthProvider):
             code_challenge=state_data['code_challenge'],
             iss=self.issuer,
         )
-        LOG.debug(f'[handle_oauth_callback] mcp_redirect_uri={mcp_redirect_uri}')
+        # Only the base: the code carries the user's Connection tokens, readable without the key.
+        LOG.debug(f'[handle_oauth_callback] Redirecting to the client: redirect_uri={_sanitize_for_log(redirect_uri)}')
 
         return mcp_redirect_uri
 
