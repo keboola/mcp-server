@@ -15,15 +15,11 @@ LOG = logging.getLogger(__name__)
 
 # The MCP transport's own headers and the bearer token, nothing else: no header selects a stack or reconfigures the
 # regional server (its per-request `X-*` settings stay a direct-connection feature), and `X-Forwarded-For` would only
-# let a caller choose the address the regional server sees.
-_FORWARDED_REQUEST_HEADERS = (
-    'authorization',
-    'content-type',
-    'accept',
-    'mcp-session-id',
-    'mcp-protocol-version',
-    'last-event-id',
-)
+# let a caller choose the address the regional server sees. Every `Mcp-*` header is the transport's: the session and
+# protocol version, and since 2026-07-28 `Mcp-Method`, `Mcp-Name` and `Mcp-Param-*`, which the stack checks against
+# the body (400 without them).
+_FORWARDED_REQUEST_HEADERS = ('authorization', 'content-type', 'accept', 'last-event-id')
+_FORWARDED_REQUEST_HEADER_PREFIX = 'mcp-'
 # Never the stack's `WWW-Authenticate`: it names the stack's own metadata, and a client following it would leave the
 # router's authorization server.
 _FORWARDED_RESPONSE_HEADERS = ('content-type', 'cache-control', 'mcp-session-id', 'mcp-protocol-version', 'allow')
@@ -129,9 +125,14 @@ def create_mcp_proxy(
             return too_many_requests(retry_after())
 
         url = f'{stack.upstream}/mcp' + (f'?{request.url.query}' if request.url.query else '')
-        headers = {name: value for name in _FORWARDED_REQUEST_HEADERS if (value := request.headers.get(name))}
+        # Every copy, in order: the stack refuses a repeated `Mcp-Method` or `Mcp-Name`, so the router must not pick one.
+        headers = [
+            (name, value)
+            for name, value in request.headers.items()
+            if name in _FORWARDED_REQUEST_HEADERS or name.startswith(_FORWARDED_REQUEST_HEADER_PREFIX)
+        ]
         # Byte for byte: a compressed answer would be decompressed here, and the decompressor may hold SSE bytes back.
-        headers['accept-encoding'] = 'identity'
+        headers.append(('accept-encoding', 'identity'))
         upstream = upstreams[stack.key]
         upstream_request = upstream.build_request(
             request.method, url, content=await request.body(), headers=headers, timeout=timeout

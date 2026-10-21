@@ -98,8 +98,10 @@ class _StatelessClients:
 
 
 # One set for every cross-origin route: what a browser-based client sends to and reads from the MCP transport and the
-# OAuth endpoints (`Authorization` carries client_secret_basic on `/token` too, `Retry-After` comes with any 429).
-_CORS_ALLOW_HEADERS = ['Authorization', 'Content-Type', 'Mcp-Protocol-Version', 'Mcp-Session-Id', 'Last-Event-Id']
+# OAuth endpoints (`Authorization` carries client_secret_basic on `/token` too, `Retry-After` comes with any 429). Any
+# request header may be sent, because `Mcp-Param-*` names come from each tool's schema and CORS cannot match a prefix;
+# what reaches a stack is still only what the proxy forwards.
+_CORS_ALLOW_HEADERS = ['*']
 _CORS_EXPOSE_HEADERS = ['Mcp-Session-Id', 'Mcp-Protocol-Version', 'WWW-Authenticate', 'Retry-After']
 
 

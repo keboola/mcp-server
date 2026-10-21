@@ -5,6 +5,16 @@ from urllib.parse import parse_qs, parse_qsl, urlparse
 
 import httpx
 import pytest
+from mcp.shared.inbound import (
+    InboundModernRoute,
+    classify_inbound_request,
+    find_duplicated_routing_header,
+    mcp_param_headers,
+    validate_mcp_param_headers,
+    x_mcp_header_map,
+)
+from mcp_types import CLIENT_CAPABILITIES_META_KEY, PROTOCOL_VERSION_META_KEY
+from mcp_types.version import MODERN_PROTOCOL_VERSIONS
 from starlette.requests import ClientDisconnect
 from starlette.testclient import TestClient
 
@@ -689,6 +699,40 @@ class TestMcpProxy:
         # a long tool call may keep the stack silent for the /mcp read timeout, not the 30 s of /token
         assert sent.extensions['timeout'] == {'connect': 30.0, 'read': 300.0, 'write': 30.0, 'pool': 30.0}
 
+    def test_the_routing_headers_of_2026_07_28_reach_the_stack_as_its_sdk_checks_them(self) -> None:
+        """A `2026-07-28` request carries its method, name and arguments in `Mcp-*` headers, and the stack's SDK
+        refuses it with 400 when they are missing or repeated: the router forwards them all, every copy included."""
+        version = MODERN_PROTOCOL_VERSIONS[0]
+        schema = {'type': 'object', 'properties': {'region': {'type': 'string', 'x-mcp-header': 'Region'}}}
+        arguments = {'region': 'eu-west'}
+        body = {
+            'jsonrpc': '2.0',
+            'id': 2,
+            'method': 'tools/call',
+            'params': {
+                'name': 'query_data',
+                'arguments': arguments,
+                '_meta': {PROTOCOL_VERSION_META_KEY: version, CLIENT_CAPABILITIES_META_KEY: {}},
+            },
+        }
+        headers = {
+            'Authorization': 'Bearer us-aws.opaque',
+            'Mcp-Protocol-Version': version,
+            'Mcp-Method': 'tools/call',
+            'Mcp-Name': 'query_data',
+            **mcp_param_headers(x_mcp_header_map(schema), arguments),
+        }
+        upstream = _Upstream(httpx.Response(200, json={}))
+        with _client(upstream) as client:
+            client.post('/mcp', json=body, headers=headers)
+            client.post('/mcp', json=body, headers=[*headers.items(), ('Mcp-Method', 'tools/list')])
+
+        sent, repeated = upstream.requests
+        assert isinstance(classify_inbound_request(body, headers=dict(sent.headers)), InboundModernRoute)
+        assert validate_mcp_param_headers(schema, arguments, dict(sent.headers)) is None
+        assert sent.headers['mcp-param-region'] == 'eu-west'
+        assert find_duplicated_routing_header(repeated.headers.multi_items()) == 'mcp-method'
+
     @pytest.mark.parametrize(
         ('authorization', 'upstream_answer', 'expected_challenge'),
         [
@@ -1072,7 +1116,10 @@ class TestMcpProxy:
         """A preflight for the MCP transport's headers is allowed, and a cross-origin answer exposes the headers the
         client must read: without them a browser refuses the request or hides the session id."""
         origin = {'Origin': 'https://app.example'}
-        requested = 'authorization, content-type, mcp-protocol-version, mcp-session-id, last-event-id'
+        requested = (
+            'authorization, content-type, mcp-protocol-version, mcp-session-id, last-event-id, mcp-method, mcp-name, '
+            'mcp-param-region'
+        )
         answer = httpx.Response(200, json={}, headers={'Mcp-Session-Id': 'sess-1'})
         with _client(_Upstream(answer)) as client:
             preflight = client.options(
