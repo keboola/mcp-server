@@ -784,8 +784,9 @@ class TestMcpProxy:
         monkeypatch.setattr(httpx, 'AsyncClient', RecordingClient)
         create_router_app(RouterSettings(router_url=ROUTER_URL, stacks=parse_stacks(None), mcp_max_connections=7))
 
-        [oauth, *mcp] = created
-        assert 'limits' not in oauth  # /token and /revoke keep httpx's default pool of their own
+        mcp = [kwargs for kwargs in created if 'limits' in kwargs]
+        # /token and /revoke keep httpx's default pool of their own
+        assert len([kwargs for kwargs in created if 'limits' not in kwargs]) == 1
         assert len(mcp) == len(DEFAULT_STACKS)
         assert all(kwargs['limits'].max_connections == 7 and kwargs['transport'] is None for kwargs in mcp)
 
