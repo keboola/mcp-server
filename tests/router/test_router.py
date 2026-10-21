@@ -1082,7 +1082,11 @@ class TestMcpProxy:
                     'Access-Control-Request-Headers': requested,
                 },
             )
-            call = client.post('/mcp', json=_INITIALIZE, headers={**origin, 'Authorization': 'Bearer us-aws.opaque'})
+            if path == '/token':
+                refresh = {'grant_type': 'refresh_token', 'refresh_token': 'us-aws.rt'}
+                call = client.post(path, data=refresh, headers=origin)
+            else:
+                call = client.post(path, json=_INITIALIZE, headers={**origin, 'Authorization': 'Bearer us-aws.opaque'})
 
         assert preflight.status_code == 200
         assert preflight.headers['access-control-allow-origin'] == '*'
