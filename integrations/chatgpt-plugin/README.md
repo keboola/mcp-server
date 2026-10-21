@@ -21,8 +21,14 @@ session is scoped to the project the user confirmed. This is a prompt-level rule
 target any project the OAuth consent granted. The skills do it even though the server instructions say not to
 scope preemptively, because the RFC requires it for the plugin.
 
+Under OAuth the server keeps the scope on the login's session, so every ChatGPT conversation on the same
+connection shares it, and a write without `project_id` goes to whatever project another conversation scoped last.
+Every write step therefore passes `project_id=<the confirmed id>`: a moved scope then fails the write with
+"outside the current scope" instead of writing elsewhere.
+
 `tests/test_chatgpt_plugin.py` fails when a skill names a tool or a tool argument the server does not register, a
-tool that an OAuth session cannot call, or a write tool before `set_project_scope`.
+tool that an OAuth session cannot call, a tool outside backticks, a write tool before `set_project_scope`, or a
+write tool without `project_id`.
 
 ## Try it locally
 

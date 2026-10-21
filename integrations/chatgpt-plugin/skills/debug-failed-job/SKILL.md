@@ -22,7 +22,8 @@ whether it is needed.
    step 2.
 2. **Scope the session to that project.** Call `set_project_scope` with `project_ids=[<the confirmed id>]`. This
    must happen before any write in step 7. If the result carries a non-null `scope_token`, pass it on every later
-   tool call.
+   tool call. Every write in step 7 also passes the confirmed id as `project_id`: other conversations on the same
+   login share the scope, and a scope they moved makes the write fail instead of landing in another project.
 3. **Find the job.**
    - Known job ID: go to step 4.
    - Known configuration or flow name: find its ID with `search` (`item_types=["configuration", "transformation",
@@ -38,13 +39,19 @@ whether it is needed.
    a transformation (check columns with `get_tables` and reproduce the failing `SELECT` with `query_data`), a
    missing input table, expired credentials of an extractor or writer, or a schema change in the output table.
    Use `docs_query` for component-specific errors. Propose a fix.
-7. **Fix, only on request.** Ask before changing anything. For an SQL transformation use
-   `update_sql_transformation`. For a flow use `modify_flow` with its `configuration_id=...`, the `flow_type=...` it
-   already has and a `change_description=...`. For another component use `get_components` for its schema, then
-   `update_config_row` with `configuration_row_id=...` when the fix belongs in a configuration row, or
-   `update_config` for the configuration itself. Expired OAuth credentials need the user: create a link with `create_oauth_url` and ask them to
-   reauthorize. Then, with the user's consent, call `run_job` and check the new job with `get_jobs`. If the server
-   refuses a write because the user's role is read-only, give the user the proposed fix to pass to a project admin.
+7. **Fix, only on request.** Ask before changing anything.
+   - SQL transformation: `update_sql_transformation` with `project_id=<the confirmed id>`.
+   - Flow: `modify_flow` with `project_id=<the confirmed id>`, its `configuration_id=...`, the `flow_type=...` it
+     already has and a `change_description=...`.
+   - Another component: `get_components` for its schema, then `update_config_row` with
+     `project_id=<the confirmed id>` and `configuration_row_id=...` when the fix belongs in a configuration row, or
+     `update_config` with `project_id=<the confirmed id>` for the configuration itself.
+   - Expired OAuth credentials need the user: create a link with `create_oauth_url` and
+     `project_id=<the confirmed id>`, and ask them to reauthorize.
+
+   Then, with the user's consent, call `run_job` with `project_id=<the confirmed id>` and check the new job with
+   `get_jobs`. If the server refuses a write because the user's role is read-only, give the user the proposed fix to
+   pass to a project admin.
 
 ## Rules
 

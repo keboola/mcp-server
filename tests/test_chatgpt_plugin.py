@@ -25,7 +25,18 @@ SKILL_NAMES = ('explore-project-data', 'build-sql-transformation', 'debug-failed
 
 # Backticked lowercase words in the skills that are result fields or operation names, not tools.
 NON_TOOL_IDENTIFIERS = frozenset(
-    {'block_id', 'code_id', 'id', 'name', 'read_only', 'scope_token', 'set_code', 'str_replace', 'toolset_restrictions'}
+    {
+        'block_id',
+        'code_id',
+        'id',
+        'name',
+        'project_id',
+        'read_only',
+        'scope_token',
+        'set_code',
+        'str_replace',
+        'toolset_restrictions',
+    }
 )
 _BACKTICK_SPAN = re.compile(r'`[^`]+`')
 # A tool is a whole span (`run_job`) or a call written out in one (`run_job(component_id=...)`).
@@ -165,13 +176,23 @@ def test_skill_names_callable_tools_and_scopes_before_writes(skill_name: str, to
 
     # The skills write each argument after the tool it belongs to ("call `run_job` with `configuration_id=...`").
     wrong_arguments = []
+    arguments_by_tool: dict[str, set[str]] = {}
     for span in spans:
         for match in _ARGUMENT_IN_SPAN.finditer(span.group()):
             owners = [name for position, name in mentions if position <= span.start() + match.start()]
             assert owners, f'{skill_name} names the argument {match.group(1)} before any tool'
+            arguments_by_tool.setdefault(owners[-1], set()).add(match.group(1))
             if match.group(1) not in tools[owners[-1]].parameters.get('properties', {}):
                 wrong_arguments.append(f'{owners[-1]}({match.group(1)})')
     assert not wrong_arguments, f'{skill_name} names arguments the tool does not take: {wrong_arguments}'
+
+    # Under OAuth the scope is shared by every conversation on the login, so each write names its target project.
+    unpinned = sorted(
+        name
+        for name in named_tools
+        if not is_read_only_tool(tools[name]) and 'project_id' not in arguments_by_tool.get(name, set())
+    )
+    assert not unpinned, f'{skill_name} names write tools without project_id: {unpinned}'
 
     # The skills narrow writes to the project the user confirmed (a prompt-level rule, see the package README),
     # so every skill lists projects, then scopes the session, before it names any write tool.
