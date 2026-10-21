@@ -33,7 +33,9 @@ class _Upstream:
         return self._response
 
 
-def _client(upstream: _Upstream | None = None, *, now: float = 120.0, **settings) -> TestClient:
+def _client(
+    upstream: _Upstream | None = None, *, now: float = 120.0, raise_server_exceptions: bool = True, **settings
+) -> TestClient:
     router_settings = RouterSettings(router_url=ROUTER_URL, stacks=parse_stacks(None), **settings)
     app = create_router_app(
         router_settings,
@@ -41,7 +43,7 @@ def _client(upstream: _Upstream | None = None, *, now: float = 120.0, **settings
         # one rate-limit window for the whole test, so a minute boundary cannot reset the counts halfway
         rate_limit_clock=lambda: now,
     )
-    return TestClient(app, base_url=ROUTER_URL, follow_redirects=False)
+    return TestClient(app, base_url=ROUTER_URL, follow_redirects=False, raise_server_exceptions=raise_server_exceptions)
 
 
 class TestMetadata:
@@ -909,16 +911,23 @@ class TestMcpProxy:
     @pytest.mark.asyncio
     async def test_a_token_may_hold_only_its_in_flight_slots(self) -> None:
         """A token whose slot holds a streamed answer gets 429 for the next request, another token does not, and the
-        slot frees up when the answer ends: the rate limit alone would let one token's slow calls hold the pool."""
+        slot frees up when the answer ends: the rate limit alone would let one token's slow calls hold the pool. A
+        stalled upload holds no slot (the body is read first), and a handler cancelled while the stack has not answered
+        gives its slot back."""
         finish = asyncio.Event()
+        upstream_reached = asyncio.Event()
+        uploading = asyncio.Event()
 
         async def held():
             yield b'event: message\ndata: {}\n\n'
             await finish.wait()
 
-        def answer(request: httpx.Request) -> httpx.Response:
+        async def answer(request: httpx.Request) -> httpx.Response:
             if request.headers.get('mcp-session-id') == 'held':
                 return httpx.Response(200, headers={'Content-Type': 'text/event-stream'}, content=held())
+            if request.headers.get('mcp-session-id') == 'never-answered':
+                upstream_reached.set()
+                await asyncio.Event().wait()
             return httpx.Response(200, json={})
 
         router_settings = RouterSettings(
@@ -927,13 +936,15 @@ class TestMcpProxy:
         app = create_router_app(router_settings, upstream_transport=httpx.MockTransport(answer))
         streaming = asyncio.Event()
 
-        async def call(token: str, session: str = 'quick') -> dict:
+        async def call(token: str, session: str = 'quick', *, upload: bool = True) -> dict:
             requests = [{'type': 'http.request', 'body': json.dumps(_INITIALIZE).encode(), 'more_body': False}]
             sent: list[dict] = []
 
             async def receive() -> dict:
-                if requests:
+                if requests and upload:
                     return requests.pop()
+                if not upload:
+                    uploading.set()
                 await asyncio.Event().wait()  # the client stays connected
                 raise AssertionError('unreachable')
 
@@ -967,9 +978,23 @@ class TestMcpProxy:
         streamed = await stream
         after = await call('us-aws.first')
 
+        stalled = asyncio.create_task(call('us-aws.third', upload=False))
+        await asyncio.wait_for(uploading.wait(), timeout=5)
+        beside_the_upload = await call('us-aws.third')
+        stalled.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await stalled
+        cancelled = asyncio.create_task(call('us-aws.fourth', 'never-answered'))
+        await asyncio.wait_for(upstream_reached.wait(), timeout=5)
+        cancelled.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await cancelled
+        after_the_cancel = await call('us-aws.fourth')
+
         assert refused['status'] == 429
         assert (b'retry-after', b'1') in refused['headers']
         assert [other['status'], streamed['status'], after['status']] == [200, 200, 200]
+        assert [beside_the_upload['status'], after_the_cancel['status']] == [200, 200]
 
     @pytest.mark.parametrize(
         'answer',
@@ -978,10 +1003,12 @@ class TestMcpProxy:
             httpx.Response(401),
             httpx.ReadTimeout('a long tool call'),
             httpx.ConnectError('down'),
+            # a header the response cannot encode fails the request after the stack answered (500)
+            httpx.Response(200, headers=[(b'mcp-session-id', 'sess-č'.encode())], json={}),
         ],
     )
     def test_every_way_out_frees_the_in_flight_slot(self, answer: httpx.Response | Exception) -> None:
-        with _client(_Upstream(answer), mcp_max_in_flight_per_token=1) as client:
+        with _client(_Upstream(answer), raise_server_exceptions=False, mcp_max_in_flight_per_token=1) as client:
             statuses = [
                 client.post('/mcp', json=_INITIALIZE, headers={'Authorization': 'Bearer us-aws.t'}).status_code
                 for _ in range(3)

@@ -105,6 +105,9 @@ class InFlightLimiter:
 
     def __init__(self) -> None:
         self._in_flight: dict[str, int] = {}
+        # Keys refused since they last had a free slot: logged once, so a client retrying in a loop does not flood the
+        # log. Never larger than the map.
+        self._refused: set[str] = set()
 
     def acquire(self, key: str, limit: int, *, log_key: str) -> Callable[[], None] | None:
         """Takes one of `key`'s `limit` slots: its release, which may be called more than once, or None when every
@@ -114,7 +117,9 @@ class InFlightLimiter:
         """
         held = self._in_flight.get(key, 0)
         if held >= limit:
-            LOG.warning(f'[router] Concurrency limit reached: key={log_key}, limit={limit}')
+            if key not in self._refused:
+                self._refused.add(key)
+                LOG.warning(f'[router] Concurrency limit reached: key={log_key}, limit={limit}')
             return None
         self._in_flight[key] = held + 1
         released = False
@@ -124,6 +129,7 @@ class InFlightLimiter:
             if released:
                 return
             released = True
+            self._refused.discard(key)
             if (left := self._in_flight[key] - 1) > 0:
                 self._in_flight[key] = left
             else:

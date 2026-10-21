@@ -138,8 +138,9 @@ def create_mcp_proxy(
         )
         if (release := acquire_slot(token)) is None:
             return too_many_requests(_IN_FLIGHT_RETRY_AFTER_SECONDS, 'Too many requests in progress. Try again.')
-        # Released on every way out but a streamed answer, which releases it when it ends; also when the handler is
-        # cancelled (the client went away) before the stack answers.
+        # Released on every way out but a streamed answer, which releases it when the answer ends. A client that goes
+        # away before the stack answers does not cancel the handler (uvicorn), so its slot is held until the stack
+        # answers or the read timeout ends; a handler that is cancelled releases it at once.
         try:
             answer = await upstream.send(upstream_request, stream=True)
         except httpx.HTTPError as e:
@@ -148,18 +149,24 @@ def create_mcp_proxy(
         except BaseException:
             release()
             raise
-        if answer.status_code == 401:
-            # Revoked, or the stack no longer knows the token: log in again through the router, not the stack.
+        try:
+            if answer.status_code == 401:
+                # Revoked, or the stack no longer knows the token: log in again through the router, not the stack.
+                await answer.aclose()
+                release()
+                return _unauthorized(resource_metadata_url, error_description='The access token is not valid.')
+            return _UpstreamStreamingResponse(
+                answer,
+                relay(answer, stack),
+                headers={name: value for name in _FORWARDED_RESPONSE_HEADERS if (value := answer.headers.get(name))},
+                release=release,
+            )
+        except BaseException:
+            # e.g. a header value the response cannot encode: the answer and the slot must not outlive the request
             try:
                 await answer.aclose()
             finally:
                 release()
-            return _unauthorized(resource_metadata_url, error_description='The access token is not valid.')
-        return _UpstreamStreamingResponse(
-            answer,
-            relay(answer, stack),
-            headers={name: value for name in _FORWARDED_RESPONSE_HEADERS if (value := answer.headers.get(name))},
-            release=release,
-        )
+            raise
 
     return proxy
