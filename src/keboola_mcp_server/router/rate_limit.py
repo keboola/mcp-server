@@ -11,11 +11,11 @@ import logging
 import time
 from collections.abc import Callable
 
-from starlette.responses import JSONResponse, Response
 from starlette.routing import get_route_path
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from keboola_mcp_server.oauth import caller_address
+from keboola_mcp_server.router.responses import too_many_requests
 
 LOG = logging.getLogger(__name__)
 
@@ -28,15 +28,6 @@ _OVERFLOW_KEY = '*overflow*'
 def credential_key(credential: str) -> str:
     """What a credential is counted (and, shortened, logged) by: its SHA-256, never the value."""
     return hashlib.sha256(credential.encode()).hexdigest()
-
-
-def too_many_requests(retry_after: int = WINDOW_SECONDS) -> Response:
-    """:param retry_after: Seconds until the window that refused the request ends."""
-    return JSONResponse(
-        {'error': 'temporarily_unavailable', 'error_description': 'Too many requests. Try again later.'},
-        status_code=429,
-        headers={'Retry-After': str(retry_after)},
-    )
 
 
 class FixedWindowCounter:

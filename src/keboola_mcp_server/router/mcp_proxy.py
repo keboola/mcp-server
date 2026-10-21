@@ -5,10 +5,10 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 
 import httpx
 from starlette.requests import Request
-from starlette.responses import JSONResponse, Response, StreamingResponse
+from starlette.responses import Response, StreamingResponse
 from starlette.types import Receive, Scope, Send
 
-from keboola_mcp_server.router.rate_limit import too_many_requests
+from keboola_mcp_server.router.responses import oauth_error, too_many_requests, upstream_failure
 from keboola_mcp_server.router.stacks import Stack, stack_key_of
 
 LOG = logging.getLogger(__name__)
@@ -42,10 +42,8 @@ def _unauthorized(resource_metadata_url: str, *, error_description: str | None) 
     challenge = f'Bearer resource_metadata="{resource_metadata_url}"'
     if error_description is not None:
         challenge = f'Bearer error="invalid_token", error_description="{error_description}", ' + challenge[7:]
-    return JSONResponse(
-        {'error': 'invalid_token', 'error_description': error_description or 'Authentication required.'},
-        status_code=401,
-        headers={'WWW-Authenticate': challenge},
+    return oauth_error(
+        'invalid_token', error_description or 'Authentication required.', 401, headers={'WWW-Authenticate': challenge}
     )
 
 
@@ -62,10 +60,6 @@ class _UpstreamStreamingResponse(StreamingResponse):
             await super().__call__(scope, receive, send)
         finally:
             await self._answer.aclose()
-
-
-def _gateway_error(status_code: int, description: str) -> Response:
-    return JSONResponse({'error': 'temporarily_unavailable', 'error_description': description}, status_code=status_code)
 
 
 def create_mcp_proxy(
@@ -127,15 +121,8 @@ def create_mcp_proxy(
         )
         try:
             answer = await upstream.send(upstream_request, stream=True)
-        except httpx.PoolTimeout:
-            LOG.warning(f"[router] No free connection in the router's pool for the stack: stack_key={stack.key}")
-            return _gateway_error(503, 'The router is busy. Try again.')
-        except httpx.TimeoutException:
-            LOG.warning(f'[router] Upstream timed out: stack_key={stack.key}, path=/mcp')
-            return _gateway_error(504, 'The Keboola stack did not answer in time.')
         except httpx.HTTPError as e:
-            LOG.warning(f'[router] Upstream unreachable: stack_key={stack.key}, path=/mcp: {type(e).__name__}')
-            return _gateway_error(502, 'The Keboola stack could not be reached.')
+            return upstream_failure(e, stack_key=stack.key, path='/mcp')
 
         if answer.status_code == 401:
             # Revoked, or the stack no longer knows the token: log in again through the router, not the stack.

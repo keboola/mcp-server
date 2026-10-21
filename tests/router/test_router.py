@@ -808,6 +808,7 @@ class TestMcpProxy:
 
         assert response.status_code == expected_status
         assert response.json()['error'] == 'temporarily_unavailable'
+        assert response.headers['cache-control'] == 'no-store'
 
     def test_a_token_over_the_limit_gets_429_while_another_token_from_the_same_ip_passes(
         self, caplog: pytest.LogCaptureFixture

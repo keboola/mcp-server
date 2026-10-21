@@ -23,12 +23,8 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from keboola_mcp_server.router.mcp_proxy import create_mcp_proxy
 from keboola_mcp_server.router.picker import PICKER_CSS, PICKER_HEADERS, PICKER_STYLESHEET_PATH, render_picker
-from keboola_mcp_server.router.rate_limit import (
-    FixedWindowCounter,
-    PerAddressRateLimitMiddleware,
-    credential_key,
-    too_many_requests,
-)
+from keboola_mcp_server.router.rate_limit import FixedWindowCounter, PerAddressRateLimitMiddleware, credential_key
+from keboola_mcp_server.router.responses import oauth_error, too_many_requests, upstream_failure
 from keboola_mcp_server.router.settings import RouterSettings
 from keboola_mcp_server.router.stacks import Stack, router_resource, stack_key_of
 
@@ -151,14 +147,6 @@ def _single(fields: dict[str, list[str]], name: str) -> str | None:
     return values[0]
 
 
-def _oauth_error(error: str, description: str, status_code: int = 400) -> JSONResponse:
-    return JSONResponse(
-        {'error': error, 'error_description': description},
-        status_code=status_code,
-        headers={'Cache-Control': 'no-store', 'Pragma': 'no-cache'},
-    )
-
-
 def create_router_app(
     settings: RouterSettings,
     *,
@@ -273,15 +261,8 @@ def create_router_app(
         headers = {name: value for name in _FORWARDED_REQUEST_HEADERS if (value := request.headers.get(name))}
         try:
             answer = await upstream.post(f'{stack.upstream}{path}', content=body, headers=headers)
-        except httpx.PoolTimeout:
-            LOG.warning(f'[router] No free connection in the router\'s own pool: stack_key={stack.key}, path={path}')
-            return _oauth_error('temporarily_unavailable', 'The router is busy. Try again.', 503)
-        except httpx.TimeoutException:
-            LOG.warning(f'[router] Upstream timed out: stack_key={stack.key}, path={path}')
-            return _oauth_error('temporarily_unavailable', 'The Keboola stack did not answer in time.', 504)
         except httpx.HTTPError as e:
-            LOG.warning(f'[router] Upstream unreachable: stack_key={stack.key}, path={path}: {type(e).__name__}')
-            return _oauth_error('temporarily_unavailable', 'The Keboola stack could not be reached.', 502)
+            return upstream_failure(e, stack_key=stack.key, path=path)
         return Response(
             answer.content,
             status_code=answer.status_code,
@@ -294,17 +275,15 @@ def create_router_app(
         try:
             grant_type = _single(fields, 'grant_type')
             if (parameter := _GRANT_TOKEN_PARAMETER.get(grant_type or '')) is None:
-                return _oauth_error(
-                    'unsupported_grant_type', 'Only authorization_code and refresh_token are supported.'
-                )
+                return oauth_error('unsupported_grant_type', 'Only authorization_code and refresh_token are supported.')
             value = _single(fields, parameter)
         except ValueError as e:
-            return _oauth_error('invalid_request', f'The parameter {e} is repeated.')
+            return oauth_error('invalid_request', f'The parameter {e} is repeated.')
         if value is None:
-            return _oauth_error('invalid_request', f'The {parameter} parameter is missing.')
+            return oauth_error('invalid_request', f'The {parameter} parameter is missing.')
         if (stack := stacks.get(stack_key_of(value) or '')) is None:
             # Answered here, without asking any stack: no stack issued a grant without a known prefix.
-            return _oauth_error('invalid_grant', f'The {parameter} was not issued by this authorization server.')
+            return oauth_error('invalid_grant', f'The {parameter} was not issued by this authorization server.')
         if over_credential_limit(oauth_credential_counter, '/token', value, settings.token_rate_limit_per_credential):
             return too_many_requests(oauth_credential_counter.seconds_left())
         return await forward(request, stack, '/token', body)
@@ -314,9 +293,9 @@ def create_router_app(
         try:
             value = _single(_form_fields(body), 'token')
         except ValueError:
-            return _oauth_error('invalid_request', 'The parameter token is repeated.')
+            return oauth_error('invalid_request', 'The parameter token is repeated.')
         if value is None:
-            return _oauth_error('invalid_request', 'The token parameter is missing.')  # RFC 7009 §2.1
+            return oauth_error('invalid_request', 'The token parameter is missing.')  # RFC 7009 §2.1
         if (stack := stacks.get(stack_key_of(value) or '')) is None:
             # RFC 7009 §2.2: an unknown token is answered with 200, there is nothing to revoke.
             return Response(status_code=200)
