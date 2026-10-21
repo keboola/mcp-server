@@ -4054,7 +4054,7 @@ follow `next_step`.
 ---
 <a name="get_merge_request_conflicts"></a>
 ## get_merge_request_conflicts
-**Annotations**: `read-only`
+**Annotations**: `idempotent, read-only`
 
 **Tags**: `merge-request`
 
@@ -4097,7 +4097,7 @@ Walk the user through them one by one and resolve each with resolve_merge_reques
 ---
 <a name="get_merge_requests"></a>
 ## get_merge_requests
-**Annotations**: `read-only`
+**Annotations**: `idempotent, read-only`
 
 **Tags**: `merge-request`
 
@@ -4416,7 +4416,7 @@ the resolution. Follow `status.next_step`.
 ---
 <a name="update_merge_request"></a>
 ## update_merge_request
-**Annotations**: `destructive`
+**Annotations**: `destructive, idempotent`
 
 **Tags**: `merge-request`
 
