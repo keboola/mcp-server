@@ -154,7 +154,10 @@ DATA_APP_BRANCH_GATED_TOOLS = {
 # explicit allow-list, so that a tool added later stays hidden there until it is reviewed for the plugin directory
 # (OpenAI scans the plugin's tool list and holds new tools until approved). Not listed: `run_sync_action` (an arbitrary
 # action on any component, a generic executor by OpenAI's rules), `create_project` (an unowned PAYG project, next to
-# the commerce rules) and `create_python_js_data_app_git_credential` (returns a URL with an embedded secret).
+# the commerce rules), and the tools that hand out a secret, which OpenAI forbids in responses:
+# `create_python_js_data_app_git_credential` and `modify_python_js_data_app` (git URLs with an embedded secret),
+# `delete_python_js_data_app_draft` (part of that git workflow) and `get_data_app_preview_link` (a URL that carries a
+# secret and skips the app login).
 DIRECTORY_TOOLS = frozenset(
     {
         'add_config_row',
@@ -164,7 +167,6 @@ DIRECTORY_TOOLS = frozenset(
         'create_oauth_url',
         'create_sql_transformation',
         'create_stream',
-        'delete_python_js_data_app_draft',
         'deploy_data_app',
         'docs_query',
         'find_component_id',
@@ -173,7 +175,6 @@ DIRECTORY_TOOLS = frozenset(
         'get_components',
         'get_config_examples',
         'get_configs',
-        'get_data_app_preview_link',
         'get_data_apps',
         'get_flow_examples',
         'get_flow_schema',
@@ -187,7 +188,6 @@ DIRECTORY_TOOLS = frozenset(
         'get_tables',
         'link_shared_bucket',
         'modify_flow',
-        'modify_python_js_data_app',
         'modify_streamlit_data_app',
         'query_data',
         'run_job',

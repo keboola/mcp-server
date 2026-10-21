@@ -2237,7 +2237,14 @@ class TestDirectoryToolProfile:
     """DMD-2482: a session created through the ChatGPT plugin (bound to the router's resource) gets only the reviewed
     directory tools, on every tools/list path and for every call; every other session is unchanged."""
 
-    EXCLUDED = ('run_sync_action', 'create_project', 'create_python_js_data_app_git_credential')
+    EXCLUDED = (
+        'run_sync_action',
+        'create_project',
+        'create_python_js_data_app_git_credential',
+        'modify_python_js_data_app',
+        'delete_python_js_data_app_draft',
+        'get_data_app_preview_link',
+    )
 
     @staticmethod
     def _request(directory_profile: bool | None) -> Request | None:
@@ -2323,6 +2330,22 @@ class TestDirectoryToolProfile:
                 assert (
                     await ToolsFilteringMiddleware().on_call_tool(context, AsyncMock(return_value=expected)) is expected
                 )
+
+    @pytest.mark.parametrize('sql_dialect', ['', 'Snowflake', 'BigQuery'])
+    def test_the_directory_instructions_name_only_directory_tools(self, sql_dialect: str) -> None:
+        """What a plugin session reads (the server instructions and the project system prompt) never sends it to a tool
+        it does not have; the prompt of every other session still names them."""
+        from keboola_mcp_server.resources.prompts import get_project_system_prompt
+        from keboola_mcp_server.server import create_server
+
+        mcp = create_server(Config(), runtime_info=ServerRuntimeInfo(transport='stdio'))
+        hidden = {t.name for t in asyncio.run(mcp.list_tools(run_middleware=False))} - DIRECTORY_TOOLS
+        directory_prompt = get_project_system_prompt(sql_dialect, directory=True)
+
+        for text in (mcp.instructions, directory_prompt):
+            assert [name for name in hidden if name in text] == []
+        assert 'run_sync_action' in get_project_system_prompt(sql_dialect)
+        assert '<!--' not in directory_prompt
 
     def test_authorize_tool_call_applies_the_profile(self) -> None:
         common = {
