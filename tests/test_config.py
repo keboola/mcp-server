@@ -228,6 +228,9 @@ class TestReplaceByHeaders:
             {'X-Oauth-Client-Secret': 'evil'},
             {'X-Oauth-Server-Url': 'https://evil.example'},
             {'X-Mcp-Server-Url': 'https://evil.example'},
+            # the router forwards every `Mcp-*` header to the regional server, so the bare spellings must stay inert too
+            {'Mcp-Server-Url': 'https://evil.example'},
+            {'Mcp-Db-Url': 'postgresql://evil'},
             {'X-Oauth-Validate-Rate-Limit': '100000'},
             {'X-Oauth-Dynamic-Client-Approval': 'true'},
             {'X-Oauth-Dynamic-Client-Approval-Daily-Limit': '100000'},
@@ -245,6 +248,8 @@ class TestReplaceByHeaders:
             'oauth_client_secret',
             'oauth_server_url',
             'mcp_server_url',
+            'mcp_server_url_bare',
+            'mcp_db_url_bare',
             'oauth_validate_rate_limit',
             'oauth_dynamic_client_approval',
             'oauth_dynamic_client_approval_daily_limit',

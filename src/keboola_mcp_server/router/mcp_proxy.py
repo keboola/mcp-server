@@ -17,7 +17,8 @@ LOG = logging.getLogger(__name__)
 # regional server (its per-request `X-*` settings stay a direct-connection feature), and `X-Forwarded-For` would only
 # let a caller choose the address the regional server sees. Every `Mcp-*` header is the transport's: the session and
 # protocol version, and since 2026-07-28 `Mcp-Method`, `Mcp-Name` and `Mcp-Param-*`, which the stack checks against
-# the body (400 without them).
+# the body (400 without them). The prefix is safe only while no request-settable regional option is spelled `Mcp-*`
+# (`Config._HEADER_ELIGIBLE_FIELDS`; `tests/test_config.py` pins the deployment-level `mcp_*` fields as unreachable).
 _FORWARDED_REQUEST_HEADERS = ('authorization', 'content-type', 'accept', 'last-event-id')
 _FORWARDED_REQUEST_HEADER_PREFIX = 'mcp-'
 # Never the stack's `WWW-Authenticate`: it names the stack's own metadata, and a client following it would leave the
@@ -113,6 +114,9 @@ def create_mcp_proxy(
             LOG.warning(f'[router] Upstream stream interrupted: stack_key={stack.key}: {type(e).__name__}')
 
     async def proxy(request: Request) -> Response:
+        if len(request.headers.getlist('authorization')) > 1:
+            # The router routes, counts and limits by one token; the stack might authenticate another.
+            return oauth_error('invalid_request', 'The Authorization header is repeated.')
         token = _bearer_token(request)
         if token is None:
             return _unauthorized(resource_metadata_url, error_description=None)
@@ -125,11 +129,13 @@ def create_mcp_proxy(
             return too_many_requests(retry_after())
 
         url = f'{stack.upstream}/mcp' + (f'?{request.url.query}' if request.url.query else '')
-        # Every copy, in order: the stack refuses a repeated `Mcp-Method` or `Mcp-Name`, so the router must not pick one.
-        headers = [
+        # One copy of each fixed header, the one the router read; every copy of an `Mcp-*` header, in order: the stack
+        # refuses a repeated `Mcp-Method` or `Mcp-Name`, so the router must not pick one.
+        headers = [(name, value) for name in _FORWARDED_REQUEST_HEADERS if (value := request.headers.get(name))]
+        headers += [
             (name, value)
             for name, value in request.headers.items()
-            if name in _FORWARDED_REQUEST_HEADERS or name.startswith(_FORWARDED_REQUEST_HEADER_PREFIX)
+            if name.startswith(_FORWARDED_REQUEST_HEADER_PREFIX)
         ]
         # Byte for byte: a compressed answer would be decompressed here, and the decompressor may hold SSE bytes back.
         headers.append(('accept-encoding', 'identity'))
