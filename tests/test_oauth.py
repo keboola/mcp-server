@@ -3580,6 +3580,25 @@ class TestRouterFlows:
         assert response['iss'] == [provider._router_issuer]
         assert response['code'][0].startswith('eu-aws.')
 
+    def test_a_router_state_finished_without_router_settings_is_refused(
+        self, provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A rollout or rollback within the lifetime of a state: a replica without router settings must not hand out a
+        code that nobody can route."""
+        from keboola_mcp_server import oauth as oauth_module
+
+        league = httpx.MockTransport(
+            lambda _rq: httpx.Response(200, json={'access_token': 'la', 'refresh_token': 'lr', 'expires_in': 3600})
+        )
+        monkeypatch.setattr(oauth_module, '_create_http_client', lambda **_kw: httpx.AsyncClient(transport=league))
+        query = self._authorize_query(via='router', resource='https://mcp-router.example.com/mcp')
+        _client, consent = self._login_until_connection(provider, monkeypatch, query, 'REGISTERED')
+        other_replica = self._provider(router=False)
+
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(other_replica.handle_oauth_callback('connection-code', consent['state'][0]))
+        assert exc.value.status_code == 400
+
     def test_via_router_in_a_form_body_counts_too(
         self, provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
     ) -> None:

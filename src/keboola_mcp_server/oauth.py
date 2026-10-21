@@ -1096,6 +1096,14 @@ class _CaptureParameterWithinLimit:
             self._var.reset(token)
 
 
+def _cross_origin(app: ASGIApp) -> ASGIApp:
+    """CORS for a POST endpoint browser-based clients call, as the SDK sets it, and outermost, so that an answer of
+    the body limit (413) still carries its headers."""
+    return CORSMiddleware(
+        app, allow_origins=['*'], allow_methods=['POST', 'OPTIONS'], allow_headers=['Mcp-Protocol-Version']
+    )
+
+
 def _resource_key(resource: str) -> tuple[str, str, int, str] | None:
     """What two spellings of one resource URL share (origin, and the path without a trailing slash), or None for a value
     that is not an absolute URL without query and fragment (RFC 8707 §2)."""
@@ -1273,15 +1281,13 @@ class SimpleOAuthProvider(OAuthProvider):
             if isinstance(route, Route) and route.path.startswith(_METADATA_PATH_PREFIXES):
                 route = Route(route.path, endpoint=_PatchAuthServerMetadata(route.endpoint), methods=route.methods)
             elif isinstance(route, Route) and route.path == '/token':
-                endpoint = _CaptureParameter(route.endpoint, name='resource', var=_TOKEN_REQUEST_RESOURCES)
+                endpoint = _cross_origin(
+                    _CaptureParameter(route.endpoint, name='resource', var=_TOKEN_REQUEST_RESOURCES)
+                )
                 route = Route(route.path, endpoint=endpoint, methods=route.methods)
             elif isinstance(route, Route) and route.path == '/revoke':
-                # CORS outermost, as the SDK does, so that a 413 still carries its headers.
-                endpoint = CORSMiddleware(
-                    RequestBodyLimitMiddleware(request_response(self._revoke), DEFAULT_MAX_REQUEST_BODY_SIZE),
-                    allow_origins=['*'],
-                    allow_methods=['POST', 'OPTIONS'],
-                    allow_headers=['Mcp-Protocol-Version'],
+                endpoint = _cross_origin(
+                    RequestBodyLimitMiddleware(request_response(self._revoke), DEFAULT_MAX_REQUEST_BODY_SIZE)
                 )
                 route = Route(route.path, endpoint=endpoint, methods=['POST', 'OPTIONS'])
             elif isinstance(route, Route) and route.path == '/authorize':
