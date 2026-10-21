@@ -677,6 +677,7 @@ class TestDirectoryToolProfile:
         import json
         from datetime import datetime, timedelta, timezone
 
+        from keboola_mcp_server.mcp import DIRECTORY_TOOLS
         from keboola_mcp_server.session_store.repository import OAuthSession, PostgresSessionStore
 
         session = OAuthSession(
@@ -721,15 +722,7 @@ class TestDirectoryToolProfile:
             if expect_profile:
                 call = rpc(client, 'tools/call', {'name': 'run_sync_action', 'arguments': {}})
 
-        excluded = {
-            'run_sync_action',
-            'create_project',
-            'create_python_js_data_app_git_credential',
-            'modify_python_js_data_app',
-            'delete_python_js_data_app_draft',
-            'get_data_app_preview_link',
-        }
-        assert (names.isdisjoint(excluded)) is expect_profile
+        assert (names <= DIRECTORY_TOOLS) is expect_profile
         assert {'get_tables', 'query_data', 'get_accessible_projects'} <= names
         if expect_profile:
             assert call['isError'] is True
