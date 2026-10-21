@@ -146,8 +146,8 @@ def _is_read_only_expression(expression: exp.Expression, tokens: list[Token]) ->
         )
     if not isinstance(expression, _READ_ONLY_EXPRESSIONS):
         return False
-    if isinstance(expression, exp.Select) and expression.args.get('into'):
-        return False  # SELECT ... INTO creates a table
+    if expression.find(exp.Into) is not None:
+        return False  # SELECT ... INTO creates a table, also inside a union or subquery
     # Data-modifying CTEs or subqueries.
     return expression.find(*_WRITE_EXPRESSIONS) is None
 

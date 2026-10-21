@@ -211,6 +211,9 @@ def test_validate_read_only_statement_allows(sql_query: str, dialect: str):
         # Too deep to parse: the keyword fallback still applies.
         ('SELECT ' + '(' * 200 + '1' + ')' * 200 + ' FROM "t" WHERE x IN (DELETE FROM "t")', 'Snowflake'),
         ('SELECT ' + '(' * 200 + '1' + ')' * 200 + ' INTO "t2" FROM "t"', 'Snowflake'),
+        ('SELECT 1 INTO "t" UNION SELECT 2', 'Snowflake'),
+        ('(SELECT 1 INTO "t")', 'Snowflake'),
+        ('SELECT * FROM (SELECT 1 INTO "t")', 'Snowflake'),
         ('SELECT $1 FROM @s/a;/* ; DROP TABLE "t"; */', 'Snowflake'),
         # sqlglot reads `{# ... #}` as a comment; Snowflake does not, BigQuery reads `#` as a line comment.
         ('SELECT 1 {# ; DROP TABLE "t"; #}', 'Snowflake'),
