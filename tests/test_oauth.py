@@ -3578,7 +3578,9 @@ class TestRouterFlows:
         denial = urlparse(provider.access_denied_redirect(consent['state'][0]))
         assert parse_qs(denial.query)['iss'] == [provider._router_issuer]
 
+        # Flow B needs a client Keboola did not pre-register: a missing pre-registered one is refused (DMD-2478)
         provider._dynamic_client_approval = True
+        query = query | {'redirect_uri': 'https://my.tool/oauth/callback'}
         _client, approval = self._login_until_connection(provider, monkeypatch, query, 'NOT_REGISTERED')
         TestSimpleOAuthProvider._stub_client_registration(monkeypatch, _ClientRegistration.REGISTERED)
         consent_url = asyncio.run(provider.handle_oauth_callback(None, approval['state'][0]))
