@@ -10,12 +10,12 @@ import math
 import os
 import secrets
 import time
-from collections import OrderedDict, deque
+from collections import Counter, OrderedDict, deque
 from collections.abc import Mapping
 from contextvars import ContextVar
 from datetime import datetime, timezone
 from enum import Enum, auto
-from typing import Any, cast
+from typing import Any, Literal, cast
 from urllib.parse import parse_qs, urljoin, urlparse, urlunparse
 
 import httpx
@@ -1085,6 +1085,7 @@ class SimpleOAuthProvider(OAuthProvider):
         authorize_rate_limit_per_ip: int | None = None,
         trusted_proxy_hops: int = 1,
         encryption_key: bytes | None = None,
+        resource_binding: Literal['log', 'enforce'] = 'log',
     ) -> None:
         """
         Creates OAuth provider implementation.
@@ -1115,6 +1116,9 @@ class SimpleOAuthProvider(OAuthProvider):
         :param encryption_key: The session encryption key; the Connection client ids are keyed with a key derived
             from it (see `_connection_client_id`), so every replica must get the same one. Without it a
             process-local key is used, which is fine for local runs and tests only.
+        :param resource_binding: What a resource that is not this server does (RFC 8707): `log` (the default) logs and
+            counts it and lets the request through, `enforce` refuses it. Clients that already send a resource would turn
+            from working into failing, so a stack switches to `enforce` only after its mismatch log stays empty.
         """
         super().__init__(
             base_url=mcp_server_url,
@@ -1156,9 +1160,13 @@ class SimpleOAuthProvider(OAuthProvider):
         # The RFC 8707 resources this server's tokens may be issued for: the PRM `resource` (the server's own URL) and
         # the MCP endpoint a client was configured with (`/mcp`, or the legacy `/sse` that forwards to it).
         own_path = urlparse(mcp_server_url).path.rstrip('/')
-        self._own_resource_keys = frozenset(
-            key for path in ('', '/mcp', '/sse') if (key := _resource_key(urljoin(mcp_server_url, own_path + path)))
-        )
+        self._own_resources = [urljoin(mcp_server_url, own_path + path) for path in ('', '/mcp', '/sse')]
+        self._own_resource_keys = frozenset(key for url in self._own_resources if (key := _resource_key(url)))
+        if resource_binding not in ('log', 'enforce'):
+            raise ValueError(f"The resource binding mode must be 'log' or 'enforce', got {resource_binding!r}.")
+        self._resource_binding = resource_binding
+        # Mismatches seen by this process, per place (`authorize`, `token`, `mcp`): the evidence for switching to enforce.
+        self.resource_mismatches: Counter[str] = Counter()
 
     @property
     def issuer(self) -> str:
@@ -1202,12 +1210,25 @@ class SimpleOAuthProvider(OAuthProvider):
         """Whether `resource` names this server, in any spelling a client may use (see `_own_resource_keys`)."""
         return _resource_key(resource) in self._own_resource_keys
 
+    def _refuses_foreign_resource(self, where: str, received: str, client_id: str) -> bool:
+        """Logs and counts a resource that is not this server; whether to refuse the request (the `enforce` mode).
+
+        WARNING on purpose, with the received and expected values: in the `log` mode this line is how a stack learns
+        whether its clients would break under `enforce`."""
+        self.resource_mismatches[where] += 1
+        LOG.warning(
+            f'[resource_binding] Resource mismatch: where={where}, mode={self._resource_binding}, '
+            f'received={_sanitize_for_log(received)!r}, expected={self._own_resources!r}, '
+            f'client_id={_sanitize_client_id_for_log(client_id)}, count={self.resource_mismatches[where]}'
+        )
+        return self._resource_binding == 'enforce'
+
     def _token_resource(self, bound_resource: str | None, client_id: str) -> str | None:
         """The resource a /token request may issue tokens for, given the one the grant is already bound to (named at
         /authorize, or stored on the session): the request may repeat it or leave it out, never name another one.
 
-        :raises TokenError: `invalid_target` (RFC 8707 §2) for more than one resource, a different one, or one that is
-            not this server.
+        :raises TokenError: `invalid_target` (RFC 8707 §2) for more than one resource or a different one, and in the
+            `enforce` mode for one that is not this server.
         """
         requested = _TOKEN_REQUEST_RESOURCES.get()
         resource = bound_resource or (requested[0] if requested else None)
@@ -1215,7 +1236,11 @@ class SimpleOAuthProvider(OAuthProvider):
             problem = 'Only one resource can be requested.'
         elif requested and _resource_key(requested[0]) != _resource_key(cast(str, resource)):
             problem = 'The resource differs from the one authorized.'
-        elif resource is not None and not self.is_own_resource(resource):
+        elif (
+            resource is not None
+            and not self.is_own_resource(resource)
+            and self._refuses_foreign_resource('token', resource, client_id)
+        ):
             problem = 'The resource is not this MCP server.'
         else:
             return resource
@@ -1351,13 +1376,13 @@ class SimpleOAuthProvider(OAuthProvider):
         redirect_uri_str = str(params.redirect_uri)
         connection_client_id = _connection_client_id(redirect_uri_str, self._client_id_key)
 
-        if params.resource is not None and not self.is_own_resource(params.resource):
+        if (
+            params.resource is not None
+            and not self.is_own_resource(params.resource)
+            and self._refuses_foreign_resource('authorize', params.resource, client.client_id)
+        ):
             # RFC 8707 §2 invalid_target, before the user goes through consent for tokens /token would refuse. On this
             # server's own page, like every other error here (see the ERROR branch below for why).
-            LOG.warning(
-                f'[authorize] Refused with invalid_target: client_id={_sanitize_client_id_for_log(client.client_id)}, '
-                f'resource={_sanitize_for_log(params.resource)!r}'
-            )
             return construct_redirect_uri(
                 self._mcp_callback_url,
                 error='invalid_target',
@@ -1808,12 +1833,12 @@ class SimpleOAuthProvider(OAuthProvider):
         if session is None:
             _log_debug(f'[load_access_token] Unknown or revoked token: {token}')
             return None
-        if session.resource is not None and not self.is_own_resource(session.resource):
+        if (
+            session.resource is not None
+            and not self.is_own_resource(session.resource)
+            and self._refuses_foreign_resource('mcp', session.resource, session.client_id)
+        ):
             # RFC 8707: a token minted for another resource is not replayed here. No resource is accepted as before.
-            LOG.warning(
-                f'[load_access_token] Token issued for another resource refused: session_id={session.id}, '
-                f'resource={_sanitize_for_log(session.resource)!r}'
-            )
             return None
 
         if session.kbc_access_expires_at.timestamp() <= time.time() + 60:

@@ -6,7 +6,7 @@ import os
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from datetime import datetime, timedelta, timezone
-from typing import Literal
+from typing import Literal, cast
 from urllib.parse import urlparse
 
 from fastmcp import FastMCP
@@ -289,6 +289,14 @@ class CustomRoutes:
                 app.add_middleware(rate_limit.cls, **rate_limit.kwargs)
 
 
+def _resource_binding_mode(raw: str | None) -> Literal['log', 'enforce']:
+    """`KBC_OAUTH_RESOURCE_BINDING`: `log` when unset; anything but `log` or `enforce` stops startup."""
+    mode = (raw or 'log').strip().lower()
+    if mode not in ('log', 'enforce'):
+        raise ValueError(f"oauth_resource_binding must be 'log' or 'enforce', got {raw!r}.")
+    return cast(Literal['log', 'enforce'], mode)
+
+
 def create_server(
     config: Config,
     *,
@@ -371,6 +379,7 @@ def create_server(
             ),
             trusted_proxy_hops=_parse_positive_int('oauth_trusted_proxy_hops', config.oauth_trusted_proxy_hops) or 1,
             encryption_key=encryption_key,
+            resource_binding=_resource_binding_mode(config.oauth_resource_binding),
         )
     else:
         oauth_provider = None
