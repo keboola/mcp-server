@@ -53,7 +53,7 @@ _EXPLAIN_OPTIONS = re.compile(r'^\s*USING\s+\w+\s', re.IGNORECASE)
 # sqlglot ends line comments only at \n and \r; reject other line breaks a backend might end them at.
 _UNUSUAL_LINE_BREAKS = re.compile('[\x0b\x0c\x85\u2028\u2029]')
 # Longer SQL is rejected before it is checked, which keeps the check's time bounded.
-MAX_SQL_QUERY_LENGTH = 4_000_000
+MAX_SQL_QUERY_LENGTH = 2_000_000  # above the longest statement observed in query_data, about 1.6 MB
 # Snowflake reads an unquoted stage path up to whitespace, sqlglot reads it as tokens. Where the two could disagree,
 # fail closed: outside quoted names in the stage-name part, a path must not contain a quote, `$$` or a comment start.
 _QUOTED_NAME = r'"(?:[^"]|"")*"'
