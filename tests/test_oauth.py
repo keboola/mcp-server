@@ -2845,6 +2845,12 @@ class TestAuthorizationServerMetadata:
             assert code not in caplog.text
             assert 'league-at' not in caplog.text
             assert 'league-rt' not in caplog.text
+            # /token must accept what the callback issues (the two are tied by the `typ` claim)
+            dcr_client = OAuthClientInformationFull(client_id='dcr-client-id', redirect_uris=[AnyUrl(redirect_uri)])
+            loaded = await provider.load_authorization_code(dcr_client, code)
+            assert loaded is not None
+            assert str(loaded.redirect_uri) == redirect_uri
+            assert loaded.code_challenge == 'challenge'
 
         issuer = response_params['iss'][0]
         assert issuer == provider.issuer
