@@ -5,9 +5,11 @@ from collections.abc import Mapping
 
 from keboola_mcp_server.router.stacks import Stack, parse_stacks, router_issuer
 
-# The stack picker is answered by a person's browser, so its own address is what is counted; a person logs in a few
-# times a day at most.
+# The defaults of RFC Security Considerations, "Abuse / DoS". The stack picker is answered by a person's browser, so its
+# own address is what is counted; a person logs in a few times a day at most. A code is redeemed once and a refresh
+# token used a few times an hour, so a credential sent more often than this is being guessed or replayed.
 _DEFAULT_AUTHORIZE_RATE_LIMIT_PER_IP = 60
+_DEFAULT_TOKEN_RATE_LIMIT_PER_CREDENTIAL = 10
 
 
 def _env(env: Mapping[str, str], *names: str) -> str | None:
@@ -38,10 +40,13 @@ class RouterSettings:
     """The domain verification token OpenAI asks the plugin's MCP host to serve; None serves a 404."""
     authorize_rate_limit_per_ip: int | None = _DEFAULT_AUTHORIZE_RATE_LIMIT_PER_IP
     """Requests per minute one browser address may send to `/authorize` (the stack picker)."""
+    token_rate_limit_per_credential: int = _DEFAULT_TOKEN_RATE_LIMIT_PER_CREDENTIAL
+    """Requests per minute with one code or refresh token to `/token`, and with one token to `/revoke`, counted by its
+    SHA-256."""
     api_rate_limit_per_ip: int | None = None
-    """Requests per minute one client address may send to `/register`, `/token`, `/revoke` and `/mcp`. Unset by
-    default: these calls come from the AI client's servers, so one address carries many users (every ChatGPT user
-    shares OpenAI's egress addresses), and a limit must be sized for that."""
+    """Requests per minute one client address may send to `/register`. Unset by default: registrations come from the
+    AI client's servers, so one address carries many users (every ChatGPT user shares OpenAI's egress addresses), and
+    the ceiling must be sized from observed traffic."""
     trusted_proxy_hops: int = 1
     """How many proxies in front of the router append to `X-Forwarded-For` (see `oauth.caller_address`)."""
     upstream_timeout_seconds: float = 30.0
@@ -66,6 +71,10 @@ class RouterSettings:
             stacks=parse_stacks(_env(env, 'KBC_ROUTER_STACKS')),
             openai_apps_challenge=_env(env, 'OPENAI_APPS_CHALLENGE', 'KBC_OPENAI_APPS_CHALLENGE'),
             authorize_rate_limit_per_ip=authorize_limit or _DEFAULT_AUTHORIZE_RATE_LIMIT_PER_IP,
+            token_rate_limit_per_credential=_positive_int(
+                'KBC_ROUTER_TOKEN_RATE_LIMIT_PER_CREDENTIAL', _env(env, 'KBC_ROUTER_TOKEN_RATE_LIMIT_PER_CREDENTIAL')
+            )
+            or _DEFAULT_TOKEN_RATE_LIMIT_PER_CREDENTIAL,
             api_rate_limit_per_ip=_positive_int(
                 'KBC_ROUTER_API_RATE_LIMIT_PER_IP', _env(env, 'KBC_ROUTER_API_RATE_LIMIT_PER_IP')
             ),

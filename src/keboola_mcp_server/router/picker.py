@@ -5,15 +5,23 @@ from html import escape
 
 from keboola_mcp_server.router.stacks import Stack
 
-# Nothing inline can run or style the page (no script at all, the stylesheet is a file of the router's own), and no
-# other site can frame it. No `form-action 'self'`: browsers apply it to the redirect after the submit too, which would
-# block the 302 to the chosen stack. No referrer: the page URL carries `state` and the PKCE challenge.
-PICKER_HEADERS = {
-    'Content-Security-Policy': "default-src 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'",
-    'Referrer-Policy': 'no-referrer',
-    'X-Content-Type-Options': 'nosniff',
-    'Cache-Control': 'no-store',
-}
+
+def picker_headers(stacks: Iterable[Stack]) -> dict[str, str]:
+    """Nothing inline can run or style the page (no script at all, the stylesheet is a file of the router's own), and
+    no other site can frame it. The form may submit to the router only; `form-action` also lists the stacks' upstreams
+    because browsers apply it to the redirect that follows the submit, which goes to the chosen stack. No referrer:
+    the page URL carries `state` and the PKCE challenge."""
+    form_action = ' '.join(["'self'", *(s.upstream for s in stacks)])
+    return {
+        'Content-Security-Policy': (
+            f"default-src 'self'; form-action {form_action}; frame-ancestors 'none'; base-uri 'none'; object-src 'none'"
+        ),
+        'Referrer-Policy': 'no-referrer',
+        'X-Content-Type-Options': 'nosniff',
+        'Cache-Control': 'no-store',
+    }
+
+
 PICKER_STYLESHEET_PATH = '/router-static/picker.css'
 
 PICKER_CSS = """\
@@ -27,22 +35,27 @@ button { margin-top: 1rem; padding: 0.6rem 1.4rem; border: 0; border-radius: 6px
 """
 
 
-def render_picker(*, stacks: Iterable[Stack], query_string: str, preselected: str | None) -> str:
-    """The picker page. Its only input is the stack key; the original query string goes back as the form action,
-    HTML-escaped, and is rendered nowhere else."""
+def render_picker(*, stacks: Iterable[Stack], params: Iterable[tuple[str, str]], preselected: str | None) -> str:
+    """The picker page: a `GET` form back to `/authorize` whose only visible input is the stack key. Every original
+    parameter rides along as a hidden input, HTML-escaped, because a `GET` form drops the query string of its action;
+    nothing else from the request is rendered."""
     options = '\n'.join(
         f'<label><input type="radio" name="stack" value="{escape(s.key)}" required'
         f'{" checked" if s.key == preselected else ""}> {escape(s.name)}'
         f'<span class="host">{escape(s.login_host)}</span></label>'
         for s in stacks
     )
-    action = escape(f'/authorize?{query_string}' if query_string else '/authorize', quote=True)
+    hidden = ''.join(
+        f'<input type="hidden" name="{escape(name, quote=True)}" value="{escape(value, quote=True)}">'
+        for name, value in params
+        if name != 'stack'
+    )
     return (
         '<!doctype html><html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
         f'<title>Choose your Keboola stack</title><link rel="stylesheet" href="{PICKER_STYLESHEET_PATH}">'
         '</head><body><main><h1>Where is your Keboola account?</h1>'
         '<p>Pick the stack you log in to. Its login address is shown under each name.</p>'
-        f'<form method="post" action="{action}">{options}<button type="submit">Continue to login</button></form>'
-        '</main></body></html>'
+        f'<form method="get" action="/authorize">{hidden}{options}<button type="submit">Continue to login</button>'
+        '</form></main></body></html>'
     )

@@ -21,8 +21,13 @@ from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, R
 from starlette.routing import Route, request_response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from keboola_mcp_server.router.picker import PICKER_CSS, PICKER_HEADERS, PICKER_STYLESHEET_PATH, render_picker
-from keboola_mcp_server.router.rate_limit import PerAddressRateLimitMiddleware
+from keboola_mcp_server.router.picker import PICKER_CSS, PICKER_STYLESHEET_PATH, picker_headers, render_picker
+from keboola_mcp_server.router.rate_limit import (
+    FixedWindowCounter,
+    PerAddressRateLimitMiddleware,
+    credential_key,
+    too_many_requests,
+)
 from keboola_mcp_server.router.settings import RouterSettings
 from keboola_mcp_server.router.stacks import Stack, router_resource, stack_key_of
 
@@ -186,31 +191,24 @@ def create_router_app(
         params = [(k, v) for k, v in parse_qsl(query_string, keep_blank_values=True) if k not in ('stack', 'via')]
         return f'{stack.upstream}/authorize?{urlencode([*params, ("via", "router")])}'
 
-    def picker(request: Request, status_code: int = 200) -> Response:
+    headers_of_picker = picker_headers(stacks.values())
+
+    def picker(request: Request) -> Response:
         cookie = request.cookies.get(_STACK_COOKIE)
         return HTMLResponse(
             render_picker(
                 stacks=stacks.values(),
-                query_string=request.url.query,
+                params=parse_qsl(request.url.query, keep_blank_values=True),
                 preselected=cookie if cookie in stacks else None,
             ),
-            status_code=status_code,
-            headers=PICKER_HEADERS,
+            headers=headers_of_picker,
         )
 
     async def authorize(request: Request) -> Response:
-        if request.method in ('GET', 'HEAD'):
-            # A reviewer link (or any link) can name the stack and skip the picker; any other value shows the picker.
-            if (stack := stacks.get(request.query_params.get('stack') or '')) is None:
-                return picker(request)
-            request.state.stack_key = stack.key
-            return RedirectResponse(upstream_authorize_url(stack, request.url.query), status_code=302)
-
-        # The picker's own submit: the authorization request stays in the query string (the form action) and the body
-        # carries only the choice. An authorization request sent as a POST body is not supported here.
-        chosen = (_form_fields(await request.body()).get('stack') or [''])[-1]
-        if (stack := stacks.get(chosen)) is None:
-            return picker(request, status_code=400)
+        # The picker's own submit and a link that names the stack (the reviewer link) look the same: a stack from the
+        # table skips the picker; any other value shows it.
+        if (stack := stacks.get(request.query_params.get('stack') or '')) is None:
+            return picker(request)
         request.state.stack_key = stack.key
         response = RedirectResponse(upstream_authorize_url(stack, request.url.query), status_code=302)
         # Only a preselection for next time: it authenticates nobody, and a refresh never needs it (the token prefix
@@ -225,6 +223,14 @@ def create_router_app(
             samesite='lax',
         )
         return response
+
+    counter = FixedWindowCounter(rate_limit_clock)
+
+    def over_credential_limit(path: str, credential: str) -> bool:
+        key = credential_key(credential)
+        return counter.over_limit(
+            f'credential:{path}', key, settings.token_rate_limit_per_credential, log_key=f'sha256:{key[:12]}'
+        )
 
     async def forward(request: Request, stack: Stack, path: str, body: bytes) -> Response:
         request.state.stack_key = stack.key
@@ -257,6 +263,8 @@ def create_router_app(
             return _oauth_error('invalid_request', f'The parameter {e} is repeated.')
         if value is None:
             return _oauth_error('invalid_request', f'The {parameter} parameter is missing.')
+        if over_credential_limit('/token', value):
+            return too_many_requests()
         if (stack := stacks.get(stack_key_of(value) or '')) is None:
             # Answered here, without asking any stack: no stack issued a grant without a known prefix.
             return _oauth_error('invalid_grant', f'The {parameter} was not issued by this authorization server.')
@@ -270,6 +278,8 @@ def create_router_app(
             return _oauth_error('invalid_request', 'The parameter token is repeated.')
         if value is None:
             return _oauth_error('invalid_request', 'The token parameter is missing.')  # RFC 7009 §2.1
+        if over_credential_limit('/revoke', value):
+            return too_many_requests()
         if (stack := stacks.get(stack_key_of(value) or '')) is None:
             # RFC 7009 §2.2: an unknown token is answered with 200, there is nothing to revoke.
             return Response(status_code=200)
@@ -302,11 +312,11 @@ def create_router_app(
     if settings.authorize_rate_limit_per_ip:
         limits['/authorize'] = settings.authorize_rate_limit_per_ip
     if settings.api_rate_limit_per_ip:
-        limits.update(dict.fromkeys(('/register', '/token', '/revoke', '/mcp'), settings.api_rate_limit_per_ip))
+        limits['/register'] = settings.api_rate_limit_per_ip
     else:
         LOG.warning(
-            '[router] No per-address limit on /register, /token, /revoke and /mcp: set KBC_ROUTER_API_RATE_LIMIT_PER_IP, '
-            'sized for the AI clients\' shared egress addresses.'
+            '[router] No per-address limit on /register: set KBC_ROUTER_API_RATE_LIMIT_PER_IP, sized for the AI '
+            "clients' shared egress addresses."
         )
 
     endpoints: list[tuple[str, Callable[[Request], Awaitable[Response]], list[str], bool]] = [
@@ -316,7 +326,7 @@ def create_router_app(
         ('/.well-known/openid-configuration', authorization_server_metadata, ['GET'], True),
         ('/.well-known/openai-apps-challenge', openai_apps_challenge, ['GET'], False),
         ('/register', registration.handle, ['POST'], True),
-        ('/authorize', authorize, ['GET', 'POST'], False),
+        ('/authorize', authorize, ['GET'], False),
         ('/token', token, ['POST'], True),
         ('/revoke', revoke, ['POST'], True),
         (PICKER_STYLESHEET_PATH, picker_stylesheet, ['GET'], False),
@@ -333,10 +343,7 @@ def create_router_app(
         middleware=[
             Middleware(_RequestLogMiddleware, known_paths=frozenset(path for path, *_ in endpoints)),
             Middleware(
-                PerAddressRateLimitMiddleware,
-                limits=limits,
-                trusted_hops=settings.trusted_proxy_hops,
-                clock=rate_limit_clock,
+                PerAddressRateLimitMiddleware, limits=limits, trusted_hops=settings.trusted_proxy_hops, counter=counter
             ),
         ],
         lifespan=lifespan,

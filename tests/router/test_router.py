@@ -124,58 +124,85 @@ class TestAuthorize:
 
         assert response.status_code == 200
         assert response.headers['content-type'].startswith('text/html')
+        upstreams = ' '.join(s.upstream for s in DEFAULT_STACKS)
         assert response.headers['content-security-policy'] == (
-            "default-src 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'"
+            f"default-src 'self'; form-action 'self' {upstreams}; frame-ancestors 'none'; base-uri 'none'; "
+            "object-src 'none'"
         )
         assert response.headers['referrer-policy'] == 'no-referrer'
         assert 'location' not in response.headers
 
-    def test_the_picker_submit_redirects_to_the_chosen_stack_and_remembers_it(self) -> None:
+    def test_the_picker_is_a_get_form_carrying_every_parameter(self) -> None:
+        """The submit a browser would send (the form's fields as a query string) reaches the chosen stack with every
+        original parameter, in order, duplicates and blanks included."""
+        from html.parser import HTMLParser
+
+        class Form(HTMLParser):
+            def __init__(self) -> None:
+                super().__init__()
+                self.form: dict[str, str] = {}
+                self.hidden: list[tuple[str, str]] = []
+
+            def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+                values = {k: v or '' for k, v in attrs}
+                if tag == 'form':
+                    self.form = values
+                elif tag == 'input' and values.get('type') == 'hidden':
+                    self.hidden.append((values['name'], values['value']))
+
         with _client() as client:
-            response = client.post(f'/authorize?{self.QUERY}', data={'stack': 'eu-gcp'})
+            page = client.get(f'/authorize?{self.QUERY}&stack=no-such-stack')
+            form = Form()
+            form.feed(page.text)
+            submit = client.get(form.form['action'], params=[*form.hidden, ('stack', 'eu-gcp')])
+
+        assert form.form == {'method': 'get', 'action': '/authorize'}
+        assert form.hidden == parse_qsl(self.QUERY, keep_blank_values=True)
+        assert submit.status_code == 302
+        location = urlparse(submit.headers['location'])
+        assert f'{location.scheme}://{location.netloc}' == 'https://mcp.europe-west3.gcp.keboola.com'
+        assert parse_qsl(location.query, keep_blank_values=True) == [
+            *parse_qsl(self.QUERY, keep_blank_values=True),
+            ('via', 'router'),
+        ]
+
+    def test_choosing_a_stack_remembers_it_for_the_picker(self) -> None:
+        with _client() as client:
+            response = client.get(f'/authorize?{self.QUERY}&stack=eu-gcp')
             client.cookies.set('keboola_mcp_stack', 'eu-gcp', path='/authorize')
             picker = client.get(f'/authorize?{self.QUERY}')
 
-        assert response.status_code == 302
-        assert response.headers['location'].startswith('https://mcp.europe-west3.gcp.keboola.com/authorize?')
-        assert parse_qs(urlparse(response.headers['location']).query)['via'] == ['router']
         cookie = response.headers['set-cookie']
         assert cookie.startswith('keboola_mcp_stack=eu-gcp;')
         for attribute in ('Max-Age=7776000', 'Path=/authorize', 'Secure', 'HttpOnly', 'SameSite=lax'):
             assert attribute in cookie
         assert 'value="eu-gcp" required checked' in picker.text
 
-    def test_a_submit_naming_no_known_stack_shows_the_picker_again(self) -> None:
+    def test_a_post_is_not_served(self) -> None:
         with _client() as client:
-            response = client.post(f'/authorize?{self.QUERY}', data={'stack': 'attacker.example'})
+            response = client.post(f'/authorize?{self.QUERY}', data={'stack': 'eu-gcp'})
 
-        assert response.status_code == 400
+        assert response.status_code == 405
         assert 'location' not in response.headers
-        assert '<form method="post"' in response.text
-
-    def test_the_picker_renders_the_query_string_only_escaped_in_the_form_action(self) -> None:
-        hostile = 'state=%22%3E%3Cscript%3Ealert(1)%3C/script%3E&redirect_uri=%27onmouseover%3D1'
-        with _client() as client:
-            response = client.get(f'/authorize?{hostile}')
-
-        assert '<script>' not in response.text
-        assert "'onmouseover" not in response.text
-        assert f'action="/authorize?{hostile.replace("&", "&amp;")}"' in response.text
-        for stack in DEFAULT_STACKS:
-            assert stack.name in response.text
-            assert stack.login_host in response.text
 
     @pytest.mark.parametrize(
-        'query_string',
-        ['state="><script>alert(1)</script>', "redirect_uri=' onmouseover='alert(1)", 'a=<b>&c="d"'],
+        ('name', 'value'),
+        [
+            ('state', '"><script>alert(1)</script>'),
+            ('redirect_uri', "' onmouseover='alert(1)"),
+            ('"><b>', '<b>&"d"'),
+        ],
     )
-    def test_the_picker_escapes_a_raw_hostile_query_string(self, query_string: str) -> None:
-        page = render_picker(stacks=DEFAULT_STACKS, query_string=query_string, preselected=None)
+    def test_the_picker_escapes_hostile_parameters(self, name: str, value: str) -> None:
+        page = render_picker(stacks=DEFAULT_STACKS, params=[(name, value)], preselected=None)
 
-        assert query_string not in page
         assert '<script>' not in page
         assert '<b>' not in page
-        assert f'action="{escape("/authorize?" + query_string, quote=True)}"' in page
+        assert value not in page
+        assert f'<input type="hidden" name="{escape(name, quote=True)}" value="{escape(value, quote=True)}">' in page
+        for stack in DEFAULT_STACKS:
+            assert stack.name in page
+            assert stack.login_host in page
 
     def test_the_picker_stylesheet_is_served_by_the_router_itself(self) -> None:
         with _client() as client:
@@ -357,39 +384,80 @@ class TestRateLimits:
         assert statuses == [200, 200, 429]
         assert other == 200
 
-    def test_the_api_endpoints_are_unlimited_unless_configured(self) -> None:
-        form = {'grant_type': 'refresh_token', 'refresh_token': 'us-aws.rt'}
+    def test_register_is_limited_per_address_only_when_configured(self) -> None:
+        body = {'redirect_uris': ['https://chatgpt.com/connector_platform_oauth_redirect']}
+        headers = {'X-Forwarded-For': '198.51.100.1'}
         with _client() as client:
-            unlimited = {client.post('/token', data=form).status_code for _ in range(5)}
+            unlimited = {client.post('/register', json=body, headers=headers).status_code for _ in range(5)}
         with _client(api_rate_limit_per_ip=2) as client:
-            limited = [
-                client.post(
-                    path, data={**form, 'token': 'us-aws.rt'}, headers={'X-Forwarded-For': '198.51.100.1'}
-                ).status_code
-                for path in ('/token', '/token', '/token', '/revoke')
+            limited = [client.post('/register', json=body, headers=headers).status_code for _ in range(3)]
+
+        assert unlimited == {201}
+        assert limited == [201, 201, 429]
+
+    @pytest.mark.parametrize(
+        ('path', 'form'),
+        [
+            ('/token', lambda credential: {'grant_type': 'refresh_token', 'refresh_token': credential}),
+            ('/token', lambda credential: {'grant_type': 'authorization_code', 'code': credential}),
+            ('/revoke', lambda credential: {'token': credential}),
+        ],
+    )
+    def test_token_and_revoke_are_limited_per_credential_not_per_address(self, path: str, form) -> None:
+        """Every ChatGPT user calls from OpenAI's few egress addresses: two credentials from one address are counted
+        apart, and the limit holds for a credential whatever address it comes from."""
+        upstream = _Upstream(httpx.Response(200, json={}))
+        with _client(upstream, token_rate_limit_per_credential=2) as client:
+            statuses = [
+                client.post(path, data=form(credential), headers={'X-Forwarded-For': address}).status_code
+                for credential, address in [
+                    ('us-aws.first', '198.51.100.1'),
+                    ('us-aws.first', '198.51.100.2'),
+                    ('us-aws.first', '198.51.100.3'),
+                    ('us-aws.second', '198.51.100.1'),
+                ]
             ]
 
-        assert unlimited == {200}
-        assert limited == [200, 200, 429, 200]  # counted per endpoint
+        assert statuses == [200, 200, 429, 200]
+        assert len(upstream.requests) == 3
+
+    def test_no_credential_reaches_the_logs_or_the_limiter(self, caplog: pytest.LogCaptureFixture) -> None:
+        from keboola_mcp_server.router.app import create_router_app as build
+
+        credential = 'us-aws.the-refresh-token'
+        app = build(
+            RouterSettings(router_url=ROUTER_URL, stacks=parse_stacks(None), token_rate_limit_per_credential=1),
+            upstream_transport=httpx.MockTransport(_Upstream()),
+        )
+        with caplog.at_level(logging.DEBUG), TestClient(app, base_url=ROUTER_URL) as client:
+            for _ in range(3):
+                client.post('/token', data={'grant_type': 'refresh_token', 'refresh_token': credential})
+
+        logged = '\n'.join(r.getMessage() for r in caplog.records if not r.getMessage().startswith('HTTP Request:'))
+        assert 'Rate limit reached: group=credential:/token, key=sha256:' in logged
+        assert credential not in logged and 'the-refresh-token' not in logged
+        [counter] = [m.kwargs['counter'] for m in app.user_middleware if 'counter' in m.kwargs]
+        assert all(credential not in key for _group, key in counter._counts)
 
     def test_an_options_request_that_is_no_preflight_is_counted_and_never_handled(self) -> None:
         upstream = _Upstream()
-        form = {'grant_type': 'refresh_token', 'refresh_token': 'us-aws.rt'}
+        body = {'redirect_uris': ['https://a.example/cb']}
         headers = {'X-Forwarded-For': '198.51.100.2'}
         with _client(upstream, api_rate_limit_per_ip=1) as client:
-            statuses = [client.request('OPTIONS', '/token', data=form, headers=headers).status_code for _ in range(2)]
+            statuses = [
+                client.request('OPTIONS', '/register', json=body, headers=headers).status_code for _ in range(2)
+            ]
             preflight = client.options(
-                '/token',
+                '/register',
                 headers={**headers, 'Origin': 'https://app.example', 'Access-Control-Request-Method': 'POST'},
             )
 
         assert statuses == [405, 429]
-        assert upstream.requests == []
         assert preflight.status_code == 200  # a real preflight is answered by CORS and not counted
         assert preflight.headers['access-control-allow-origin'] == '*'
 
-    def test_addresses_beyond_the_cap_are_not_counted(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(rate_limit, '_MAX_TRACKED_ADDRESSES', 1)
+    def test_keys_beyond_the_cap_are_not_counted(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(rate_limit, '_MAX_TRACKED_KEYS', 1)
         with _client(authorize_rate_limit_per_ip=1) as client:
             statuses = [
                 client.get('/authorize', headers={'X-Forwarded-For': address}).status_code
@@ -408,6 +476,7 @@ class TestSettings:
                 'KBC_ROUTER_STACKS': json.dumps(stacks),
                 'OPENAI_APPS_CHALLENGE': 'abc',
                 'KBC_ROUTER_API_RATE_LIMIT_PER_IP': '600',
+                'KBC_ROUTER_TOKEN_RATE_LIMIT_PER_CREDENTIAL': '20',
                 'KBC_OAUTH_TRUSTED_PROXY_HOPS': '2',
             }
         )
@@ -417,6 +486,8 @@ class TestSettings:
         assert settings.openai_apps_challenge == 'abc'
         assert settings.authorize_rate_limit_per_ip == 60
         assert settings.api_rate_limit_per_ip == 600
+        assert settings.token_rate_limit_per_credential == 20
+        assert RouterSettings.from_env({'KBC_ROUTER_URL': ROUTER_URL}).token_rate_limit_per_credential == 10
         assert settings.trusted_proxy_hops == 2
         assert list(RouterSettings.from_env({'KBC_ROUTER_URL': ROUTER_URL}).stacks) == [s.key for s in DEFAULT_STACKS]
 
