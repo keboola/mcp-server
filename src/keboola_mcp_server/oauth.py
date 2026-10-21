@@ -1167,7 +1167,9 @@ class SimpleOAuthProvider(OAuthProvider):
         self._own_resources = [urljoin(mcp_server_url, own_path + path) for path in ('', '/mcp', '/sse')]
         self._own_resource_keys = frozenset(key for url in self._own_resources if (key := _resource_key(url)))
         if resource_binding not in ('log', 'enforce'):
-            raise ValueError(f"The resource binding mode must be 'log' or 'enforce', got {resource_binding!r}.")
+            raise ValueError(
+                f"The resource binding mode (KBC_OAUTH_RESOURCE_BINDING) must be 'log' or 'enforce', got {resource_binding!r}."
+            )
         self._resource_binding = resource_binding
         # Mismatches seen by this process, per place (`authorize`, `token`, `mcp`); the WARNING lines are the evidence
         # for switching to enforce, this is their count.
@@ -1272,7 +1274,8 @@ class SimpleOAuthProvider(OAuthProvider):
         # WARNING on purpose: a client that names this server in a spelling nobody foresaw cannot log in.
         LOG.warning(
             f'[token] Refused with invalid_target: {problem} client_id={_sanitize_client_id_for_log(client_id)}, '
-            f'bound={_sanitize_for_log(bound_resource or "")!r}, requested={[_sanitize_for_log(r) for r in requested]!r}'
+            f'bound={_sanitize_for_log(bound_resource or "")[:_MAX_LOGGED_RESOURCE_CHARS]!r}, '
+            f'requested={[_sanitize_for_log(r)[:_MAX_LOGGED_RESOURCE_CHARS] for r in requested]!r}'
         )
         raise TokenError(error='invalid_target', error_description=problem)
 
