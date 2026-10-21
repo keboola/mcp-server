@@ -51,9 +51,10 @@ _SQLGLOT_DIALECTS: dict[str, type[sqlglot.Dialect] | str] = {'snowflake': 'snowf
 _EXPLAIN_OPTIONS = re.compile(r'^\s*USING\s+\w+\s', re.IGNORECASE)
 # sqlglot ends line comments only at \n and \r; reject other line breaks a backend might end them at.
 _UNUSUAL_LINE_BREAKS = re.compile('[\x0b\x0c\x85\u2028\u2029]')
-# Snowflake reads an unquoted stage path up to whitespace, sqlglot as tokens, so `//`, `--` or `/*` inside
-# the path would start a comment for sqlglot only.
-_STAGE_PATH = re.compile(r'(?:"(?:[^"]|"")*"|[^\s;"])*')
+# Snowflake reads an unquoted stage path up to whitespace, sqlglot as tokens, so a comment start inside the
+# path, or a quote that opens a sqlglot string or identifier past the path's end, hides code from sqlglot only.
+# Quoted identifiers count as quoting only where a stage-name part starts.
+_STAGE_PATH = re.compile(r'(?:(?<=[@.])"(?:[^"]|"")*"|[^\s;])*')
 _COMMENT_STARTS = ('//', '--', '/*')
 _READ_ONLY_EXPRESSIONS = (exp.Select, exp.SetOperation, exp.Subquery, exp.Show, exp.Describe)
 # Statements sqlglot cannot model fully are parsed as `exp.Command` named by their first keyword.
@@ -177,8 +178,13 @@ def _validate_statement(dialect: sqlglot.Dialect, sql_query: str) -> None:
         for token in tokens:
             if token.token_type == TokenType.PARAMETER and token.text == '@':
                 stage_path = _STAGE_PATH.match(sql_query, token.end + 1).group()
-                if any(comment in stage_path for comment in _COMMENT_STARTS):
-                    raise InvalidArgumentError(f'Quote stage paths that contain {", ".join(_COMMENT_STARTS)}.')
+                path_end = token.end + 1 + len(stage_path)
+                splits_token = any(t.start < path_end <= t.end for t in tokens)
+                if splits_token or any(comment in stage_path for comment in _COMMENT_STARTS):
+                    raise InvalidArgumentError(
+                        'Quote stage paths that contain quotes or comment starts (//, --, /*), '
+                        'or separate the path from what follows with whitespace.'
+                    )
 
     statements: list[list[Token]] = [[]]
     for token in tokens:

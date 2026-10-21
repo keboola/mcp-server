@@ -171,6 +171,8 @@ _DIALECTS = ['Snowflake', 'BigQuery']
         ("SELECT $1 FROM @s/dir/file.csv (FILE_FORMAT => 'csv')", 'Snowflake'),
         ('SELECT $1 FROM @"my st"/dir/f.csv', 'Snowflake'),
         ("SELECT $1 FROM @s/f.csv(FILE_FORMAT => 'x')", 'Snowflake'),
+        ('SELECT $1 FROM @db."my schema".st/f.csv', 'Snowflake'),
+        ('SELECT * FROM (SELECT $1 FROM @s/a)', 'Snowflake'),
         ('SELECT * FROM `project.dataset.t;DROP TABLE t`', 'BigQuery'),
     ],
 )
@@ -191,6 +193,9 @@ def test_validate_read_only_statement_allows(sql_query: str, dialect: str):
         ('SELECT $1 FROM @db."my schema".st/a--b; DROP TABLE "t"', 'Snowflake'),
         ('SELECT $1 FROM @s/{#a//b; DROP TABLE "t"', 'Snowflake'),
         ('SELECT $1 FROM @s/a(//b; DROP TABLE "t"', 'Snowflake'),
+        ('SELECT $1 FROM @s/a" ; DROP TABLE "t"; SELECT " --"', 'Snowflake'),
+        ("SELECT $1 FROM @s/a' ; DROP TABLE \"t\"; SELECT ' --'", 'Snowflake'),
+        ('SELECT $1 FROM @s" ; DROP TABLE "t"; SELECT " --"', 'Snowflake'),
         # sqlglot reads `{# ... #}` as a comment; Snowflake does not, BigQuery reads `#` as a line comment.
         ('SELECT 1 {# ; DROP TABLE "t"; #}', 'Snowflake'),
         ('SELECT 1 {# ->> DROP TABLE "t" #}', 'Snowflake'),
