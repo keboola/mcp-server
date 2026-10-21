@@ -3669,10 +3669,17 @@ class TestRouterFlows:
             ('eu-aws', 'us-aws', 401),
             # a code minted before the stack had a key
             (None, 'eu-aws', 401),
+            # a server without a stack key refuses a code that has a claim, and takes its own codes as before
+            ('eu-aws', None, 401),
+            (None, None, 200),
         ],
     )
     def test_a_code_minted_by_another_stack_is_refused_at_token(
-        self, monkeypatch: pytest.MonkeyPatch, minting_stack: str | None, redeeming_stack: str, expected_status: int
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        minting_stack: str | None,
+        redeeming_stack: str | None,
+        expected_status: int,
     ) -> None:
         from starlette.applications import Starlette
         from starlette.testclient import TestClient
@@ -3704,7 +3711,7 @@ class TestRouterFlows:
             '/token',
             data={
                 'grant_type': 'authorization_code',
-                'code': f'{redeeming_stack}.{code}',
+                'code': f'{redeeming_stack}.{code}' if redeeming_stack else code,
                 'client_id': 'chatgpt-dcr-id',
                 'redirect_uri': 'https://chatgpt.com/connector_platform_oauth_redirect',
                 'code_verifier': 'v' * 43,
