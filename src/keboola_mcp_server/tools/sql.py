@@ -3,6 +3,7 @@ import contextlib
 import csv
 import logging
 import re
+import threading
 from collections.abc import Awaitable, Iterator, Mapping
 from io import StringIO
 from typing import Annotated, ClassVar
@@ -51,11 +52,17 @@ _SQLGLOT_DIALECTS: dict[str, type[sqlglot.Dialect] | str] = {'snowflake': 'snowf
 _EXPLAIN_OPTIONS = re.compile(r'^\s*USING\s+\w+\s', re.IGNORECASE)
 # sqlglot ends line comments only at \n and \r; reject other line breaks a backend might end them at.
 _UNUSUAL_LINE_BREAKS = re.compile('[\x0b\x0c\x85\u2028\u2029]')
-# Snowflake reads an unquoted stage path up to whitespace, sqlglot as tokens, so a comment start inside the
-# path, or a quote that opens a sqlglot string or identifier past the path's end, hides code from sqlglot only.
-# Quoted identifiers count as quoting only where a stage-name part starts.
-_STAGE_PATH = re.compile(r'(?:(?<=[@.])"(?:[^"]|"")*"|[^\s;])*')
-_COMMENT_STARTS = ('//', '--', '/*')
+# Longer SQL is rejected before it is checked, which keeps the check's time bounded.
+MAX_SQL_QUERY_LENGTH = 4_000_000
+# Snowflake reads an unquoted stage path up to whitespace, sqlglot reads it as tokens. Where the two could disagree,
+# fail closed: outside quoted names in the stage-name part, a path must not contain a quote or a comment start.
+_QUOTED_NAME = r'"(?:[^"]|"")*"'
+_UNQUOTED_NAME = r'[^ \t\n\r;/."\']*'
+_STAGE_PATH = re.compile(
+    rf'(?P<name>[~%]?(?:{_QUOTED_NAME}|{_UNQUOTED_NAME})(?:\.(?:{_QUOTED_NAME}|{_UNQUOTED_NAME}))*)(?P<rest>[^ \t\n\r;]*)'
+)
+_QUOTED_NAME_RE = re.compile(_QUOTED_NAME)
+_UNSAFE_IN_STAGE_PATH = ('"', "'", '//', '--', '/*')
 _READ_ONLY_EXPRESSIONS = (exp.Select, exp.SetOperation, exp.Subquery, exp.Show, exp.Describe)
 # Statements sqlglot cannot model fully are parsed as `exp.Command` named by their first keyword.
 _READ_ONLY_COMMANDS = frozenset({'SHOW', 'DESCRIBE', 'DESC'})
@@ -98,16 +105,36 @@ _NOT_READ_ONLY_MSG = (
 
 def _expand_commands(dialect: sqlglot.Dialect, tokens: list[Token]) -> list[Token]:
     """The tokenizer keeps everything after a command keyword (`EXPLAIN`, BigQuery `SHOW`) as one raw string;
-    tokenize that string too, so the checks see what follows the keyword."""
+    tokenize that string too, so the checks see what follows the keyword. One level only, which keeps the check
+    linear; a command nested in a command is rejected."""
     expanded: list[Token] = []
     commands = dialect.tokenizer_class.COMMANDS
     for i, token in enumerate(tokens):
-        previous = tokens[i - 1] if i > 0 else None
-        if previous is not None and previous.token_type in commands and token.token_type == TokenType.STRING:
-            expanded.extend(_expand_commands(dialect, dialect.tokenize(token.text)))
+        if i > 0 and tokens[i - 1].token_type in commands and token.token_type == TokenType.STRING:
+            inner = dialect.tokenize(token.text)
+            if any(t.token_type in commands for t in inner):
+                raise InvalidArgumentError(f'Nested commands are not allowed. {_NOT_READ_ONLY_MSG}')
+            expanded.extend(inner)
         else:
             expanded.append(token)
     return expanded
+
+
+def _check_stage_paths(sql_query: str, tokens: list[Token]) -> None:
+    """Rejects Snowflake stage paths that sqlglot might read differently from Snowflake (see `_STAGE_PATH`).
+    Every character is scanned at most once."""
+    scanned_until = 0
+    for token in tokens:
+        if token.token_type != TokenType.PARAMETER or token.text != '@' or token.start < scanned_until:
+            continue
+        path = _STAGE_PATH.match(sql_query, token.end + 1)
+        scanned_until = path.end()
+        unquoted = _QUOTED_NAME_RE.sub('x', path.group('name')) + path.group('rest')
+        if any(unsafe in unquoted for unsafe in _UNSAFE_IN_STAGE_PATH):
+            raise InvalidArgumentError(
+                'Stage paths must not contain quotes or comment starts (//, --, /*) outside quoted stage names; '
+                'put whitespace between the path and what follows it.'
+            )
 
 
 def _is_read_only_expression(expression: exp.Expression, tokens: list[Token]) -> bool:
@@ -137,16 +164,28 @@ def _is_read_only_tokens(tokens: list[Token]) -> bool:
     return not any(token.token_type in _WRITE_TOKENS for token in tokens[1:])
 
 
-@contextlib.contextmanager
-def _quiet_sqlglot() -> Iterator[None]:
-    """Silences sqlglot's 'unsupported syntax' warning, which quotes the user's SQL, for an allowed SHOW or DESCRIBE."""
-    sqlglot_logger = logging.getLogger('sqlglot')
-    level = sqlglot_logger.level
-    sqlglot_logger.setLevel(logging.ERROR)
-    try:
-        yield
-    finally:
-        sqlglot_logger.setLevel(level)
+class _QuietSqlglotFilter(logging.Filter):
+    """Drops sqlglot records while the current thread checks a query: sqlglot's 'unsupported syntax' warning quotes
+    the user's SQL for an allowed SHOW or DESCRIBE. Thread-local, because the check runs in worker threads."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._state = threading.local()
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return not getattr(self._state, 'active', False)
+
+    @contextlib.contextmanager
+    def active(self) -> Iterator[None]:
+        self._state.active = True
+        try:
+            yield
+        finally:
+            self._state.active = False
+
+
+_QUIET_SQLGLOT = _QuietSqlglotFilter()
+logging.getLogger('sqlglot').addFilter(_QUIET_SQLGLOT)
 
 
 def validate_read_only_statement(sql_query: str, sql_dialect: str | None) -> None:
@@ -159,32 +198,30 @@ def validate_read_only_statement(sql_query: str, sql_dialect: str | None) -> Non
     """
     if (sqlglot_dialect := _SQLGLOT_DIALECTS.get((sql_dialect or '').lower())) is None:
         raise ValueError(f'Cannot check SQL statements for the unsupported SQL dialect "{sql_dialect}".')
+    if len(sql_query) > MAX_SQL_QUERY_LENGTH:
+        raise InvalidArgumentError(
+            f'The SQL query is {len(sql_query)} characters long; query_data accepts at most {MAX_SQL_QUERY_LENGTH}.'
+        )
     if _UNUSUAL_LINE_BREAKS.search(sql_query):
         raise InvalidArgumentError(f'The SQL query contains an unsupported line break character. {_NOT_READ_ONLY_MSG}')
     dialect = sqlglot.Dialect.get_or_raise(sqlglot_dialect)
     # sqlglot treats `{# ... #}` as a (Jinja) comment in every dialect; neither backend does. On BigQuery `#` starts
     # a line comment, which `{ #` keeps; on Snowflake `#` is no comment, and `{x` keeps the stage-path scan whole.
     jinja_comment = '{ #' if isinstance(dialect, BigQuery) else '{x'
-    _validate_statement(dialect, sql_query.replace('{#', jinja_comment))
+    try:
+        _validate_statement(dialect, sql_query.replace('{#', jinja_comment))
+    except RecursionError as e:
+        raise InvalidArgumentError(f'The SQL query is nested too deeply to check. {_NOT_READ_ONLY_MSG}') from e
 
 
-def _validate_statement(dialect: sqlglot.Dialect, sql_query: str) -> None:
+def _validate_statement(dialect: sqlglot.Dialect, sql_query: str, *, explained: bool = False) -> None:
     try:
         tokens = dialect.tokenize(sql_query)
     except TokenError as e:
         raise InvalidArgumentError(f'Cannot parse the SQL query: {e}. {_NOT_READ_ONLY_MSG}') from e
 
     if isinstance(dialect, Snowflake):
-        for token in tokens:
-            if token.token_type == TokenType.PARAMETER and token.text == '@':
-                stage_path = _STAGE_PATH.match(sql_query, token.end + 1).group()
-                path_end = token.end + 1 + len(stage_path)
-                splits_token = any(t.start < path_end <= t.end for t in tokens)
-                if splits_token or any(comment in stage_path for comment in _COMMENT_STARTS):
-                    raise InvalidArgumentError(
-                        'Quote stage paths that contain quotes or comment starts (//, --, /*), '
-                        'or separate the path from what follows with whitespace.'
-                    )
+        _check_stage_paths(sql_query, tokens)
 
     statements: list[list[Token]] = [[]]
     for token in tokens:
@@ -207,15 +244,17 @@ def _validate_statement(dialect: sqlglot.Dialect, sql_query: str) -> None:
 
     first = statements[0][0]
     if first.token_type == TokenType.COMMAND and first.text.upper() == 'EXPLAIN':
+        if explained:
+            raise InvalidArgumentError(f'Nested EXPLAIN is not allowed. {_NOT_READ_ONLY_MSG}')
         # The tokenizer keeps the explained statement as one raw string; check it as a statement of its own.
-        explained = statements[0][1].text if len(statements[0]) > 1 else ''
-        _validate_statement(dialect, _EXPLAIN_OPTIONS.sub('', explained, count=1))
+        explained_sql = statements[0][1].text if len(statements[0]) > 1 else ''
+        _validate_statement(dialect, _EXPLAIN_OPTIONS.sub('', explained_sql, count=1), explained=True)
         return
 
     try:
         # A comment after the final `;` comes back as an `exp.Semicolon`.
-        with _quiet_sqlglot():
-            parsed = dialect.parse(sql_query)
+        with _QUIET_SQLGLOT.active():
+            parsed = dialect.parser().parse(tokens, sql_query)
         expressions = [e for e in parsed if e is not None and not isinstance(e, exp.Semicolon)]
     except ParseError:
         read_only = _is_read_only_tokens(statement)
@@ -527,7 +566,9 @@ async def query_data(
     * Ensure valid filtering by checking actual data values first
     """
     workspace_manager = WorkspaceManager.from_state(ctx.session.state)
-    validate_read_only_statement(sql_query, await workspace_manager.get_sql_dialect())
+    sql_dialect = await workspace_manager.get_sql_dialect()
+    # The check is CPU-bound and linear in the query length; keep it off the event loop.
+    await asyncio.to_thread(validate_read_only_statement, sql_query, sql_dialect)
 
     progress_token = _client_progress_token(ctx)
 

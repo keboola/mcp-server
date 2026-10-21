@@ -2,6 +2,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import time
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, Mock, call
 
@@ -14,6 +15,7 @@ from keboola_mcp_server.clients.base import InvalidArgumentError
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.clients.query import QueryServiceClient
 from keboola_mcp_server.tools.sql import (
+    MAX_SQL_QUERY_LENGTH,
     QueryDataOutput,
     _watch_for_http_disconnect,
     query_data,
@@ -172,6 +174,8 @@ _DIALECTS = ['Snowflake', 'BigQuery']
         ('SELECT $1 FROM @"my st"/dir/f.csv', 'Snowflake'),
         ("SELECT $1 FROM @s/f.csv(FILE_FORMAT => 'x')", 'Snowflake'),
         ('SELECT $1 FROM @db."my schema".st/f.csv', 'Snowflake'),
+        ('SELECT $1 FROM @%"My Table"/f.csv', 'Snowflake'),
+        ('SELECT $1 FROM @~/f.csv, @s/g.csv', 'Snowflake'),
         ('SELECT * FROM (SELECT $1 FROM @s/a)', 'Snowflake'),
         ('SELECT * FROM `project.dataset.t;DROP TABLE t`', 'BigQuery'),
     ],
@@ -196,6 +200,12 @@ def test_validate_read_only_statement_allows(sql_query: str, dialect: str):
         ('SELECT $1 FROM @s/a" ; DROP TABLE "t"; SELECT " --"', 'Snowflake'),
         ("SELECT $1 FROM @s/a' ; DROP TABLE \"t\"; SELECT ' --'", 'Snowflake'),
         ('SELECT $1 FROM @s" ; DROP TABLE "t"; SELECT " --"', 'Snowflake'),
+        ('SELECT $1 FROM @s/f." ; DROP TABLE "t"; SELECT " --"', 'Snowflake'),
+        ('SELECT $1 FROM @~/a." ; DROP TABLE "t"; SELECT " --"', 'Snowflake'),
+        ('SELECT $1 FROM @s/a\xa0--b; DROP TABLE "t"', 'Snowflake'),  # non-ASCII whitespace is part of the path
+        ("SELECT $1 FROM @s/f.csv(FILE_FORMAT=>'x')", 'Snowflake'),  # a quote needs whitespace before it
+        ('EXPLAIN EXPLAIN SELECT 1', 'Snowflake'),
+        ('SELECT ' + '(' * 5000 + '1' + ')' * 5000, 'Snowflake'),
         # sqlglot reads `{# ... #}` as a comment; Snowflake does not, BigQuery reads `#` as a line comment.
         ('SELECT 1 {# ; DROP TABLE "t"; #}', 'Snowflake'),
         ('SELECT 1 {# ->> DROP TABLE "t" #}', 'Snowflake'),
@@ -217,6 +227,20 @@ def test_validate_read_only_statement_does_not_log_sql(caplog):
     with caplog.at_level(logging.DEBUG, logger='sqlglot'):
         validate_read_only_statement('SHOW TABLES', 'BigQuery')
     assert not [record for record in caplog.records if record.name.startswith('sqlglot')]
+
+
+@pytest.mark.parametrize('dialect', _DIALECTS)
+def test_validate_read_only_statement_rejects_long_query(dialect: str):
+    with pytest.raises(InvalidArgumentError, match='at most'):
+        validate_read_only_statement('SELECT 1' + ' ' * MAX_SQL_QUERY_LENGTH, dialect)
+
+
+def test_validate_read_only_statement_is_linear():
+    # 24 KB of stage references; a per-reference rescan of the query took seconds here.
+    sql_query = 'SELECT ' + ','.join(['@a'] * 8000)
+    start = time.perf_counter()
+    validate_read_only_statement(sql_query, 'Snowflake')
+    assert time.perf_counter() - start < 5
 
 
 @pytest.mark.parametrize('dialect', ['Redshift', None])
