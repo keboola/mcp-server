@@ -50,27 +50,25 @@ def _split_skill(skill_name: str) -> tuple[dict[str, str], str]:
 def _oauth_denial(tool: Tool) -> str | None:
     """The reason an OAuth session (the only way ChatGPT connects) cannot call the tool, or None.
 
-    Checked for a write role and a guest; `create_flow` and `create_conditional_flow` depend on the project's
-    conditional-flows feature, so a tool passes when either feature state allows it.
+    Checked for a write role only: under OAuth the role matters just for `readonly`, where the skills stop. The
+    `create_flow` and `create_conditional_flow` tools depend on the project's conditional-flows feature, so a tool
+    passes when either feature state allows it.
     """
-    for token_role in ('admin', 'guest'):
-        denials = [
-            ToolsFilteringMiddleware.authorize_tool_call(
-                tool_name=tool.name,
-                is_read_only=is_read_only_tool(tool),
-                # Most projects have no semantic models, so a skill must not depend on semantic tools.
-                is_semantic=is_semantic_tool(tool),
-                has_semantic_models=False,
-                token_role=token_role,
-                features=features,
-                is_oauth=True,
-                is_main_branch=True,
-            )
-            for features in (set(), {'hide-conditional-flows'})
-        ]
-        if all(denials):
-            return denials[0]
-    return None
+    denials = [
+        ToolsFilteringMiddleware.authorize_tool_call(
+            tool_name=tool.name,
+            is_read_only=is_read_only_tool(tool),
+            # Most projects have no semantic models, so a skill must not depend on semantic tools.
+            is_semantic=is_semantic_tool(tool),
+            has_semantic_models=False,
+            token_role='admin',
+            features=features,
+            is_oauth=True,
+            is_main_branch=True,
+        )
+        for features in (set(), {'hide-conditional-flows'})
+    ]
+    return denials[0] if all(denials) else None
 
 
 @pytest.fixture(scope='module')
