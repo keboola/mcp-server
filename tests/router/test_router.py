@@ -829,6 +829,47 @@ class TestMcpProxy:
         assert 'Rate limit reached: group=credential:/mcp, key=sha256:' in logged
         assert 'us-aws.first' not in logged
 
+    @pytest.mark.parametrize(
+        'case',
+        [
+            # the per-address ceiling is for /register only
+            'address_ceiling_ignored',
+            # a token of no known stack is answered 401 and not counted
+            'unknown_prefix_not_counted',
+            # random tokens on /mcp (a public prefix) do not switch off the throttle on refresh tokens
+            'mcp_flood_keeps_token_limit',
+        ],
+    )
+    def test_the_mcp_limit_is_kept_apart(self, case: str, monkeypatch: pytest.MonkeyPatch) -> None:
+        upstream = _Upstream(httpx.Response(200, json={}))
+        headers = {'X-Forwarded-For': '198.51.100.4'}
+
+        def mcp(client: TestClient, token: str) -> int:
+            auth = {**headers, 'Authorization': f'Bearer {token}'}
+            return client.post('/mcp', json=_INITIALIZE, headers=auth).status_code
+
+        if case == 'mcp_flood_keeps_token_limit':
+            monkeypatch.setattr(rate_limit, '_MAX_TRACKED_KEYS', 1)
+        with _client(
+            upstream, api_rate_limit_per_ip=1, mcp_rate_limit_per_token=1, token_rate_limit_per_credential=1
+        ) as client:
+            if case == 'address_ceiling_ignored':
+                assert [mcp(client, f'us-aws.t{i}') for i in range(3)] == [200, 200, 200]
+            elif case == 'unknown_prefix_not_counted':
+                assert [mcp(client, 'xx.t'), mcp(client, 'xx.t'), mcp(client, 'us-aws.t'), mcp(client, 'us-aws.t')] == [
+                    401,
+                    401,
+                    200,
+                    429,
+                ]
+            else:
+                mcp(client, 'us-aws.random')
+                refresh = {'grant_type': 'refresh_token', 'refresh_token': 'us-aws.rt'}
+                assert [client.post('/token', data=refresh, headers=headers).status_code for _ in range(2)] == [
+                    200,
+                    429,
+                ]
+
     @pytest.mark.parametrize(('method', 'expected_method'), [('GET', 'GET'), ('DELETE', 'DELETE')])
     def test_get_and_delete_are_forwarded(self, method: str, expected_method: str) -> None:
         upstream = _Upstream(httpx.Response(405, headers={'Allow': 'POST'}))

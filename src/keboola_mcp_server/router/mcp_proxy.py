@@ -76,6 +76,7 @@ def create_mcp_proxy(
     connect_timeout_seconds: float,
     read_timeout_seconds: float,
     over_limit: Callable[[str], bool],
+    retry_after: Callable[[], int],
 ) -> Callable[[Request], Awaitable[Response]]:
     """The `/mcp` handler.
 
@@ -84,6 +85,7 @@ def create_mcp_proxy(
 
     :param over_limit: Counts one request with a bearer token and says whether it is over the token's limit (the
         token is counted by its hash, see `rate_limit.credential_key`).
+    :param retry_after: Seconds until the limit's window ends, for the 429's `Retry-After`.
     :param read_timeout_seconds: How long the stack may stay silent: before the response starts (a tool call that runs
         long) and between two chunks of a streamed one. Exceeded before the response starts, the client gets 504;
         later, the stream ends.
@@ -113,7 +115,7 @@ def create_mcp_proxy(
             )
         request.state.stack_key = stack.key
         if over_limit(token):
-            return too_many_requests()
+            return too_many_requests(retry_after())
 
         url = f'{stack.upstream}/mcp' + (f'?{request.url.query}' if request.url.query else '')
         headers = {name: value for name in _FORWARDED_REQUEST_HEADERS if (value := request.headers.get(name))}

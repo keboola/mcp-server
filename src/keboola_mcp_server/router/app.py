@@ -21,8 +21,8 @@ from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, R
 from starlette.routing import Route, request_response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from keboola_mcp_server.router.picker import PICKER_CSS, PICKER_HEADERS, PICKER_STYLESHEET_PATH, render_picker
 from keboola_mcp_server.router.mcp_proxy import create_mcp_proxy
+from keboola_mcp_server.router.picker import PICKER_CSS, PICKER_HEADERS, PICKER_STYLESHEET_PATH, render_picker
 from keboola_mcp_server.router.rate_limit import (
     FixedWindowCounter,
     PerAddressRateLimitMiddleware,
@@ -98,7 +98,7 @@ class _StatelessClients:
 
 # The MCP transport's headers a browser-based client sends and reads, on top of what the OAuth endpoints need.
 _MCP_CORS_ALLOW_HEADERS = ['Authorization', 'Content-Type', 'Mcp-Protocol-Version', 'Mcp-Session-Id', 'Last-Event-Id']
-_MCP_CORS_EXPOSE_HEADERS = ['Mcp-Session-Id', 'Mcp-Protocol-Version', 'WWW-Authenticate']
+_MCP_CORS_EXPOSE_HEADERS = ['Mcp-Session-Id', 'Mcp-Protocol-Version', 'WWW-Authenticate', 'Retry-After']
 
 
 def _endpoint(
@@ -254,18 +254,17 @@ def create_router_app(
         )
         return response
 
-    # Separate caps, so a flood of credentials cannot stop the counting of addresses; only known-stack credentials count.
+    # Three counters, each with its own cap on distinct keys: a flood on one kind must not stop the counting of another.
+    # /mcp has its own because its prefix is public and its traffic the highest. Only known-stack credentials count.
     address_counter = FixedWindowCounter(rate_limit_clock)
-    credential_counter = FixedWindowCounter(rate_limit_clock, overflow_limit=_CREDENTIAL_OVERFLOW_LIMIT_PER_MINUTE)
+    oauth_credential_counter = FixedWindowCounter(
+        rate_limit_clock, overflow_limit=_CREDENTIAL_OVERFLOW_LIMIT_PER_MINUTE
+    )
+    mcp_token_counter = FixedWindowCounter(rate_limit_clock, overflow_limit=_CREDENTIAL_OVERFLOW_LIMIT_PER_MINUTE)
 
-    def over_credential_limit(path: str, credential: str, limit: int | None = None) -> bool:
+    def over_credential_limit(counter: FixedWindowCounter, path: str, credential: str, limit: int) -> bool:
         key = credential_key(credential)
-        return credential_counter.over_limit(
-            f'credential:{path}',
-            key,
-            settings.token_rate_limit_per_credential if limit is None else limit,
-            log_key=f'sha256:{key[:12]}',
-        )
+        return counter.over_limit(f'credential:{path}', key, limit, log_key=f'sha256:{key[:12]}')
 
     async def forward(request: Request, stack: Stack, path: str, body: bytes) -> Response:
         request.state.stack_key = stack.key
@@ -304,8 +303,8 @@ def create_router_app(
         if (stack := stacks.get(stack_key_of(value) or '')) is None:
             # Answered here, without asking any stack: no stack issued a grant without a known prefix.
             return _oauth_error('invalid_grant', f'The {parameter} was not issued by this authorization server.')
-        if over_credential_limit('/token', value):
-            return too_many_requests(credential_counter.seconds_left())
+        if over_credential_limit(oauth_credential_counter, '/token', value, settings.token_rate_limit_per_credential):
+            return too_many_requests(oauth_credential_counter.seconds_left())
         return await forward(request, stack, '/token', body)
 
     async def revoke(request: Request) -> Response:
@@ -319,8 +318,8 @@ def create_router_app(
         if (stack := stacks.get(stack_key_of(value) or '')) is None:
             # RFC 7009 §2.2: an unknown token is answered with 200, there is nothing to revoke.
             return Response(status_code=200)
-        if over_credential_limit('/revoke', value):
-            return too_many_requests(credential_counter.seconds_left())
+        if over_credential_limit(oauth_credential_counter, '/revoke', value, settings.token_rate_limit_per_credential):
+            return too_many_requests(oauth_credential_counter.seconds_left())
         return await forward(request, stack, '/revoke', body)
 
     async def openai_apps_challenge(_request: Request) -> Response:
@@ -337,7 +336,10 @@ def create_router_app(
         resource_metadata_url=f'{issuer}/.well-known/oauth-protected-resource',
         connect_timeout_seconds=settings.upstream_timeout_seconds,
         read_timeout_seconds=settings.mcp_read_timeout_seconds,
-        over_limit=lambda token: over_credential_limit('/mcp', token, settings.mcp_rate_limit_per_token),
+        over_limit=lambda token: over_credential_limit(
+            mcp_token_counter, '/mcp', token, settings.mcp_rate_limit_per_token
+        ),
+        retry_after=mcp_token_counter.seconds_left,
     )
 
     async def health_check(_request: Request) -> Response:
