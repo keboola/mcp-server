@@ -2835,6 +2835,7 @@ class TestAuthorizationServerMetadata:
             ('https://claude.ai/api/mcp/auth_callback', 'REGISTERED', 'garbage'),
             # a JWT signed with the same secret that is not a state; it would crash on the missing 'state' key
             ('https://claude.ai/api/mcp/auth_callback', 'REGISTERED', 'authorization_code'),
+            ('https://claude.ai/api/mcp/auth_callback', 'REGISTERED', 'untyped_authorization_code'),
         ],
     )
     async def test_a_denial_is_relayed_only_for_a_live_flow_of_a_pre_registered_client(
@@ -2849,14 +2850,7 @@ class TestAuthorizationServerMetadata:
         stay limited to the redirect_uris Keboola vouches for. Every other denial keeps the generic page."""
         provider._dynamic_client_approval = True
         state = await self._consent_state(provider, monkeypatch, redirect_uri, registration)
-        if state_change == 'expired':
-            state = provider._encode({**provider._decode(state), 'expires_at': time.time() - 1})
-        elif state_change == 'forged':
-            state = provider._encode(provider._decode(state), key='another-key')
-        elif state_change == 'garbage':
-            state = 'not-a-jwt'
-        elif state_change == 'authorization_code':
-            state = self._authorization_code(provider, redirect_uri)
+        state = self._change_state(provider, state, state_change, redirect_uri)
 
         assert provider.access_denied_redirect(state) is None
         response = await self._callback(provider, f'error=access_denied&state={state}')
@@ -2866,10 +2860,12 @@ class TestAuthorizationServerMetadata:
 
     @staticmethod
     def _authorization_code(provider: SimpleOAuthProvider, redirect_uri: str) -> str:
-        """An MCP authorization code as `handle_oauth_callback` issues it: signed with the state's secret, carrying a live
-        `expires_at` and the client's `redirect_uri`, but no `state`. The client sees it, so it can send it back."""
+        """The claims of an MCP authorization code that matter here (the issued one also carries the Connection
+        tokens): signed with the state's secret, with a live `expires_at` and the client's `redirect_uri`, but no
+        `state`. The client sees it, so it can send it back."""
         return provider._encode(
             {
+                'typ': 'code',
                 'code': 'mcp_code',
                 'client_id': 'dcr-client-id',
                 'redirect_uri': redirect_uri,
@@ -2880,22 +2876,65 @@ class TestAuthorizationServerMetadata:
             }
         )
 
+    @classmethod
+    def _change_state(cls, provider: SimpleOAuthProvider, state: str, change: str | None, redirect_uri: str) -> str:
+        if change == 'expired':
+            return provider._encode({**provider._decode(state), 'expires_at': time.time() - 1})
+        if change == 'forged':
+            return provider._encode(provider._decode(state), key='another-key')
+        if change == 'garbage':
+            return 'not-a-jwt'
+        if change == 'authorization_code':
+            return cls._authorization_code(provider, redirect_uri)
+        if change == 'untyped_authorization_code':  # issued before the `typ` claim, still alive
+            return provider._encode(
+                {
+                    k: v
+                    for k, v in provider._decode(cls._authorization_code(provider, redirect_uri)).items()
+                    if k != 'typ'
+                }
+            )
+        return state
+
     @pytest.mark.asyncio
-    async def test_an_authorization_code_sent_back_as_the_state_is_refused_before_the_token_exchange(
-        self, provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
+    @pytest.mark.parametrize(
+        'state_change', ['expired', 'forged', 'garbage', 'authorization_code', 'untyped_authorization_code']
+    )
+    async def test_the_callback_refuses_what_is_not_a_live_consent_state_before_the_token_exchange(
+        self, provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch, state_change: str
     ) -> None:
+        """The callback half of the state check the denial shares: each of these is a 400, and the Connection code is
+        never exchanged."""
         from keboola_mcp_server import oauth as oauth_module
 
+        redirect_uri = 'https://claude.ai/api/mcp/auth_callback'
+        state = await self._consent_state(provider, monkeypatch, redirect_uri, 'REGISTERED')
+        state = self._change_state(provider, state, state_change, redirect_uri)
         exchanges = []
         transport = httpx.MockTransport(lambda rq: exchanges.append(rq) or httpx.Response(500))
         monkeypatch.setattr(oauth_module, '_create_http_client', lambda **_kw: httpx.AsyncClient(transport=transport))
-        state = self._authorization_code(provider, 'https://claude.ai/api/mcp/auth_callback')
 
         with pytest.raises(HTTPException) as excinfo:
             await self._callback(provider, f'code=connection-code&state={state}')
 
         assert excinfo.value.status_code == 400
         assert exchanges == []
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize('typed', [True, False])
+    async def test_a_consent_state_sent_as_the_authorization_code_is_no_code(
+        self, provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch, typed: bool
+    ) -> None:
+        """Both are signed with the same secret: a consent state at /token must be an unknown code (invalid_grant),
+        not a validation error. Untyped: a state issued before the `typ` claim."""
+        state = await self._consent_state(
+            provider, monkeypatch, 'https://claude.ai/api/mcp/auth_callback', 'REGISTERED'
+        )
+        if not typed:
+            state = provider._encode({k: v for k, v in provider._decode(state).items() if k != 'typ'})
+        client = OAuthClientInformationFull(client_id='dcr-client-id', redirect_uris=[AnyUrl('https://claude.ai/cb')])
+
+        assert await provider.load_authorization_code(client, state) is None
 
     def test_a_preflight_answer_is_left_alone(self, client) -> None:
         response = client.options(

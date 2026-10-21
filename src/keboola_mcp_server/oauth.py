@@ -230,6 +230,12 @@ def _strip_unprintable(value: str) -> str:
     return ''.join(ch for ch in value if ch.isprintable())
 
 
+def _jwt_kind(payload: Mapping[str, Any]) -> str:
+    """'state' or 'code': which of the two JWTs signed with the same secret this is. A JWT issued before the `typ`
+    claim existed (alive until its TTL runs out) is told apart by the `state` key that only a consent state has."""
+    return payload.get('typ') or ('state' if 'state' in payload else 'code')
+
+
 def _sign_mcp_client_id(secret: str, mcp_client_id: str, state: str) -> str:
     """Authenticates the `mcp_client_id` this server puts on Connection's consent URL (AI-3995).
 
@@ -1312,6 +1318,7 @@ class SimpleOAuthProvider(OAuthProvider):
         # The states expire after 5 minutes.
         scopes = cast(list[str], params.scopes or [])
         state = {
+            'typ': 'state',
             'redirect_uri': redirect_uri_str,
             'redirect_uri_provided_explicitly': str(params.redirect_uri_provided_explicitly),
             # the scopes sent by the MCP server's OAuth client (e.g. claude.ai)
@@ -1421,20 +1428,25 @@ class SimpleOAuthProvider(OAuthProvider):
         return self._connection_consent_url(state)
 
     def _decode_consent_state(self, state: str, log_prefix: str) -> dict[str, Any] | None:
-        """The live state `authorize()` encoded, or None. The one definition of a valid state for every path
-        Connection sends it back on (the callback and the relayed denial)."""
+        """The live consent state `authorize()` encoded, or None. The one definition of a valid consent state for
+        every path Connection sends it back on (the callback and the relayed denial).
+
+        Neither the JWT nor its claims are logged in full: the same secret signs the MCP authorization codes, which
+        carry the user's Connection tokens, and a JWS payload is readable without the key."""
         try:
             state_data = self._decode(state)
         except jwt.InvalidTokenError:
-            LOG.debug(f'{log_prefix} Invalid state: {state}', exc_info=True)
+            LOG.debug(f'{log_prefix} Invalid state, length={len(state)}', exc_info=True)
             return None
-        # No 'state' key: some other JWT signed with the same secret (an MCP authorization code), not a state.
-        # Only its keys are logged: an authorization code carries the user's Connection tokens.
-        if not state_data or 'state' not in state_data:
+        # Not a consent state: some other JWT signed with the same secret (an MCP authorization code).
+        if not state_data or 'state' not in state_data or _jwt_kind(state_data) != 'state':
             LOG.debug(f'{log_prefix} Invalid state, keys: {sorted(state_data or {})}')
             return None
         if state_data.get('expires_at', 0) < time.time():
-            LOG.debug(f'{log_prefix} Expired state: {state_data}')
+            LOG.debug(
+                f'{log_prefix} Expired state: redirect_uri={_sanitize_for_log(str(state_data.get("redirect_uri")))}, '
+                f'expires_at={state_data.get("expires_at")}'
+            )
             return None
         return state_data
 
@@ -1498,6 +1510,7 @@ class SimpleOAuthProvider(OAuthProvider):
         # Create MCP authorization code
         # This is deserialized into _ExtendedAuthorizationCode instance in load_authorization_code() function.
         auth_code = {
+            'typ': 'code',
             'code': f'mcp_{secrets.token_hex(16)}',
             'client_id': state_data['client_id'],
             'redirect_uri': redirect_uri,
@@ -1562,6 +1575,10 @@ class SimpleOAuthProvider(OAuthProvider):
             auth_code_raw = self._decode(authorization_code)
         except jwt.InvalidTokenError:
             LOG.debug(f'[load_authorization_code] Invalid authorization_code: {authorization_code}', exc_info=True)
+            return None
+        # A consent state sent as the code is signed with the same secret but is no code: /token answers invalid_grant.
+        if _jwt_kind(auth_code_raw) != 'code':
+            LOG.debug(f'[load_authorization_code] Not an authorization code, keys: {sorted(auth_code_raw)}')
             return None
 
         auth_code = _ExtendedAuthorizationCode.model_validate(
