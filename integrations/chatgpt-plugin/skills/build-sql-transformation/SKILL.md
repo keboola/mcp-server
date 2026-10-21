@@ -25,27 +25,28 @@ existing transformation, its name or ID.
    must happen before any write. If the result carries a non-null `scope_token`, pass it on every later tool call.
    Every write below also passes the confirmed id as `project_id`: other conversations on the same login share the
    scope, and a scope they moved makes the write fail instead of landing in another project.
-3. **Get context.** Call `get_project_info`. Note the SQL dialect (Snowflake or BigQuery). Python, R and DuckDB
-   transformations are out of scope for this skill; say so and stop. If its `toolset_restrictions` say only
-   read-only tools are available, tell the user they cannot save transformations in this project and stop.
+3. **Get context.** Call `get_project_info` with `project_id=<the confirmed id>`. Note the SQL dialect (Snowflake
+   or BigQuery). Python, R and DuckDB transformations are out of scope for this skill; say so and stop. If its
+   `toolset_restrictions` say only read-only tools are available, tell the user they cannot save transformations
+   in this project and stop.
 4. **Find the inputs.** Use `search` with `item_types=["table"]` for the source tables, then `get_tables` with
    `table_ids=[...]` for their `fullyQualifiedName` and column `quotedName` values.
 5. **Prototype the SQL.** Run the `SELECT` part through `query_data` with a small `LIMIT` and show the user sample
    rows. Fix errors here, before anything is saved.
 6. **Save it.**
    - New transformation: call `create_sql_transformation` with `project_id=<the confirmed id>`. Reference input
-     tables by fully qualified name; create output tables with the dialect's delimited plain name (`"daily_orders"` on Snowflake, a backticked name on
-     BigQuery), never a fully qualified one, and list the names without delimiters in `created_table_names=[...]`.
-     Give it a name and description that state its purpose.
+     tables by fully qualified name; create output tables with the dialect's delimited plain name
+     (`"daily_orders"` on Snowflake, a backticked name on BigQuery), never a fully qualified one, and list the
+     names without delimiters in `created_table_names=[...]`. Give it a name and description that state its
+     purpose.
    - Existing transformation: find it with `search` and `item_types=["transformation"]`, read it with
      `get_configs` and `configs=[...]` to get the `block_id` and `code_id` values, then call
      `update_sql_transformation` with `project_id=<the confirmed id>`, `configuration_id=...`,
-     `parameter_updates=[...]` (operations such as
-     `set_code` or `str_replace`) and `change_description=...`. A `storage=...` value replaces all mappings:
-     include every mapping you want to keep.
+     `parameter_updates=[...]` (operations such as `set_code` or `str_replace`) and `change_description=...`. A
+     `storage=...` value replaces all mappings: include every mapping you want to keep.
 7. **Run it, if the user asked.** Ask before running. Call `run_job` with `project_id=<the confirmed id>` and
-   the transformation's `component_id=...` and `configuration_id=...`, then poll `get_jobs` with `job_ids=[...]` until the job ends. On failure, continue
-   with the `debug-failed-job` skill.
+   the transformation's `component_id=...` and `configuration_id=...`, then poll `get_jobs` with `job_ids=[...]`
+   until the job ends. On failure, continue with the `debug-failed-job` skill.
 8. **Report.** Give the transformation name, the output tables, the job result and the links the tools returned.
 
 ## Rules

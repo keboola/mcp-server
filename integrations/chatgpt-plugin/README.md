@@ -22,7 +22,7 @@ target any project the OAuth consent granted. The skills do it even though the s
 scope preemptively, because the RFC requires it for the plugin.
 
 Under OAuth the server keeps the scope on the login's session, so every ChatGPT conversation on the same
-connection shares it, and a write without `project_id` goes to whatever project another conversation scoped last.
+connection shares it, and a write without `project_id` can land in a project another conversation scoped.
 Every write step therefore passes `project_id=<the confirmed id>`: a moved scope then fails the write with
 "outside the current scope" instead of writing elsewhere.
 

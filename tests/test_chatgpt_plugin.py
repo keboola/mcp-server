@@ -40,7 +40,7 @@ NON_TOOL_IDENTIFIERS = frozenset(
 )
 _BACKTICK_SPAN = re.compile(r'`[^`]+`')
 # A tool is a whole span (`run_job`) or a call written out in one (`run_job(component_id=...)`).
-_TOOL_IN_SPAN = re.compile(r'`([a-z]+(?:_[a-z0-9]+)*)[`(]')
+_TOOL_IN_SPAN = re.compile(r'`([a-z]+(?:_[a-z0-9]+)*)[`(\s]')
 # An argument starts a span (`component_id=...`) or follows the bracket or a comma of a call in one.
 _ARGUMENT_IN_SPAN = re.compile(r'(?:^`|[(,]\s*)(\w+)=')
 _SKILL_REFERENCE = re.compile(r'`([a-z]+(?:-[a-z]+)+)` skill')
@@ -186,11 +186,19 @@ def test_skill_names_callable_tools_and_scopes_before_writes(skill_name: str, to
                 wrong_arguments.append(f'{owners[-1]}({match.group(1)})')
     assert not wrong_arguments, f'{skill_name} names arguments the tool does not take: {wrong_arguments}'
 
-    # Under OAuth the scope is shared by every conversation on the login, so each write names its target project.
+    # Under OAuth the scope is shared by every conversation on the login, so each write a step calls names its
+    # target project. Rules only mention tools ("before every `run_job`"), so they are not checked.
+    steps_start = body.index('\n## Steps\n')
+    steps_end = body.find('\n## ', steps_start + 1)
+    steps_end = len(body) if steps_end < 0 else steps_end
     unpinned = sorted(
-        name
-        for name in named_tools
-        if not is_read_only_tool(tools[name]) and 'project_id' not in arguments_by_tool.get(name, set())
+        {
+            name
+            for position, name in mentions
+            if steps_start < position < steps_end
+            and not is_read_only_tool(tools[name])
+            and 'project_id' not in arguments_by_tool.get(name, set())
+        }
     )
     assert not unpinned, f'{skill_name} names write tools without project_id: {unpinned}'
 

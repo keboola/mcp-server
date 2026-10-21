@@ -40,18 +40,20 @@ whether it is needed.
    missing input table, expired credentials of an extractor or writer, or a schema change in the output table.
    Use `docs_query` for component-specific errors. Propose a fix.
 7. **Fix, only on request.** Ask before changing anything.
-   - SQL transformation: `update_sql_transformation` with `project_id=<the confirmed id>`.
+   - SQL transformation: `update_sql_transformation` with `project_id=<the confirmed id>`, its
+     `configuration_id=...`, the `parameter_updates=[...]` and a `change_description=...`.
    - Flow: `modify_flow` with `project_id=<the confirmed id>`, its `configuration_id=...`, the `flow_type=...` it
      already has and a `change_description=...`.
-   - Another component: `get_components` for its schema, then `update_config_row` with
-     `project_id=<the confirmed id>` and `configuration_row_id=...` when the fix belongs in a configuration row, or
-     `update_config` with `project_id=<the confirmed id>` for the configuration itself.
-   - Expired OAuth credentials need the user: create a link with `create_oauth_url` and
-     `project_id=<the confirmed id>`, and ask them to reauthorize.
+   - Another component: `get_components` for its schema. When the fix belongs in a configuration row, call
+     `update_config_row` with `project_id=<the confirmed id>`, `component_id=...`, `configuration_id=...`,
+     `configuration_row_id=...` and a `change_description=...`. Otherwise call `update_config` with
+     `project_id=<the confirmed id>`, `component_id=...`, `configuration_id=...` and a `change_description=...`.
+   - Expired OAuth credentials need the user: create a link with `create_oauth_url`,
+     `project_id=<the confirmed id>`, `component_id=...` and `config_id=...`, and ask them to reauthorize.
 
-   Then, with the user's consent, call `run_job` with `project_id=<the confirmed id>` and check the new job with
-   `get_jobs`. If the server refuses a write because the user's role is read-only, give the user the proposed fix to
-   pass to a project admin.
+   Then, with the user's consent, call `run_job` with `project_id=<the confirmed id>`, `component_id=...` and
+   `configuration_id=...`, and check the new job with `get_jobs`. If the server refuses a write because the user's
+   role is read-only, give the user the proposed fix to pass to a project admin.
 
 ## Rules
 

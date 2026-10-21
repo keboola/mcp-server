@@ -24,9 +24,9 @@ or ID.
    must happen before any write. If the result carries a non-null `scope_token`, pass it on every later tool call.
    Every write below also passes the confirmed id as `project_id`: other conversations on the same login share the
    scope, and a scope they moved makes the write fail instead of landing in another project.
-3. **Get context.** Call `get_project_info`. It says whether conditional flows are enabled in the project, and its
-   `toolset_restrictions` say whether the user's role may set schedules. If they say only read-only tools are
-   available, tell the user they cannot create flows in this project and stop.
+3. **Get context.** Call `get_project_info` with `project_id=<the confirmed id>`. It says whether conditional
+   flows are enabled in the project, and its `toolset_restrictions` say whether the user's role may set schedules.
+   If they say only read-only tools are available, tell the user they cannot create flows in this project and stop.
 4. **Collect the tasks.** Find every configuration the flow should run with `search`
    (`item_types=["configuration", "transformation"]`) and confirm the list with the user. Each task needs a
    component ID and a configuration ID; use `get_configs` with `configs=[...]` when a search hit does not show
@@ -46,10 +46,11 @@ or ID.
      `configuration_id=...`, the `flow_type=...` it already has, a `change_description=...` and only the fields
      that change.
 8. **Schedule, if asked.** Call `modify_flow` with `project_id=<the confirmed id>` and `schedules=[...]` for the
-   schedule the user asked for. Confirm the cron expression and time zone with the user first. If `toolset_restrictions` from step 3 say the role cannot set
-   schedules, tell the user and skip this step.
+   schedule the user asked for. Confirm the cron expression and time zone with the user first. If
+   `toolset_restrictions` from step 3 say the role cannot set schedules, tell the user and skip this step.
 9. **Run, if asked.** Ask before running. Call `run_job` with `project_id=<the confirmed id>`, the flow's
-   `component_id=...` and `configuration_id=...`, then follow it with `get_jobs`. On failure, continue with the `debug-failed-job` skill.
+   `component_id=...` and `configuration_id=...`, then follow it with `get_jobs`. On failure, continue with the
+   `debug-failed-job` skill.
 10. **Report.** Give the flow name, its phases, the schedule and the links the tools returned.
 
 ## Rules
