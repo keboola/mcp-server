@@ -2,6 +2,7 @@ import asyncio
 import base64
 import dataclasses
 import logging
+import re
 import time
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -2335,18 +2336,28 @@ class TestDirectoryToolProfile:
     def test_the_directory_instructions_name_only_directory_tools(self, sql_dialect: str) -> None:
         """What a plugin session reads (the server instructions and the project system prompt) never sends it to a tool
         it does not have; the prompt of every other session still names them."""
-        from keboola_mcp_server.resources.prompts import get_project_system_prompt
+        from keboola_mcp_server.resources.prompts import get_project_system_prompt, load_prompt
         from keboola_mcp_server.server import create_server
 
         mcp = create_server(Config(), runtime_info=ServerRuntimeInfo(transport='stdio'))
         hidden = {t.name for t in asyncio.run(mcp.list_tools(run_middleware=False))} - DIRECTORY_TOOLS
         directory_prompt = get_project_system_prompt(sql_dialect, directory=True)
+        regular_prompt = get_project_system_prompt(sql_dialect)
 
         for text in (mcp.instructions, directory_prompt):
             assert [name for name in hidden if name in text] == []
-        assert 'run_sync_action' in get_project_system_prompt(sql_dialect)
+        assert 'run_sync_action' in regular_prompt
         assert '<!--' not in directory_prompt
-        assert '<!--' not in get_project_system_prompt(sql_dialect)
+        assert '<!--' not in regular_prompt
+
+        def blocks(kind: str) -> list[str]:
+            raw = load_prompt('project_system_prompt.md')
+            return re.findall(rf'<!-- directory:{kind} -->\n(.*?)<!-- /directory:{kind} -->\n', raw, re.DOTALL)
+
+        # Every other session reads the prompt it had before the profile: the `omit` text, never the `only` text.
+        assert blocks('only') and blocks('omit')
+        assert [block for block in blocks('only') if block in regular_prompt] == []
+        assert [block for block in blocks('omit') if block not in regular_prompt] == []
 
     def test_authorize_tool_call_applies_the_profile(self) -> None:
         common = {
