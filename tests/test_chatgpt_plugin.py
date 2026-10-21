@@ -9,12 +9,15 @@ import json
 import re
 import struct
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastmcp.tools import Tool
 
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
 from keboola_mcp_server.mcp import ToolsFilteringMiddleware, is_read_only_tool, is_semantic_tool
+from keboola_mcp_server.multiproject import MultiProjectMiddleware
+from keboola_mcp_server.scope import SCOPE_KEY, SessionScope
 from keboola_mcp_server.server import create_server
 
 PLUGIN_DIR = Path(__file__).parents[1] / 'integrations' / 'chatgpt-plugin'
@@ -77,7 +80,16 @@ def _oauth_denial(tool: Tool) -> str | None:
 @pytest.fixture(scope='module')
 def tools() -> dict[str, Tool]:
     server = create_server(Config(), runtime_info=ServerRuntimeInfo(transport='stdio'))
-    return {t.name: t for t in asyncio.run(server.list_tools(run_middleware=False))}
+    registered = asyncio.run(server.list_tools(run_middleware=False))
+
+    async def call_next(_context: object) -> list[Tool]:
+        return registered
+
+    # With 2+ projects scoped, the middleware adds the `project_ids` filter to fan-out read tools.
+    state = {SCOPE_KEY: SessionScope(project_ids=[1, 2], confirmed=True)}
+    context = SimpleNamespace(fastmcp_context=SimpleNamespace(session=SimpleNamespace(state=state)))
+    listed = asyncio.run(MultiProjectMiddleware().on_list_tools(context, call_next))
+    return {t.name: t for t in listed}
 
 
 def test_plugin_manifest() -> None:

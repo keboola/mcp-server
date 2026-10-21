@@ -29,12 +29,15 @@ If the user names no project, find it in step 1.
 4. **Find the data.** Use `search` with `item_types=["table"]` or `item_types=["bucket"]` and the names the user
    mentioned. Use `get_buckets` with `bucket_ids=[]` only when the user wants the full inventory. Never list every
    table just to find one by name.
-5. **Describe tables.** Call `get_tables` with `table_ids=[...]` for the tables that matter. Report columns, types,
-   description and row count. Check `fullyQualifiedName`: a table without one (for example a linked table from
-   another project) cannot be queried. Say so and stop for that table.
-6. **Query.** Call `query_data` with one `SELECT` (or `WITH ... SELECT`) statement. Copy table names from
-   `fullyQualifiedName` and column names from `quotedName` exactly. Always add a `LIMIT`; compute counts and
-   aggregates in SQL rather than pulling raw rows. Inspect distinct values before filtering on a categorical column.
+5. **Describe tables.** Call `get_tables` with `table_ids=[...]` for the tables that matter, and with
+   `project_ids=[<the table's project>]` when 2+ projects are scoped: without it the call runs in every scoped
+   project. Report columns, types, description and row count. Check `fullyQualifiedName`: a table without one (for
+   example a linked table from another project) cannot be queried. Say so and stop for that table.
+6. **Query.** Call `query_data` with one `SELECT` (or `WITH ... SELECT`) statement, and with
+   `project_ids=[<the table's project>]` when 2+ projects are scoped: a query runs in every scoped project
+   otherwise. Copy table names from `fullyQualifiedName` and column names from `quotedName` exactly. Always add a
+   `LIMIT`; compute counts and aggregates in SQL rather than pulling raw rows. Inspect distinct values before
+   filtering on a categorical column.
 7. **Answer.** Give the answer with the query you ran and the links the tools returned.
 
 ## Rules
