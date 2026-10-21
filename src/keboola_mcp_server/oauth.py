@@ -1420,6 +1420,24 @@ class SimpleOAuthProvider(OAuthProvider):
         state['expires_at'] = time.time() + 5 * 60
         return self._connection_consent_url(state)
 
+    def _decode_consent_state(self, state: str, log_prefix: str) -> dict[str, Any] | None:
+        """The live state `authorize()` encoded, or None. The one definition of a valid state for every path
+        Connection sends it back on (the callback and the relayed denial)."""
+        try:
+            state_data = self._decode(state)
+        except jwt.InvalidTokenError:
+            LOG.debug(f'{log_prefix} Invalid state: {state}', exc_info=True)
+            return None
+        # No 'state' key: some other JWT signed with the same secret (an MCP authorization code), not a state.
+        # Only its keys are logged: an authorization code carries the user's Connection tokens.
+        if not state_data or 'state' not in state_data:
+            LOG.debug(f'{log_prefix} Invalid state, keys: {sorted(state_data or {})}')
+            return None
+        if state_data.get('expires_at', 0) < time.time():
+            LOG.debug(f'{log_prefix} Expired state: {state_data}')
+            return None
+        return state_data
+
     async def handle_oauth_callback(self, code: str | None, state: str) -> str:
         """
         Handles the callback from the OAuth server.
@@ -1431,18 +1449,8 @@ class SimpleOAuthProvider(OAuthProvider):
         :return: The URL that redirects back to the AI assistant OAuth client.
         """
         # Validate the state first to prevent calling OAuth server with invalid authorization code.
-        try:
-            state_data = self._decode(state)
-        except jwt.InvalidTokenError:
-            LOG.debug(f'[handle_oauth_callback] Invalid state: {state}', exc_info=True)
-            raise HTTPException(400, 'Invalid state parameter')
-
-        if not state_data:
-            LOG.debug(f'[handle_oauth_callback] Invalid state: {state_data}')
-            raise HTTPException(400, 'Invalid state parameter')
-
-        if state_data['expires_at'] < time.time():
-            LOG.debug(f'[handle_oauth_callback] Expired state: {state_data}')
+        state_data = self._decode_consent_state(state, '[handle_oauth_callback]')
+        if state_data is None:
             raise HTTPException(400, 'Invalid state parameter')
 
         if state_data.get('pending'):
@@ -1529,17 +1537,8 @@ class SimpleOAuthProvider(OAuthProvider):
         :param state: The state Connection sent back with the error, the one `authorize()` put on the consent URL.
         :return: The redirect, or None when the state is not a live consent flow of a pre-registered client.
         """
-        try:
-            state_data = self._decode(state)
-        except jwt.InvalidTokenError:
-            return None
-        # No 'state' key: some other JWT signed with the same secret (an MCP authorization code), not a state.
-        if (
-            not state_data
-            or 'state' not in state_data
-            or state_data.get('pending')
-            or state_data.get('expires_at', 0) < time.time()
-        ):
+        state_data = self._decode_consent_state(state, '[access_denied_redirect]')
+        if state_data is None or state_data.get('pending'):
             return None
         redirect_uri = cast(str, state_data['redirect_uri'])
         if redirect_uri not in _WELL_KNOWN_CONNECTION_CLIENT_IDS:
