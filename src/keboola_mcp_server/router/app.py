@@ -5,22 +5,23 @@ only to the MCP servers in its stack table, never to Connection."""
 import contextlib
 import logging
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from urllib.parse import parse_qs, parse_qsl, urlencode
 
 import httpx
 from mcp.server.auth.handlers.register import RegistrationHandler
 from mcp.server.auth.settings import ClientRegistrationOptions
+from mcp.server.transport_security import RequestBodyLimitMiddleware
 from mcp.shared.auth import OAuthClientInformationFull
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
-from starlette.routing import Route
+from starlette.routing import Route, request_response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from keboola_mcp_server.router.picker import PICKER_CSP, PICKER_CSS, PICKER_STYLESHEET_PATH, render_picker
+from keboola_mcp_server.router.picker import PICKER_CSS, PICKER_HEADERS, PICKER_STYLESHEET_PATH, render_picker
 from keboola_mcp_server.router.rate_limit import PerAddressRateLimitMiddleware
 from keboola_mcp_server.router.settings import RouterSettings
 from keboola_mcp_server.router.stacks import Stack, router_resource, stack_key_of
@@ -29,8 +30,9 @@ LOG = logging.getLogger(__name__)
 
 _STACK_COOKIE = 'keboola_mcp_stack'
 _STACK_COOKIE_MAX_AGE_SECONDS = 90 * 24 * 60 * 60
-# A token or revocation request is a few hundred bytes; nothing bigger is read into memory, let alone forwarded.
-_MAX_FORM_BYTES = 64 * 1024
+# A registration, token or revocation request is a few hundred bytes; nothing bigger is read into memory, let alone
+# forwarded.
+_MAX_BODY_BYTES = 64 * 1024
 # What travels upstream with the verbatim body: its type, and client authentication (client_secret_basic). Nothing
 # that identifies the caller: the regional server sees the router's address, so a forwarded `X-Forwarded-For` would only
 # let a caller pick the address the regional server counts.
@@ -38,14 +40,17 @@ _FORWARDED_REQUEST_HEADERS = ('content-type', 'accept', 'authorization')
 _FORWARDED_RESPONSE_HEADERS = ('content-type', 'cache-control', 'pragma', 'www-authenticate')
 # The parameter of each grant that carries the stack key prefix.
 _GRANT_TOKEN_PARAMETER = {'authorization_code': 'code', 'refresh_token': 'refresh_token'}
+_PUBLIC_AND_SECRET_CLIENT_AUTH = ['none', 'client_secret_post', 'client_secret_basic']
 
 
 class _RequestLogMiddleware:
-    """One log line per request with metadata only: method, path, status, stack key, latency. Never the query string
-    (`/authorize` carries `state` and the PKCE challenge), a header or a body."""
+    """One log line per request with metadata only: method, route, status, stack key, latency. Never the query string
+    (`/authorize` carries `state` and the PKCE challenge), a header or a body, and never a path the router does not
+    serve: the path is the caller's text, so it could forge log lines."""
 
-    def __init__(self, app: ASGIApp) -> None:
+    def __init__(self, app: ASGIApp, *, known_paths: frozenset[str]) -> None:
         self._app = app
+        self._known_paths = known_paths
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope['type'] != 'http':
@@ -64,9 +69,11 @@ class _RequestLogMiddleware:
         try:
             await self._app(scope, receive, send_and_record)
         finally:
+            path = scope['path'] if scope['path'] in self._known_paths else '<other>'
+            method = scope['method'] if scope['method'] in ('GET', 'POST', 'OPTIONS', 'HEAD') else '<other>'
             LOG.info(
-                f'[router] {scope["method"]} {scope["path"]} status={status} '
-                f'stack_key={state.get("stack_key") or "-"} duration_ms={(time.perf_counter() - started) * 1000:.0f}'
+                f'[router] {method} {path} status={status} stack_key={state.get("stack_key") or "-"} '
+                f'duration_ms={(time.perf_counter() - started) * 1000:.0f}'
             )
 
 
@@ -79,14 +86,34 @@ class _StatelessClients:
         return None
 
 
-async def _read_form(request: Request) -> tuple[bytes, dict[str, list[str]]] | None:
-    """The raw body, to forward unchanged, and its form fields; None when it is too large."""
-    body = b''
-    async for chunk in request.stream():
-        body += chunk
-        if len(body) > _MAX_FORM_BYTES:
-            return None
-    return body, parse_qs(body.decode('utf-8', 'replace'))
+def _endpoint(
+    handler: Callable[[Request], Awaitable[Response]], *, methods: list[str], cross_origin: bool
+) -> tuple[ASGIApp, list[str]]:
+    """The ASGI app and the methods of a route: the body capped at `_MAX_BODY_BYTES` (413 above it), and with
+    `cross_origin`, CORS for browser-based MCP clients, which read the metadata and call `/register` and `/token`
+    from another origin (as the SDK does on the regional server; never on `/authorize`, which is navigated to)."""
+    app: ASGIApp = RequestBodyLimitMiddleware(request_response(handler), _MAX_BODY_BYTES)
+    if not cross_origin:
+        return app, methods
+    allowed = [*methods, 'OPTIONS']
+    return CORSMiddleware(
+        app, allow_origins=['*'], allow_methods=allowed, allow_headers=['Mcp-Protocol-Version']
+    ), allowed
+
+
+def _form_fields(body: bytes) -> dict[str, list[str]]:
+    return parse_qs(body.decode('utf-8', 'replace'), keep_blank_values=True)
+
+
+def _single(fields: dict[str, list[str]], name: str) -> str | None:
+    """The one value of a parameter, or None when it is absent; raises ValueError when it is repeated (RFC 6749 §3.1:
+    a parameter must not be sent twice, and the router must not route by one value while the stack reads another)."""
+    values = fields.get(name)
+    if not values:
+        return None
+    if len(values) > 1:
+        raise ValueError(name)
+    return values[0]
 
 
 def _oauth_error(error: str, description: str, status_code: int = 400) -> JSONResponse:
@@ -131,7 +158,8 @@ def create_router_app(
                 'revocation_endpoint': f'{issuer}/revoke',
                 'response_types_supported': ['code'],
                 'grant_types_supported': ['authorization_code', 'refresh_token'],
-                'token_endpoint_auth_methods_supported': ['none', 'client_secret_post', 'client_secret_basic'],
+                'token_endpoint_auth_methods_supported': _PUBLIC_AND_SECRET_CLIENT_AUTH,
+                'revocation_endpoint_auth_methods_supported': _PUBLIC_AND_SECRET_CLIENT_AUTH,
                 'code_challenge_methods_supported': ['S256'],
                 # The regional server that completes the login returns this issuer as `iss` (one logical
                 # authorization server, see `router_issuer`).
@@ -154,7 +182,7 @@ def create_router_app(
                 preselected=cookie if cookie in stacks else None,
             ),
             status_code=status_code,
-            headers={'Content-Security-Policy': PICKER_CSP, 'Cache-Control': 'no-store'},
+            headers=PICKER_HEADERS,
         )
 
     async def authorize(request: Request) -> Response:
@@ -165,8 +193,9 @@ def create_router_app(
             request.state.stack_key = stack.key
             return RedirectResponse(upstream_authorize_url(stack, request.url.query), status_code=302)
 
-        form = await _read_form(request)
-        chosen = (form[1].get('stack') or [''])[0] if form else ''
+        # The picker's own submit: the authorization request stays in the query string (the form action) and the body
+        # carries only the choice. An authorization request sent as a POST body is not supported here.
+        chosen = (_form_fields(await request.body()).get('stack') or [''])[-1]
         if (stack := stacks.get(chosen)) is None:
             return picker(request, status_code=400)
         request.state.stack_key = stack.key
@@ -202,24 +231,33 @@ def create_router_app(
         )
 
     async def token(request: Request) -> Response:
-        if (form := await _read_form(request)) is None:
-            return _oauth_error('invalid_request', 'The request is too large.', 413)
-        body, fields = form
-        grant_type = (fields.get('grant_type') or [''])[0]
-        if (parameter := _GRANT_TOKEN_PARAMETER.get(grant_type)) is None:
-            return _oauth_error('unsupported_grant_type', 'Only authorization_code and refresh_token are supported.')
-        stack = stacks.get(stack_key_of((fields.get(parameter) or [''])[0]) or '')
-        if stack is None:
+        body = await request.body()
+        fields = _form_fields(body)
+        try:
+            grant_type = _single(fields, 'grant_type')
+            if (parameter := _GRANT_TOKEN_PARAMETER.get(grant_type or '')) is None:
+                return _oauth_error(
+                    'unsupported_grant_type', 'Only authorization_code and refresh_token are supported.'
+                )
+            value = _single(fields, parameter)
+        except ValueError as e:
+            return _oauth_error('invalid_request', f'The parameter {e} is repeated.')
+        if value is None:
+            return _oauth_error('invalid_request', f'The {parameter} parameter is missing.')
+        if (stack := stacks.get(stack_key_of(value) or '')) is None:
             # Answered here, without asking any stack: no stack issued a grant without a known prefix.
             return _oauth_error('invalid_grant', f'The {parameter} was not issued by this authorization server.')
         return await forward(request, stack, '/token', body)
 
     async def revoke(request: Request) -> Response:
-        if (form := await _read_form(request)) is None:
-            return _oauth_error('invalid_request', 'The request is too large.', 413)
-        body, fields = form
-        stack = stacks.get(stack_key_of((fields.get('token') or [''])[0]) or '')
-        if stack is None:
+        body = await request.body()
+        try:
+            value = _single(_form_fields(body), 'token')
+        except ValueError:
+            return _oauth_error('invalid_request', 'The parameter token is repeated.')
+        if value is None:
+            return _oauth_error('invalid_request', 'The token parameter is missing.')  # RFC 7009 §2.1
+        if (stack := stacks.get(stack_key_of(value) or '')) is None:
             # RFC 7009 §2.2: an unknown token is answered with 200, there is nothing to revoke.
             return Response(status_code=200)
         return await forward(request, stack, '/revoke', body)
@@ -252,33 +290,41 @@ def create_router_app(
         limits['/authorize'] = settings.authorize_rate_limit_per_ip
     if settings.api_rate_limit_per_ip:
         limits.update(dict.fromkeys(('/register', '/token', '/revoke', '/mcp'), settings.api_rate_limit_per_ip))
+    else:
+        LOG.warning(
+            '[router] No per-address limit on /register, /token, /revoke and /mcp: set KBC_ROUTER_API_RATE_LIMIT_PER_IP, '
+            'sized for the AI clients\' shared egress addresses.'
+        )
 
-    return Starlette(
-        routes=[
-            Route('/.well-known/oauth-protected-resource', protected_resource_metadata, methods=['GET']),
-            Route('/.well-known/oauth-protected-resource/mcp', protected_resource_metadata, methods=['GET']),
-            Route('/.well-known/oauth-authorization-server', authorization_server_metadata, methods=['GET']),
-            Route('/.well-known/openid-configuration', authorization_server_metadata, methods=['GET']),
-            Route('/.well-known/openai-apps-challenge', openai_apps_challenge, methods=['GET']),
-            Route('/register', registration.handle, methods=['POST']),
-            Route('/authorize', authorize, methods=['GET', 'POST']),
-            Route('/token', token, methods=['POST']),
-            Route('/revoke', revoke, methods=['POST']),
-            Route(PICKER_STYLESHEET_PATH, picker_stylesheet, methods=['GET']),
-            Route('/health-check', health_check, methods=['GET']),
-            Route('/healthz', health_check, methods=['GET']),
-        ],
+    endpoints: list[tuple[str, Callable[[Request], Awaitable[Response]], list[str], bool]] = [
+        ('/.well-known/oauth-protected-resource', protected_resource_metadata, ['GET'], True),
+        ('/.well-known/oauth-protected-resource/mcp', protected_resource_metadata, ['GET'], True),
+        ('/.well-known/oauth-authorization-server', authorization_server_metadata, ['GET'], True),
+        ('/.well-known/openid-configuration', authorization_server_metadata, ['GET'], True),
+        ('/.well-known/openai-apps-challenge', openai_apps_challenge, ['GET'], False),
+        ('/register', registration.handle, ['POST'], True),
+        ('/authorize', authorize, ['GET', 'POST'], False),
+        ('/token', token, ['POST'], True),
+        ('/revoke', revoke, ['POST'], True),
+        (PICKER_STYLESHEET_PATH, picker_stylesheet, ['GET'], False),
+        ('/health-check', health_check, ['GET'], False),
+        ('/healthz', health_check, ['GET'], False),
+    ]
+    routes = []
+    for path, handler, methods, cross_origin in endpoints:
+        app, allowed = _endpoint(handler, methods=methods, cross_origin=cross_origin)
+        routes.append(Route(path, app, methods=allowed))
+
+    router_app = Starlette(
+        routes=routes,
         middleware=[
-            Middleware(_RequestLogMiddleware),
+            Middleware(_RequestLogMiddleware, known_paths=frozenset(path for path, *_ in endpoints)),
             Middleware(PerAddressRateLimitMiddleware, limits=limits, trusted_hops=settings.trusted_proxy_hops),
-            # Browser-based MCP clients read the metadata and call /register and /token cross-origin.
-            Middleware(
-                CORSMiddleware,
-                allow_origins=['*'],
-                allow_methods=['GET', 'POST', 'OPTIONS'],
-                allow_headers=['Authorization', 'Content-Type', 'Mcp-Protocol-Version', 'Mcp-Session-Id'],
-                expose_headers=['Mcp-Session-Id', 'WWW-Authenticate'],
-            ),
         ],
         lifespan=lifespan,
     )
+    # Starlette answers `/token/` with a 307 to a Location built from the Host header, which would send a client's code
+    # or refresh token to whatever host the request named (the regional server guards the same case with
+    # `UntrustedAuthorizeRedirectMiddleware`). The router serves no slash variants, so it never redirects there.
+    router_app.router.redirect_slashes = False
+    return router_app

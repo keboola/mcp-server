@@ -28,14 +28,19 @@ class PerAddressRateLimitMiddleware:
         self._limits = limits
         self._trusted_hops = trusted_hops
         self._window = 0
+        self._dropped = 0
         self._counts: dict[tuple[str, str], int] = {}
 
     def _hit(self, path: str, address: str) -> int:
         window = int(time.monotonic() // _WINDOW_SECONDS)
         if window != self._window:
             self._window, self._counts = window, {}
+            if self._dropped:
+                LOG.warning(f'[router] {self._dropped} requests were not counted: too many distinct addresses')
+                self._dropped = 0
         key = (path, address)
         if key not in self._counts and len(self._counts) >= _MAX_TRACKED_ADDRESSES:
+            self._dropped += 1
             return 0
         self._counts[key] = self._counts.get(key, 0) + 1
         return self._counts[key]
@@ -47,10 +52,11 @@ class PerAddressRateLimitMiddleware:
             await self._app(scope, receive, send)
             return
         address = caller_address(scope, self._trusted_hops)
-        if address is None or self._hit(path, address) <= limit:
+        if address is None or (hits := self._hit(path, address)) <= limit:
             await self._app(scope, receive, send)
             return
-        LOG.warning(f'[router] Per-address rate limit reached: path={path}, address={address}, limit={limit}/min')
+        if hits == limit + 1:  # once per address and window, so a flood does not flood the log too
+            LOG.warning(f'[router] Per-address rate limit reached: path={path}, address={address}, limit={limit}/min')
         response = JSONResponse(
             {'error': 'temporarily_unavailable', 'error_description': 'Too many requests. Try again in a minute.'},
             status_code=429,

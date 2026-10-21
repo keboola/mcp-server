@@ -60,15 +60,18 @@ def parse_stacks(raw: str | None) -> dict[str, Stack]:
         entries = json.loads(raw)
         if not isinstance(entries, list) or not entries:
             raise ValueError('The router stack table must be a non-empty JSON list.')
-        stacks = tuple(
-            Stack(
-                key=str(e['key']),
-                name=str(e['name']),
-                upstream=_upstream_origin(str(e['upstream'])),
-                login_host=str(e['login_host']),
+        try:
+            stacks = tuple(
+                Stack(
+                    key=str(e['key']),
+                    name=str(e['name']),
+                    upstream=_upstream_origin(str(e['upstream'])),
+                    login_host=str(e['login_host']),
+                )
+                for e in entries
             )
-            for e in entries
-        )
+        except (KeyError, TypeError) as e:
+            raise ValueError(f'A router stack table entry needs key, name, upstream and login_host: {e!r}') from e
     table: dict[str, Stack] = {}
     for stack in stacks:
         if not _STACK_KEY_PATTERN.match(stack.key):
@@ -88,12 +91,18 @@ def stack_key_of(value: str | None) -> str | None:
 
 def router_issuer(router_url: str) -> str:
     """The issuer of the one logical authorization server that the router and the regional servers form: the origin
-    of the router URL. The router and every regional server derive it with this function, so they cannot disagree,
-    and a client compares it with the `iss` of an authorization response by exact string (RFC 9207)."""
+    of the router URL (RFC 8414 §2: https, no query or fragment). The contract is that the router and every regional
+    server derive it with this function, so they cannot disagree: a client compares it with the `iss` of an
+    authorization response by exact string (RFC 9207)."""
     parsed = urlparse(router_url)
-    if not parsed.scheme or not parsed.netloc:
-        raise ValueError(f'The router URL must be absolute: {router_url!r}')
-    return f'{parsed.scheme.lower()}://{parsed.netloc.lower()}'
+    local = parsed.hostname in ('localhost', '127.0.0.1')
+    if (
+        not parsed.hostname
+        or parsed.username is not None
+        or not (parsed.scheme == 'https' or (parsed.scheme == 'http' and local))
+    ):
+        raise ValueError(f'The router URL must be an https URL without credentials: {router_url!r}')
+    return f'{parsed.scheme}://{parsed.netloc.lower()}'
 
 
 def router_resource(router_url: str) -> str:

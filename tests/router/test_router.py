@@ -1,5 +1,6 @@
 import json
 import logging
+from html import escape
 from urllib.parse import parse_qs, parse_qsl, urlparse
 
 import httpx
@@ -7,7 +8,9 @@ import pytest
 from starlette.testclient import TestClient
 
 from keboola_mcp_server.cli import parse_args
+from keboola_mcp_server.router import rate_limit
 from keboola_mcp_server.router.app import create_router_app
+from keboola_mcp_server.router.picker import render_picker
 from keboola_mcp_server.router.settings import RouterSettings
 from keboola_mcp_server.router.stacks import DEFAULT_STACKS, parse_stacks, router_issuer, router_resource
 
@@ -116,7 +119,10 @@ class TestAuthorize:
 
         assert response.status_code == 200
         assert response.headers['content-type'].startswith('text/html')
-        assert response.headers['content-security-policy'] == "default-src 'self'; frame-ancestors 'none'"
+        assert response.headers['content-security-policy'] == (
+            "default-src 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'"
+        )
+        assert response.headers['referrer-policy'] == 'no-referrer'
         assert 'location' not in response.headers
 
     def test_the_picker_submit_redirects_to_the_chosen_stack_and_remembers_it(self) -> None:
@@ -154,6 +160,18 @@ class TestAuthorize:
             assert stack.name in response.text
             assert stack.login_host in response.text
 
+    @pytest.mark.parametrize(
+        'query_string',
+        ['state="><script>alert(1)</script>', "redirect_uri=' onmouseover='alert(1)", 'a=<b>&c="d"'],
+    )
+    def test_the_picker_escapes_a_raw_hostile_query_string(self, query_string: str) -> None:
+        page = render_picker(stacks=DEFAULT_STACKS, query_string=query_string, preselected=None)
+
+        assert query_string not in page
+        assert '<script>' not in page
+        assert '<b>' not in page
+        assert f'action="{escape("/authorize?" + query_string, quote=True)}"' in page
+
     def test_the_picker_stylesheet_is_served_by_the_router_itself(self) -> None:
         with _client() as client:
             page = client.get('/authorize')
@@ -176,7 +194,13 @@ class TestTokenAndRevoke:
         upstream = _Upstream(httpx.Response(200, json={'access_token': 'x'}, headers={'Cache-Control': 'no-store'}))
         with _client(upstream) as client:
             response = client.post(
-                '/token', data={**form, 'client_id': 'abc'}, headers={'Authorization': 'Basic YWJjOnNlY3JldA=='}
+                '/token',
+                data={**form, 'client_id': 'abc'},
+                headers={
+                    'Authorization': 'Basic YWJjOnNlY3JldA==',
+                    'X-Forwarded-For': '203.0.113.9',
+                    'Cookie': 'keboola_mcp_stack=us-aws',
+                },
             )
 
         assert response.status_code == 200
@@ -188,13 +212,31 @@ class TestTokenAndRevoke:
         assert sent.headers['authorization'] == 'Basic YWJjOnNlY3JldA=='
         assert sent.headers['content-type'] == 'application/x-www-form-urlencoded'
         assert 'x-forwarded-for' not in sent.headers
+        assert 'cookie' not in sent.headers
+
+    def test_only_oauth_response_headers_come_back(self) -> None:
+        answer = httpx.Response(
+            400,
+            json={'error': 'invalid_grant'},
+            headers={'Set-Cookie': 'upstream=1', 'Location': 'https://elsewhere.example', 'WWW-Authenticate': 'Basic'},
+        )
+        with _client(_Upstream(answer)) as client:
+            response = client.post('/token', data={'grant_type': 'refresh_token', 'refresh_token': 'us-aws.rt'})
+
+        assert response.status_code == 400
+        assert response.json() == {'error': 'invalid_grant'}
+        assert response.headers['www-authenticate'] == 'Basic'
+        assert 'set-cookie' not in response.headers
+        assert 'location' not in response.headers
 
     @pytest.mark.parametrize(
         ('form', 'expected_status', 'expected_error'),
         [
             ({'grant_type': 'authorization_code', 'code': 'not-prefixed'}, 400, 'invalid_grant'),
             ({'grant_type': 'authorization_code', 'code': 'xx-unknown.code'}, 400, 'invalid_grant'),
-            ({'grant_type': 'refresh_token'}, 400, 'invalid_grant'),
+            ({'grant_type': 'refresh_token'}, 400, 'invalid_request'),
+            # RFC 6749 §3.1: routed by one value while the stack would read the other
+            ({'grant_type': 'authorization_code', 'code': ['eu-aws.a', 'us-aws.b']}, 400, 'invalid_request'),
             ({'grant_type': 'client_credentials', 'code': 'eu-aws.code'}, 400, 'unsupported_grant_type'),
             ({'code': 'eu-aws.code'}, 400, 'unsupported_grant_type'),
         ],
@@ -211,22 +253,24 @@ class TestTokenAndRevoke:
         assert upstream.requests == []
 
     @pytest.mark.parametrize(
-        ('token', 'expected_upstream'),
+        ('token', 'expected_status', 'expected_upstream'),
         [
-            ('eu-azure.opaque', 'https://mcp.north-europe.azure.keboola.com/revoke'),
-            ('unknown.opaque', None),
-            ('no-prefix', None),
-            (None, None),
+            ('eu-azure.opaque', 200, 'https://mcp.north-europe.azure.keboola.com/revoke'),
+            # RFC 7009 §2.2: an unknown token is not an error
+            ('unknown.opaque', 200, None),
+            ('no-prefix', 200, None),
+            # RFC 7009 §2.1: the token is required
+            (None, 400, None),
         ],
     )
     def test_revoke_routes_by_prefix_and_answers_200_for_an_unknown_token(
-        self, token: str | None, expected_upstream: str | None
+        self, token: str | None, expected_status: int, expected_upstream: str | None
     ) -> None:
         upstream = _Upstream(httpx.Response(200))
         with _client(upstream) as client:
             response = client.post('/revoke', data={'token': token, 'client_id': 'abc'} if token else {})
 
-        assert response.status_code == 200
+        assert response.status_code == expected_status
         assert [str(r.url) for r in upstream.requests] == ([expected_upstream] if expected_upstream else [])
 
     @pytest.mark.parametrize(
@@ -261,8 +305,48 @@ class TestTokenAndRevoke:
         assert '[router] POST /token status=200 stack_key=eu-aws' in logged
         assert '[router] GET /authorize status=302 stack_key=us-aws' in logged
 
+    def test_a_path_the_router_does_not_serve_is_not_logged(self, caplog: pytest.LogCaptureFixture) -> None:
+        with caplog.at_level(logging.INFO), _client() as client:
+            client.get('/nothing%0a[router] GET /token status=200 stack_key=forged')
+
+        [line] = [r.getMessage() for r in caplog.records if ' status=' in r.getMessage()]
+        assert line.startswith('[router] GET <other> status=404 stack_key=- ')
+        assert 'forged' not in line
+
+    @pytest.mark.parametrize(
+        'path', ['/authorize/', '/token/', '/register/', '/.well-known/oauth-authorization-server/']
+    )
+    def test_a_trailing_slash_never_redirects_to_the_request_host(self, path: str) -> None:
+        with _client() as client:
+            response = client.request(
+                'POST' if path in ('/token/', '/register/') else 'GET',
+                f'{path}?state=s',
+                headers={'Host': 'evil.example'},
+            )
+
+        assert response.status_code == 404
+        assert 'location' not in response.headers
+
+    def test_bodies_are_capped(self) -> None:
+        upstream = _Upstream()
+        with _client(upstream) as client:
+            register = client.post(
+                '/register', json={'redirect_uris': ['https://a.example/cb'], 'client_name': 'x' * 70_000}
+            )
+            token = client.post(
+                '/token', data={'grant_type': 'refresh_token', 'refresh_token': 'us-aws.' + 'x' * 70_000}
+            )
+
+        assert register.status_code == token.status_code == 413
+        assert upstream.requests == []
+
 
 class TestRateLimits:
+    @pytest.fixture(autouse=True)
+    def _frozen_clock(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # one window for the whole test, so a minute boundary cannot reset the counts halfway
+        monkeypatch.setattr(rate_limit.time, 'monotonic', lambda: 120.0)
+
     def test_authorize_is_limited_per_browser_address(self) -> None:
         with _client(authorize_rate_limit_per_ip=2) as client:
             statuses = [
@@ -279,12 +363,24 @@ class TestRateLimits:
             unlimited = {client.post('/token', data=form).status_code for _ in range(5)}
         with _client(api_rate_limit_per_ip=2) as client:
             limited = [
-                client.post(path, data=form, headers={'X-Forwarded-For': '198.51.100.1'}).status_code
+                client.post(
+                    path, data={**form, 'token': 'us-aws.rt'}, headers={'X-Forwarded-For': '198.51.100.1'}
+                ).status_code
                 for path in ('/token', '/token', '/token', '/revoke')
             ]
 
         assert unlimited == {200}
         assert limited == [200, 200, 429, 200]  # counted per endpoint
+
+    def test_addresses_beyond_the_cap_are_not_counted(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(rate_limit, '_MAX_TRACKED_ADDRESSES', 1)
+        with _client(authorize_rate_limit_per_ip=1) as client:
+            statuses = [
+                client.get('/authorize', headers={'X-Forwarded-For': address}).status_code
+                for address in ('203.0.113.1', '203.0.113.1', '203.0.113.2', '203.0.113.2')
+            ]
+
+        assert statuses == [200, 429, 200, 200]
 
 
 class TestSettings:
@@ -315,6 +411,9 @@ class TestSettings:
             {'KBC_ROUTER_URL': 'mcp-router.example.com'},
             {'KBC_ROUTER_URL': ROUTER_URL, 'KBC_ROUTER_API_RATE_LIMIT_PER_IP': '0'},
             {'KBC_ROUTER_URL': ROUTER_URL, 'KBC_ROUTER_STACKS': '[]'},
+            {'KBC_ROUTER_URL': ROUTER_URL, 'KBC_ROUTER_STACKS': '[{"key": "eu-aws"}]'},
+            {'KBC_ROUTER_URL': 'http://mcp-router.example.com'},
+            {'KBC_ROUTER_URL': 'https://user@mcp-router.example.com'},
         ],
     )
     def test_from_env_refuses_an_invalid_configuration(self, env: dict[str, str]) -> None:

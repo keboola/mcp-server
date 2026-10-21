@@ -6,8 +6,14 @@ from html import escape
 from keboola_mcp_server.router.stacks import Stack
 
 # Nothing inline can run or style the page (no script at all, the stylesheet is a file of the router's own), and no
-# other site can frame it.
-PICKER_CSP = "default-src 'self'; frame-ancestors 'none'"
+# other site can frame it. No `form-action 'self'`: browsers apply it to the redirect after the submit too, which would
+# block the 302 to the chosen stack. No referrer: the page URL carries `state` and the PKCE challenge.
+PICKER_HEADERS = {
+    'Content-Security-Policy': "default-src 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'",
+    'Referrer-Policy': 'no-referrer',
+    'X-Content-Type-Options': 'nosniff',
+    'Cache-Control': 'no-store',
+}
 PICKER_STYLESHEET_PATH = '/router-static/picker.css'
 
 PICKER_CSS = """\
