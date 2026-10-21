@@ -51,7 +51,7 @@ def _upstream_origin(url: str) -> str:
     if not parsed.hostname or parsed.path not in ('', '/') or parsed.query or parsed.fragment or credentials:
         raise ValueError(f'A stack upstream must be an origin (no path, query or credentials): {url!r}')
     if not _NETLOC_PATTERN.match(parsed.netloc):
-        # The origin is written into the picker's CSP header too, so it must not carry anything but a host and port.
+        # The origin goes into redirect Locations and forwarded request URLs, so it carries nothing but a host and port.
         raise ValueError(f'A stack upstream must be a plain host name: {url!r}')
     return f'{parsed.scheme}://{parsed.netloc}'
 

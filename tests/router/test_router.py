@@ -467,7 +467,7 @@ class TestRateLimits:
         assert revoke == 200
         assert unknown == [400, 400, 400]  # invalid_grant every time, never 429
 
-    def test_no_credential_reaches_the_logs_or_the_limiter(self, caplog: pytest.LogCaptureFixture) -> None:
+    def test_no_credential_reaches_the_logs(self, caplog: pytest.LogCaptureFixture) -> None:
         from keboola_mcp_server.router.app import create_router_app as build
 
         credential = 'us-aws.the-refresh-token'
