@@ -55,7 +55,7 @@ _UNUSUAL_LINE_BREAKS = re.compile('[\x0b\x0c\x85\u2028\u2029]')
 # Longer SQL is rejected before it is checked, which keeps the check's time bounded.
 MAX_SQL_QUERY_LENGTH = 4_000_000
 # Snowflake reads an unquoted stage path up to whitespace, sqlglot reads it as tokens. Where the two could disagree,
-# fail closed: outside quoted names in the stage-name part, a path must not contain a quote or a comment start.
+# fail closed: outside quoted names in the stage-name part, a path must not contain a quote, `$$` or a comment start.
 _QUOTED_NAME = r'"(?:[^"]|"")*"'
 _UNQUOTED_NAME = r'[^ \t\n\r/."\']*'
 _STAGE_PATH = re.compile(
@@ -73,6 +73,7 @@ _READ_ONLY_FIRST_TOKENS = frozenset(
 _WRITE_TOKENS = frozenset(
     {
         TokenType.INSERT,
+        TokenType.INTO,  # SELECT ... INTO, which the parsed path rejects too
         TokenType.UPDATE,
         TokenType.DELETE,
         TokenType.MERGE,
@@ -210,7 +211,7 @@ def validate_read_only_statement(sql_query: str, sql_dialect: str | None) -> Non
     jinja_comment = '{ #' if isinstance(dialect, BigQuery) else '{x'
     try:
         _validate_statement(dialect, sql_query.replace('{#', jinja_comment))
-    except RecursionError as e:
+    except RecursionError as e:  # a safety net; the parser's own RecursionError falls back to the keyword check
         raise InvalidArgumentError(f'The SQL query is nested too deeply to check. {_NOT_READ_ONLY_MSG}') from e
 
 
