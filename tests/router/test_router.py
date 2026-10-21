@@ -400,8 +400,14 @@ class TestTokenAndRevoke:
                 '/token', data={'grant_type': 'refresh_token', 'refresh_token': 'us-aws.' + 'x' * 70_000}
             )
 
+            # /mcp takes what the SDK takes (4 MiB): a large tool call passes the 64 KiB cap of the OAuth endpoints
+            tool_call = {'jsonrpc': '2.0', 'id': 2, 'method': 'tools/call', 'params': {'sql': 'x' * 100_000}}
+            mcp = client.post('/mcp', json=tool_call, headers={'Authorization': 'Bearer us-aws.opaque'})
+
         assert register.status_code == token.status_code == 413
-        assert upstream.requests == []
+        assert mcp.status_code == 200
+        [sent] = upstream.requests
+        assert json.loads(sent.content) == tool_call
 
 
 class TestRateLimits:
