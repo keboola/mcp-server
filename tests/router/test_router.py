@@ -857,6 +857,9 @@ class TestMcpProxy:
 
         if case in ('mcp_flood_keeps_token_limit', 'mcp_past_the_cap_fails_open'):
             monkeypatch.setattr(rate_limit, '_MAX_TRACKED_KEYS', 1)
+        if case == 'mcp_past_the_cap_fails_open':
+            # an overflow bucket of 1 would refuse the second request; fail-open refuses none
+            monkeypatch.setattr(router_app, '_CREDENTIAL_OVERFLOW_LIMIT_PER_MINUTE', 1)
         with _client(
             upstream, api_rate_limit_per_ip=1, mcp_rate_limit_per_token=1, token_rate_limit_per_credential=1
         ) as client:
