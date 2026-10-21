@@ -5,6 +5,7 @@ from urllib.parse import parse_qs, parse_qsl, urlparse
 
 import httpx
 import pytest
+from starlette.requests import ClientDisconnect
 from starlette.testclient import TestClient
 
 from keboola_mcp_server.cli import parse_args
@@ -732,20 +733,24 @@ class TestMcpProxy:
         assert b'"result"' in bodies[1]
 
     @pytest.mark.asyncio
-    async def test_a_client_that_goes_away_closes_the_upstream_stream(self) -> None:
+    @pytest.mark.parametrize('spec_version', ['2.3', '2.4'])
+    async def test_a_client_that_goes_away_closes_the_upstream_stream(self, spec_version: str) -> None:
+        """Starlette sees a gone client as an `http.disconnect` (ASGI HTTP spec 2.3, uvicorn) or as `send` raising
+        (2.4); either way the stack's answer is closed at once, not when the garbage collector gets to it."""
         closed = asyncio.Event()
 
-        async def endless_events():
-            try:
+        class EndlessEvents(httpx.AsyncByteStream):
+            """What the pooled connection sees: `aclose()` is what hands it back."""
+
+            async def __aiter__(self):
                 while True:
                     yield b'event: ping\ndata: {}\n\n'
                     await asyncio.sleep(0.01)
-            finally:
+
+            async def aclose(self) -> None:
                 closed.set()
 
-        upstream = _Upstream(
-            httpx.Response(200, headers={'Content-Type': 'text/event-stream'}, content=endless_events())
-        )
+        upstream = _Upstream(httpx.Response(200, headers={'Content-Type': 'text/event-stream'}, stream=EndlessEvents()))
         router_settings = RouterSettings(router_url=ROUTER_URL, stacks=parse_stacks(None))
         app = create_router_app(router_settings, upstream_transport=httpx.MockTransport(upstream))
         messages = [{'type': 'http.request', 'body': b'', 'more_body': False}]
@@ -759,11 +764,13 @@ class TestMcpProxy:
 
         async def send(message: dict) -> None:
             if message['type'] == 'http.response.body' and message.get('body'):
+                if first_chunk.is_set() and spec_version == '2.4':
+                    raise OSError('the client went away')
                 first_chunk.set()
 
         scope = {
             'type': 'http',
-            'asgi': {'version': '3.0', 'spec_version': '2.3'},
+            'asgi': {'version': '3.0', 'spec_version': spec_version},
             'http_version': '1.1',
             'method': 'GET',
             'scheme': 'https',
@@ -775,8 +782,11 @@ class TestMcpProxy:
             'query_string': b'',
             'headers': [(b'authorization', b'Bearer eu-aws.opaque')],
         }
-        await asyncio.wait_for(app(scope, receive, send), timeout=5)
-        await asyncio.wait_for(closed.wait(), timeout=5)
+        try:
+            await asyncio.wait_for(app(scope, receive, send), timeout=5)
+        except ClientDisconnect:
+            assert spec_version == '2.4'
+        assert closed.is_set()
 
     @pytest.mark.parametrize(
         ('failure', 'expected_status'),

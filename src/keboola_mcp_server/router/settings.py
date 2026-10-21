@@ -55,7 +55,7 @@ class RouterSettings:
     """How long a stack may stay silent on `/mcp`, before its response starts (a long tool call) and between chunks.
     Whole seconds in the environment."""
     mcp_max_connections: int = 1000
-    """Connections to the stacks that `/mcp` may hold at once, per replica; each request holds one until its answer
+    """Connections to one stack that `/mcp` may hold at once, per replica; each request holds one until its answer
     ends. Above it a request waits up to `upstream_timeout_seconds` for a free one, then gets 503."""
 
     @property

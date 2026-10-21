@@ -4,9 +4,9 @@ import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 
 import httpx
-from starlette.background import BackgroundTask
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
+from starlette.types import Receive, Scope, Send
 
 from keboola_mcp_server.router.stacks import Stack, stack_key_of
 
@@ -48,6 +48,21 @@ def _unauthorized(resource_metadata_url: str, *, error_description: str | None) 
     )
 
 
+class _UpstreamStreamingResponse(StreamingResponse):
+    """Streams the stack's answer and closes it when the response ends, however it ends: a client that goes away
+    leaves Starlette's background task unrun on some paths, and an unclosed answer keeps its pooled connection."""
+
+    def __init__(self, answer: httpx.Response, content: AsyncIterator[bytes], headers: Mapping[str, str]) -> None:
+        super().__init__(content, status_code=answer.status_code, headers=headers)
+        self._answer = answer
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            await self._answer.aclose()
+
+
 def _gateway_error(status_code: int, description: str) -> Response:
     return JSONResponse({'error': 'temporarily_unavailable', 'error_description': description}, status_code=status_code)
 
@@ -55,12 +70,15 @@ def _gateway_error(status_code: int, description: str) -> Response:
 def create_mcp_proxy(
     *,
     stacks: Mapping[str, Stack],
-    upstream: httpx.AsyncClient,
+    upstreams: Mapping[str, httpx.AsyncClient],
     resource_metadata_url: str,
     connect_timeout_seconds: float,
     read_timeout_seconds: float,
 ) -> Callable[[Request], Awaitable[Response]]:
     """The `/mcp` handler.
+
+    :param upstreams: One client per stack key: each has its own connection pool, so a stack that answers slowly
+        uses up only its own connections, and the other stacks' users are not affected.
 
     :param read_timeout_seconds: How long the stack may stay silent: before the response starts (a tool call that runs
         long) and between two chunks of a streamed one. Exceeded before the response starts, the client gets 504;
@@ -80,10 +98,6 @@ def create_mcp_proxy(
         except httpx.HTTPError as e:
             # The status line is already out; all that is left is to end the stream.
             LOG.warning(f'[router] Upstream stream interrupted: stack_key={stack.key}: {type(e).__name__}')
-        finally:
-            # Also when the client went away: Starlette skips the background task on some disconnect paths, and an
-            # unclosed answer keeps its pooled connection.
-            await answer.aclose()
 
     async def proxy(request: Request) -> Response:
         token = _bearer_token(request)
@@ -99,13 +113,14 @@ def create_mcp_proxy(
         headers = {name: value for name in _FORWARDED_REQUEST_HEADERS if (value := request.headers.get(name))}
         # Byte for byte: a compressed answer would be decompressed here, and the decompressor may hold SSE bytes back.
         headers['accept-encoding'] = 'identity'
+        upstream = upstreams[stack.key]
         upstream_request = upstream.build_request(
             request.method, url, content=await request.body(), headers=headers, timeout=timeout
         )
         try:
             answer = await upstream.send(upstream_request, stream=True)
         except httpx.PoolTimeout:
-            LOG.warning(f"[router] No free connection in the router's own pool: stack_key={stack.key}, path=/mcp")
+            LOG.warning(f"[router] No free connection in the router's pool for the stack: stack_key={stack.key}")
             return _gateway_error(503, 'The router is busy. Try again.')
         except httpx.TimeoutException:
             LOG.warning(f'[router] Upstream timed out: stack_key={stack.key}, path=/mcp')
@@ -118,11 +133,10 @@ def create_mcp_proxy(
             # Revoked, or the stack no longer knows the token: log in again through the router, not the stack.
             await answer.aclose()
             return _unauthorized(resource_metadata_url, error_description='The access token is not valid.')
-        return StreamingResponse(
+        return _UpstreamStreamingResponse(
+            answer,
             relay(answer, stack),
-            status_code=answer.status_code,
             headers={name: value for name in _FORWARDED_RESPONSE_HEADERS if (value := answer.headers.get(name))},
-            background=BackgroundTask(answer.aclose),
         )
 
     return proxy

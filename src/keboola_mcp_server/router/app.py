@@ -177,13 +177,17 @@ def create_router_app(
         timeout=httpx.Timeout(settings.upstream_timeout_seconds),
         follow_redirects=False,
     )
-    # Its own pool: an MCP request holds a connection for as long as its answer lasts (a long tool call, an SSE
-    # stream), and those must not use up the connections that logins and refreshes need.
-    mcp_upstream = httpx.AsyncClient(
-        transport=upstream_transport,
-        follow_redirects=False,
-        limits=httpx.Limits(max_connections=settings.mcp_max_connections, max_keepalive_connections=100),
-    )
+    # Pools of their own, one per stack: an MCP request holds a connection for as long as its answer lasts (a long
+    # tool call, an SSE stream), and those must not use up the connections that logins and refreshes need, nor those
+    # of the other stacks when one stack answers slowly.
+    mcp_upstreams = {
+        key: httpx.AsyncClient(
+            transport=upstream_transport,
+            follow_redirects=False,
+            limits=httpx.Limits(max_connections=settings.mcp_max_connections, max_keepalive_connections=100),
+        )
+        for key in stacks
+    }
 
     async def protected_resource_metadata(_request: Request) -> Response:
         return JSONResponse(
@@ -326,7 +330,7 @@ def create_router_app(
 
     mcp_proxy = create_mcp_proxy(
         stacks=stacks,
-        upstream=mcp_upstream,
+        upstreams=mcp_upstreams,
         resource_metadata_url=f'{issuer}/.well-known/oauth-protected-resource',
         connect_timeout_seconds=settings.upstream_timeout_seconds,
         read_timeout_seconds=settings.mcp_read_timeout_seconds,
@@ -346,7 +350,8 @@ def create_router_app(
             yield
         finally:
             await upstream.aclose()
-            await mcp_upstream.aclose()
+            for client in mcp_upstreams.values():
+                await client.aclose()
 
     limits: dict[str, int] = {}
     if settings.authorize_rate_limit_per_ip:
