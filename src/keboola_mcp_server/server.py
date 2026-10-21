@@ -382,6 +382,8 @@ def create_server(
             trusted_proxy_hops=_parse_positive_int('oauth_trusted_proxy_hops', config.oauth_trusted_proxy_hops) or 1,
             encryption_key=encryption_key,
             resource_binding=_resource_binding_mode(config.oauth_resource_binding),
+            stack_key=config.stack_key,
+            router_url=config.router_url,
         )
     else:
         oauth_provider = None
