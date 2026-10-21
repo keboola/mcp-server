@@ -3344,7 +3344,7 @@ class TestRouterFlows:
     def provider(self) -> SimpleOAuthProvider:
         return self._provider(router=True)
 
-    def _provider(self, *, router: bool) -> SimpleOAuthProvider:
+    def _provider(self, *, router: bool, resource_binding: str = 'log') -> SimpleOAuthProvider:
         return SimpleOAuthProvider(
             storage_api_url='https://connection.eu-central-1.keboola.com',
             mcp_server_url=self.OWN_URL,
@@ -3357,6 +3357,7 @@ class TestRouterFlows:
             session_store=FakeSessionStore(),
             stack_key='eu-aws' if router else None,
             router_url=self.ROUTER_URL if router else None,
+            resource_binding=resource_binding,
         )
 
     def _login(
@@ -3482,21 +3483,29 @@ class TestRouterFlows:
             (False, 'router'),
         ],
     )
-    def test_the_router_resource_outside_a_router_flow_is_refused(
-        self, monkeypatch: pytest.MonkeyPatch, router_configured: bool, via: str | None
+    @pytest.mark.parametrize('mode', ['log', 'enforce'])
+    def test_the_router_resource_outside_a_router_flow_is_a_foreign_resource(
+        self, monkeypatch: pytest.MonkeyPatch, router_configured: bool, via: str | None, mode: str
     ) -> None:
-        provider = self._provider(router=router_configured)
+        """Outside a router flow the router's resource is just another resource than this server: refused when the
+        binding is enforced, logged and let through (as a normal, unprefixed flow) in the `log` mode."""
+        provider = self._provider(router=router_configured, resource_binding=mode)
 
         _client, response = self._login(
             provider, monkeypatch, self._authorize_query(via=via, resource='https://mcp-router.example.com/mcp')
         )
 
-        assert response['error'] == ['invalid_target']
+        assert provider.resource_mismatches['authorize'] == 1
+        if mode == 'enforce':
+            assert response['error'] == ['invalid_target']
+        else:
+            assert response['iss'] == [provider.issuer]
+            assert not response['code'][0].startswith('eu-aws.')
 
     def test_router_tokens_work_at_mcp_only_while_the_router_is_configured(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        provider = self._provider(router=True)
+        provider = self._provider(router=True, resource_binding='enforce')
         _client, response = self._login(
             provider, monkeypatch, self._authorize_query(via='router', resource='https://mcp-router.example.com/mcp')
         )
