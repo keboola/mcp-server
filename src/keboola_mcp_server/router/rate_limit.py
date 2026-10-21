@@ -3,6 +3,7 @@ counts on its own, so the fleet allows up to the replica count times the limit."
 
 import logging
 import time
+from collections.abc import Callable
 
 from starlette.responses import JSONResponse
 from starlette.routing import get_route_path
@@ -22,9 +23,17 @@ class PerAddressRateLimitMiddleware:
     """Counts requests per (endpoint group, caller address) in fixed one-minute windows and answers 429 above the
     group's limit. A path outside every group, or an address that cannot be told, is not counted."""
 
-    def __init__(self, app: ASGIApp, *, limits: dict[str, int], trusted_hops: int) -> None:
+    def __init__(
+        self,
+        app: ASGIApp,
+        *,
+        limits: dict[str, int],
+        trusted_hops: int,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
         """:param limits: route path -> requests per minute per address, for the paths that are limited."""
         self._app = app
+        self._clock = clock
         self._limits = limits
         self._trusted_hops = trusted_hops
         self._window = 0
@@ -32,7 +41,7 @@ class PerAddressRateLimitMiddleware:
         self._counts: dict[tuple[str, str], int] = {}
 
     def _hit(self, path: str, address: str) -> int:
-        window = int(time.monotonic() // _WINDOW_SECONDS)
+        window = int(self._clock() // _WINDOW_SECONDS)
         if window != self._window:
             self._window, self._counts = window, {}
             if self._dropped:
@@ -48,7 +57,8 @@ class PerAddressRateLimitMiddleware:
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         path = get_route_path(scope).rstrip('/') if scope['type'] == 'http' else ''
         limit = self._limits.get(path)
-        if limit is None or scope.get('method') == 'OPTIONS':
+        preflight = scope.get('method') == 'OPTIONS' and b'access-control-request-method' in dict(scope['headers'])
+        if limit is None or preflight:
             await self._app(scope, receive, send)
             return
         address = caller_address(scope, self._trusted_hops)

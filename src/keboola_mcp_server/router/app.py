@@ -92,7 +92,16 @@ def _endpoint(
     """The ASGI app and the methods of a route: the body capped at `_MAX_BODY_BYTES` (413 above it), and with
     `cross_origin`, CORS for browser-based MCP clients, which read the metadata and call `/register` and `/token`
     from another origin (as the SDK does on the regional server; never on `/authorize`, which is navigated to)."""
-    app: ASGIApp = RequestBodyLimitMiddleware(request_response(handler), _MAX_BODY_BYTES)
+    served = [*methods, 'HEAD'] if 'GET' in methods else methods
+
+    async def only_its_methods(request: Request) -> Response:
+        # The route also accepts OPTIONS for CORS, and CORS answers only a real preflight itself: any other OPTIONS
+        # would reach the handler, which would treat it as the POST it serves.
+        if request.method not in served:
+            return Response(status_code=405, headers={'Allow': ', '.join(methods)})
+        return await handler(request)
+
+    app: ASGIApp = RequestBodyLimitMiddleware(request_response(only_its_methods), _MAX_BODY_BYTES)
     if not cross_origin:
         return app, methods
     allowed = [*methods, 'OPTIONS']
@@ -125,11 +134,15 @@ def _oauth_error(error: str, description: str, status_code: int = 400) -> JSONRe
 
 
 def create_router_app(
-    settings: RouterSettings, *, upstream_transport: httpx.AsyncBaseTransport | None = None
+    settings: RouterSettings,
+    *,
+    upstream_transport: httpx.AsyncBaseTransport | None = None,
+    rate_limit_clock: Callable[[], float] = time.monotonic,
 ) -> Starlette:
     """Builds the router app.
 
     :param upstream_transport: The transport of the client that calls the regional servers; tests pass a mock.
+    :param rate_limit_clock: The clock of the rate-limit windows; tests pass a fixed one.
     """
     issuer = settings.issuer
     stacks = settings.stacks
@@ -319,7 +332,12 @@ def create_router_app(
         routes=routes,
         middleware=[
             Middleware(_RequestLogMiddleware, known_paths=frozenset(path for path, *_ in endpoints)),
-            Middleware(PerAddressRateLimitMiddleware, limits=limits, trusted_hops=settings.trusted_proxy_hops),
+            Middleware(
+                PerAddressRateLimitMiddleware,
+                limits=limits,
+                trusted_hops=settings.trusted_proxy_hops,
+                clock=rate_limit_clock,
+            ),
         ],
         lifespan=lifespan,
     )

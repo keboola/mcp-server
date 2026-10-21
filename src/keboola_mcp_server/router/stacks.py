@@ -46,7 +46,8 @@ def _upstream_origin(url: str) -> str:
     local = parsed.hostname in ('localhost', '127.0.0.1')
     if parsed.scheme != 'https' and not (parsed.scheme == 'http' and local):
         raise ValueError(f'A stack upstream must be an https URL: {url!r}')
-    if not parsed.hostname or parsed.path not in ('', '/') or parsed.query or parsed.fragment or parsed.username:
+    credentials = parsed.username is not None or parsed.password is not None
+    if not parsed.hostname or parsed.path not in ('', '/') or parsed.query or parsed.fragment or credentials:
         raise ValueError(f'A stack upstream must be an origin (no path, query or credentials): {url!r}')
     return f'{parsed.scheme}://{parsed.netloc}'
 

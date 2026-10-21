@@ -33,7 +33,12 @@ class _Upstream:
 
 def _client(upstream: _Upstream | None = None, **settings) -> TestClient:
     router_settings = RouterSettings(router_url=ROUTER_URL, stacks=parse_stacks(None), **settings)
-    app = create_router_app(router_settings, upstream_transport=httpx.MockTransport(upstream or _Upstream()))
+    app = create_router_app(
+        router_settings,
+        upstream_transport=httpx.MockTransport(upstream or _Upstream()),
+        # one rate-limit window for the whole test, so a minute boundary cannot reset the counts halfway
+        rate_limit_clock=lambda: 120.0,
+    )
     return TestClient(app, base_url=ROUTER_URL, follow_redirects=False)
 
 
@@ -342,11 +347,6 @@ class TestTokenAndRevoke:
 
 
 class TestRateLimits:
-    @pytest.fixture(autouse=True)
-    def _frozen_clock(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # one window for the whole test, so a minute boundary cannot reset the counts halfway
-        monkeypatch.setattr(rate_limit.time, 'monotonic', lambda: 120.0)
-
     def test_authorize_is_limited_per_browser_address(self) -> None:
         with _client(authorize_rate_limit_per_ip=2) as client:
             statuses = [
@@ -371,6 +371,22 @@ class TestRateLimits:
 
         assert unlimited == {200}
         assert limited == [200, 200, 429, 200]  # counted per endpoint
+
+    def test_an_options_request_that_is_no_preflight_is_counted_and_never_handled(self) -> None:
+        upstream = _Upstream()
+        form = {'grant_type': 'refresh_token', 'refresh_token': 'us-aws.rt'}
+        headers = {'X-Forwarded-For': '198.51.100.2'}
+        with _client(upstream, api_rate_limit_per_ip=1) as client:
+            statuses = [client.request('OPTIONS', '/token', data=form, headers=headers).status_code for _ in range(2)]
+            preflight = client.options(
+                '/token',
+                headers={**headers, 'Origin': 'https://app.example', 'Access-Control-Request-Method': 'POST'},
+            )
+
+        assert statuses == [405, 429]
+        assert upstream.requests == []
+        assert preflight.status_code == 200  # a real preflight is answered by CORS and not counted
+        assert preflight.headers['access-control-allow-origin'] == '*'
 
     def test_addresses_beyond_the_cap_are_not_counted(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(rate_limit, '_MAX_TRACKED_ADDRESSES', 1)
