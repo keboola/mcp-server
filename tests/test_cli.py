@@ -637,6 +637,27 @@ class TestLegacySsePath:
                 )
             )
 
+    @pytest.mark.parametrize('path', ['/mcp', '/sse', '/sse/'])
+    def test_oauth_challenge(self, path: str) -> None:
+        config = Config(
+            storage_api_url=STACK,
+            oauth_client_id='client-id',
+            oauth_client_secret='client-secret',
+            oauth_server_url=STACK,
+            mcp_server_url='https://mcp.keboola.com',
+            postgres_dsn='postgresql://user:pass@localhost:1/db',
+            session_encryption_key=base64.b64encode(b'0' * 32).decode(),
+        )
+        with _http_client(config) as client:
+            response = client.post(path, json=INITIALIZE_REQUEST, headers=STREAMABLE_HTTP_HEADERS)
+
+        assert response.status_code == 401
+        assert response.headers['www-authenticate'] == (
+            'Bearer resource_metadata="https://mcp.keboola.com/.well-known/oauth-protected-resource"'
+        )
+
+
+class TestDirectoryToolProfile:
     @pytest.mark.parametrize(
         ('session_resource', 'expect_profile'),
         [
@@ -706,22 +727,3 @@ class TestLegacySsePath:
         if expect_profile:
             assert call['isError'] is True
             assert 'not available in the Keboola plugin' in call['content'][0]['text']
-
-    @pytest.mark.parametrize('path', ['/mcp', '/sse', '/sse/'])
-    def test_oauth_challenge(self, path: str) -> None:
-        config = Config(
-            storage_api_url=STACK,
-            oauth_client_id='client-id',
-            oauth_client_secret='client-secret',
-            oauth_server_url=STACK,
-            mcp_server_url='https://mcp.keboola.com',
-            postgres_dsn='postgresql://user:pass@localhost:1/db',
-            session_encryption_key=base64.b64encode(b'0' * 32).decode(),
-        )
-        with _http_client(config) as client:
-            response = client.post(path, json=INITIALIZE_REQUEST, headers=STREAMABLE_HTTP_HEADERS)
-
-        assert response.status_code == 401
-        assert response.headers['www-authenticate'] == (
-            'Bearer resource_metadata="https://mcp.keboola.com/.well-known/oauth-protected-resource"'
-        )
