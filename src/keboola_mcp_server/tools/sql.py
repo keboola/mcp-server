@@ -53,7 +53,7 @@ _EXPLAIN_OPTIONS = re.compile(r'^\s*USING\s+\w+\s', re.IGNORECASE)
 _UNUSUAL_LINE_BREAKS = re.compile('[\x0b\x0c\x85\u2028\u2029]')
 # Snowflake reads an unquoted stage path up to whitespace, sqlglot as tokens, so `//`, `--` or `/*` inside
 # the path would start a comment for sqlglot only.
-_STAGE_PATH = re.compile(r'(?:"(?:[^"]|"")*"|[^\s;()"])*')
+_STAGE_PATH = re.compile(r'(?:"(?:[^"]|"")*"|[^\s;"])*')
 _COMMENT_STARTS = ('//', '--', '/*')
 _READ_ONLY_EXPRESSIONS = (exp.Select, exp.SetOperation, exp.Subquery, exp.Show, exp.Describe)
 # Statements sqlglot cannot model fully are parsed as `exp.Command` named by their first keyword.
@@ -161,9 +161,10 @@ def validate_read_only_statement(sql_query: str, sql_dialect: str | None) -> Non
     if _UNUSUAL_LINE_BREAKS.search(sql_query):
         raise InvalidArgumentError(f'The SQL query contains an unsupported line break character. {_NOT_READ_ONLY_MSG}')
     dialect = sqlglot.Dialect.get_or_raise(sqlglot_dialect)
-    # sqlglot treats `{# ... #}` as a (Jinja) comment in every dialect; neither backend does. With a space, sqlglot
-    # reads it as the backend does: `{` and then `#` (a BigQuery line comment, nothing on Snowflake).
-    _validate_statement(dialect, sql_query.replace('{#', '{ #'))
+    # sqlglot treats `{# ... #}` as a (Jinja) comment in every dialect; neither backend does. On BigQuery `#` starts
+    # a line comment, which `{ #` keeps; on Snowflake `#` is no comment, and `{x` keeps the stage-path scan whole.
+    jinja_comment = '{ #' if isinstance(dialect, BigQuery) else '{x'
+    _validate_statement(dialect, sql_query.replace('{#', jinja_comment))
 
 
 def _validate_statement(dialect: sqlglot.Dialect, sql_query: str) -> None:

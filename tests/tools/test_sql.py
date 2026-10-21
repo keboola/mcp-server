@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
 import json
+import logging
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, Mock, call
 
@@ -169,6 +170,7 @@ _DIALECTS = ['Snowflake', 'BigQuery']
         ('SELECT $$; DROP TABLE t$$', 'Snowflake'),
         ("SELECT $1 FROM @s/dir/file.csv (FILE_FORMAT => 'csv')", 'Snowflake'),
         ('SELECT $1 FROM @"my st"/dir/f.csv', 'Snowflake'),
+        ("SELECT $1 FROM @s/f.csv(FILE_FORMAT => 'x')", 'Snowflake'),
         ('SELECT * FROM `project.dataset.t;DROP TABLE t`', 'BigQuery'),
     ],
 )
@@ -187,6 +189,8 @@ def test_validate_read_only_statement_allows(sql_query: str, dialect: str):
         ('SELECT $1 FROM @s/a/*b; DROP TABLE "t"; */', 'Snowflake'),
         ('SELECT $1 FROM @"my st"/a//b; DROP TABLE "t"', 'Snowflake'),
         ('SELECT $1 FROM @db."my schema".st/a--b; DROP TABLE "t"', 'Snowflake'),
+        ('SELECT $1 FROM @s/{#a//b; DROP TABLE "t"', 'Snowflake'),
+        ('SELECT $1 FROM @s/a(//b; DROP TABLE "t"', 'Snowflake'),
         # sqlglot reads `{# ... #}` as a comment; Snowflake does not, BigQuery reads `#` as a line comment.
         ('SELECT 1 {# ; DROP TABLE "t"; #}', 'Snowflake'),
         ('SELECT 1 {# ->> DROP TABLE "t" #}', 'Snowflake'),
@@ -201,6 +205,13 @@ def test_validate_read_only_statement_allows(sql_query: str, dialect: str):
 def test_validate_read_only_statement_rejects(sql_query: str, dialect: str):
     with pytest.raises(InvalidArgumentError):
         validate_read_only_statement(sql_query, dialect)
+
+
+def test_validate_read_only_statement_does_not_log_sql(caplog):
+    # sqlglot's unsupported-syntax warning quotes the SQL; BigQuery SHOW takes that path.
+    with caplog.at_level(logging.DEBUG, logger='sqlglot'):
+        validate_read_only_statement('SHOW TABLES', 'BigQuery')
+    assert not [record for record in caplog.records if record.name.startswith('sqlglot')]
 
 
 @pytest.mark.parametrize('dialect', ['Redshift', None])
