@@ -620,7 +620,7 @@ class TestLegacySsePath:
             assert 'https://mcp.keboola.com/mcp' in mismatches[0]  # expected
 
     def test_an_unknown_resource_binding_mode_stops_startup(self) -> None:
-        with pytest.raises(ValueError, match='oauth_resource_binding'):
+        with pytest.raises(ValueError, match='resource binding mode'):
             _http_client(
                 Config(
                     storage_api_url=STACK,

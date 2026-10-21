@@ -103,6 +103,10 @@ _REGISTERED_CACHE_TTL_SECONDS = 300  # 5 min: a registered+active client's statu
 # `OAUTH_VALIDATE_RATE_LIMIT` rather than rely on this default.
 _CONNECTION_VALIDATE_LIMIT_PER_WINDOW = 600
 _ASSUMED_MAX_REPLICAS = 5
+# Resource-binding mismatch log (`SimpleOAuthProvider._refuses_foreign_resource`): the caller-sent value is cut to this
+# length, and at most this many sessions are remembered as logged already.
+_MAX_LOGGED_RESOURCE_CHARS = 2048
+_MAX_LOGGED_MISMATCH_SESSIONS = 10_000
 # The window of `_ApprovalBudget`: a day.
 _APPROVAL_BUDGET_WINDOW_SECONDS = 24 * 60 * 60.0
 _APPROVAL_BUDGET_WINDOW_SECONDS_INT = int(_APPROVAL_BUDGET_WINDOW_SECONDS)
@@ -1165,8 +1169,10 @@ class SimpleOAuthProvider(OAuthProvider):
         if resource_binding not in ('log', 'enforce'):
             raise ValueError(f"The resource binding mode must be 'log' or 'enforce', got {resource_binding!r}.")
         self._resource_binding = resource_binding
-        # Mismatches seen by this process, per place (`authorize`, `token`, `mcp`): the evidence for switching to enforce.
+        # Mismatches seen by this process, per place (`authorize`, `token`, `mcp`); the WARNING lines are the evidence
+        # for switching to enforce, this is their count.
         self.resource_mismatches: Counter[str] = Counter()
+        self._logged_mismatch_sessions: OrderedDict[str, None] = OrderedDict()
 
     @property
     def issuer(self) -> str:
@@ -1210,18 +1216,37 @@ class SimpleOAuthProvider(OAuthProvider):
         """Whether `resource` names this server, in any spelling a client may use (see `_own_resource_keys`)."""
         return _resource_key(resource) in self._own_resource_keys
 
-    def _refuses_foreign_resource(self, where: str, received: str, client_id: str) -> bool:
+    def _refuses_foreign_resource(
+        self, where: str, received: str, client_id: str, *, session_id: str | None = None
+    ) -> bool:
         """Logs and counts a resource that is not this server; whether to refuse the request (the `enforce` mode).
 
-        WARNING on purpose, with the received and expected values: in the `log` mode this line is how a stack learns
-        whether its clients would break under `enforce`."""
+        WARNING on purpose, with the received and expected values: in the `log` mode these lines are how a stack learns
+        whether its clients would break under `enforce`. A session bound to a foreign resource would log on every
+        request it makes, so it is logged once per process (`session_id`), and counted every time."""
         self.resource_mismatches[where] += 1
+        if session_id is not None:
+            if session_id in self._logged_mismatch_sessions:
+                return self._resource_binding == 'enforce'
+            self._logged_mismatch_sessions[session_id] = None
+            if len(self._logged_mismatch_sessions) > _MAX_LOGGED_MISMATCH_SESSIONS:
+                self._logged_mismatch_sessions.popitem(last=False)
         LOG.warning(
             f'[resource_binding] Resource mismatch: where={where}, mode={self._resource_binding}, '
-            f'received={_sanitize_for_log(received)!r}, expected={self._own_resources!r}, '
+            f'received={_sanitize_for_log(received)[:_MAX_LOGGED_RESOURCE_CHARS]!r}, expected={self._own_resources!r}, '
             f'client_id={_sanitize_client_id_for_log(client_id)}, count={self.resource_mismatches[where]}'
         )
         return self._resource_binding == 'enforce'
+
+    def _same_resource(self, first: str, second: str) -> bool:
+        """Whether two resource values name the same thing: the same normalized URL, or both this server (the origin and
+        `/mcp` are two names of it). Malformed values compare as written."""
+        if self.is_own_resource(first) and self.is_own_resource(second):
+            return True
+        first_key, second_key = _resource_key(first), _resource_key(second)
+        if first_key is None or second_key is None:
+            return first == second
+        return first_key == second_key
 
     def _token_resource(self, bound_resource: str | None, client_id: str) -> str | None:
         """The resource a /token request may issue tokens for, given the one the grant is already bound to (named at
@@ -1234,7 +1259,7 @@ class SimpleOAuthProvider(OAuthProvider):
         resource = bound_resource or (requested[0] if requested else None)
         if len(requested) > 1:
             problem = 'Only one resource can be requested.'
-        elif requested and _resource_key(requested[0]) != _resource_key(cast(str, resource)):
+        elif requested and not self._same_resource(requested[0], cast(str, resource)):
             problem = 'The resource differs from the one authorized.'
         elif (
             resource is not None
@@ -1376,19 +1401,6 @@ class SimpleOAuthProvider(OAuthProvider):
         redirect_uri_str = str(params.redirect_uri)
         connection_client_id = _connection_client_id(redirect_uri_str, self._client_id_key)
 
-        if (
-            params.resource is not None
-            and not self.is_own_resource(params.resource)
-            and self._refuses_foreign_resource('authorize', params.resource, client.client_id)
-        ):
-            # RFC 8707 §2 invalid_target, before the user goes through consent for tokens /token would refuse. On this
-            # server's own page, like every other error here (see the ERROR branch below for why).
-            return construct_redirect_uri(
-                self._mcp_callback_url,
-                error='invalid_target',
-                error_description='The requested resource is not this MCP server.',
-            )
-
         registration = await self._check_registration(connection_client_id, redirect_uri_str)
         if registration is _ClientRegistration.ERROR:
             LOG.warning(
@@ -1431,6 +1443,21 @@ class SimpleOAuthProvider(OAuthProvider):
                 self._mcp_callback_url,
                 error='approval_limit_reached',
                 error_description='The daily limit of new OAuth clients was reached.',
+            )
+
+        # After the client checks, so that only a client Connection knows (or is about to approve) counts as a
+        # mismatch, and still before consent: in `enforce` the user does not consent to tokens /token would refuse.
+        if (
+            params.resource is not None
+            and not self.is_own_resource(params.resource)
+            and self._refuses_foreign_resource('authorize', params.resource, client.client_id)
+        ):
+            # RFC 8707 §2 invalid_target, on this server's own page like every other error here (see the ERROR branch
+            # above for why).
+            return construct_redirect_uri(
+                self._mcp_callback_url,
+                error='invalid_target',
+                error_description='The requested resource is not this MCP server.',
             )
 
         # Create and encode the authorization state.
@@ -1836,7 +1863,7 @@ class SimpleOAuthProvider(OAuthProvider):
         if (
             session.resource is not None
             and not self.is_own_resource(session.resource)
-            and self._refuses_foreign_resource('mcp', session.resource, session.client_id)
+            and self._refuses_foreign_resource('mcp', session.resource, session.client_id, session_id=session.id)
         ):
             # RFC 8707: a token minted for another resource is not replayed here. No resource is accepted as before.
             return None

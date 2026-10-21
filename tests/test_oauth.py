@@ -568,6 +568,27 @@ class TestSimpleOAuthProvider:
             dynamic_client_approval=True,  # off by default; these tests exercise the approval flow
         )
 
+    @pytest.fixture
+    def provider_with_binding(self):
+        """The `oauth_provider` fixture's provider, in a given resource-binding mode."""
+
+        def build(resource_binding: str) -> SimpleOAuthProvider:
+            return SimpleOAuthProvider(
+                storage_api_url='https://sapi',
+                mcp_server_url='https://mcp',
+                callback_endpoint='/callback',
+                client_id='mcp-server-id',
+                client_secret='mcp-server-secret',
+                server_url='https://oauth',
+                scope='scope',
+                jwt_secret=JWT_KEY,
+                session_store=FakeSessionStore(),
+                dynamic_client_approval=True,
+                resource_binding=resource_binding,
+            )
+
+        return build
+
     def test_dynamic_client_approval_is_off_unless_enabled(self) -> None:
         provider = SimpleOAuthProvider(
             storage_api_url='https://sapi',
@@ -1960,6 +1981,8 @@ class TestSimpleOAuthProvider:
             ('HTTPS://MCP:443/mcp/', [], 'ok'),
             # named at /token only
             (None, ['https://mcp/'], 'ok'),
+            # the origin at /authorize and /mcp at /token: two names of this server
+            ('https://mcp', ['https://mcp/mcp'], 'ok'),
             # not this server: logged and let through in the `log` mode, invalid_target in `enforce`
             ('https://other.example/mcp', [], 'foreign'),
             (None, ['https://other.example/mcp'], 'foreign'),
@@ -1968,11 +1991,13 @@ class TestSimpleOAuthProvider:
             # RFC 8707 §2 invalid_target in both modes: another resource than the authorized one, or two of them
             ('https://mcp/mcp', ['https://other.example/mcp'], 'error'),
             (None, ['https://mcp/mcp', 'https://mcp/'], 'error'),
+            # two different malformed values are not the same resource
+            ('http://[::1', ['http://[::2'], 'error'),
         ],
     )
     def test_token_endpoint_binds_the_session_to_the_requested_resource(
         self,
-        oauth_provider: SimpleOAuthProvider,
+        provider_with_binding,
         monkeypatch: pytest.MonkeyPatch,
         caplog: pytest.LogCaptureFixture,
         mode: str,
@@ -1985,7 +2010,7 @@ class TestSimpleOAuthProvider:
 
         from keboola_mcp_server import oauth as oauth_module
 
-        oauth_provider._resource_binding = mode
+        oauth_provider = provider_with_binding(mode)
         monkeypatch.setattr(oauth_module, 'deployed_sa_token_path', lambda: '/tmp/sa-token')
         captured: dict[str, Any] = {}
         self._stub_exchanger(monkeypatch, captured)
@@ -2024,24 +2049,33 @@ class TestSimpleOAuthProvider:
         assert session is not None
         assert session.resource == (code_resource or (request_resources[0] if request_resources else None))
 
+    @pytest.mark.parametrize('mode', ['log', 'enforce'])
     @pytest.mark.parametrize(
-        ('session_resource', 'request_resources', 'expected_status'),
+        ('session_resource', 'request_resources', 'log_status', 'enforce_status'),
         [
-            ('https://mcp/mcp', [], 200),
-            ('https://mcp/mcp', ['https://mcp/mcp'], 200),
-            ('https://mcp/mcp', ['https://other.example/mcp'], 400),
+            ('https://mcp/mcp', [], 200, 200),
+            ('https://mcp/mcp', ['https://mcp/mcp'], 200, 200),
+            # two names of this server
+            ('https://mcp/mcp', ['https://mcp'], 200, 200),
+            ('https://mcp/mcp', ['https://other.example/mcp'], 400, 400),
+            # a session bound to a foreign resource (stored in the `log` mode): refused once enforced
+            ('https://other.example/mcp', [], 200, 400),
             # a session from before DMD-2469 is not bound now
-            (None, ['https://other.example/mcp'], 200),
+            (None, ['https://other.example/mcp'], 200, 200),
         ],
     )
     def test_refresh_keeps_the_resource_of_the_session(
         self,
-        oauth_provider: SimpleOAuthProvider,
+        provider_with_binding,
         monkeypatch: pytest.MonkeyPatch,
+        mode: str,
         session_resource: str | None,
         request_resources: list[str],
-        expected_status: int,
+        log_status: int,
+        enforce_status: int,
     ):
+        oauth_provider = provider_with_binding(mode)
+        expected_status = log_status if mode == 'log' else enforce_status
         from starlette.applications import Starlette
         from starlette.testclient import TestClient
 
@@ -2132,8 +2166,9 @@ class TestSimpleOAuthProvider:
     @pytest.mark.asyncio
     @pytest.mark.parametrize('mode', ['log', 'enforce'])
     async def test_authorize_refuses_another_resource_before_consent_only_when_enforced(
-        self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch, mode: str
+        self, provider_with_binding, monkeypatch: pytest.MonkeyPatch, mode: str
     ):
+        oauth_provider = provider_with_binding(mode)
         from keboola_mcp_server.oauth import _ClientRegistration
 
         self._stub_client_registration(monkeypatch, _ClientRegistration.REGISTERED)
@@ -2147,8 +2182,6 @@ class TestSimpleOAuthProvider:
             resource='https://mcp.eu-central-1.keboola.com/mcp',
         )
 
-        oauth_provider._resource_binding = mode
-
         url = await oauth_provider.authorize(client, params)
 
         assert oauth_provider.resource_mismatches['authorize'] == 1
@@ -2157,6 +2190,28 @@ class TestSimpleOAuthProvider:
             assert parse_qs(urlparse(url).query)['error'] == ['invalid_target']
         else:
             assert urlparse(url).path == '/oauth/consent'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize('mode', ['log', 'enforce'])
+    async def test_mcp_logs_a_foreign_session_once_and_counts_every_request(
+        self, provider_with_binding, caplog: pytest.LogCaptureFixture, mode: str
+    ):
+        oauth_provider = provider_with_binding(mode)
+        access_token, _rt, _session = await oauth_provider._session_store.create(
+            client_id='foo-client-id',
+            user_email=None,
+            kbc_access_token='kbc_at',
+            kbc_refresh_token='kbc_rt',
+            kbc_access_expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+            resource='https://other.example/mcp',
+        )
+
+        with caplog.at_level(logging.WARNING):
+            loaded = [await oauth_provider.load_access_token(access_token) for _ in range(3)]
+
+        assert [token is None for token in loaded] == [mode == 'enforce'] * 3
+        assert oauth_provider.resource_mismatches['mcp'] == 3
+        assert len([r for r in caplog.records if 'Resource mismatch' in r.message]) == 1
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(

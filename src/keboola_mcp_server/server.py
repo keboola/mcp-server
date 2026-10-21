@@ -290,11 +290,8 @@ class CustomRoutes:
 
 
 def _resource_binding_mode(raw: str | None) -> Literal['log', 'enforce']:
-    """`KBC_OAUTH_RESOURCE_BINDING`: `log` when unset; anything but `log` or `enforce` stops startup."""
-    mode = (raw or 'log').strip().lower()
-    if mode not in ('log', 'enforce'):
-        raise ValueError(f"oauth_resource_binding must be 'log' or 'enforce', got {raw!r}.")
-    return cast(Literal['log', 'enforce'], mode)
+    """`KBC_OAUTH_RESOURCE_BINDING`: `log` when unset; the provider refuses anything but `log` or `enforce`."""
+    return cast(Literal['log', 'enforce'], (raw or 'log').strip().lower())
 
 
 def create_server(
