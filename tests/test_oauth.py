@@ -3660,3 +3660,57 @@ class TestRouterFlows:
 
         assert answer.status_code == 200
         assert (asyncio.run(provider.load_access_token(tokens['access_token'])) is None) is revoked
+
+    @pytest.mark.parametrize(
+        ('minting_stack', 'redeeming_stack', 'expected_status'),
+        [
+            ('eu-aws', 'eu-aws', 200),
+            # signed with the very same jwt_secret, still refused: the claim names another stack
+            ('eu-aws', 'us-aws', 401),
+            # a code minted before the stack had a key
+            (None, 'eu-aws', 401),
+        ],
+    )
+    def test_a_code_minted_by_another_stack_is_refused_at_token(
+        self, monkeypatch: pytest.MonkeyPatch, minting_stack: str | None, redeeming_stack: str, expected_status: int
+    ) -> None:
+        from starlette.applications import Starlette
+        from starlette.testclient import TestClient
+
+        def provider(stack_key: str | None) -> SimpleOAuthProvider:
+            return SimpleOAuthProvider(
+                storage_api_url='https://connection.eu-central-1.keboola.com',
+                mcp_server_url=self.OWN_URL,
+                callback_endpoint='/oauth/callback',
+                client_id='mcp-server-id',
+                client_secret='mcp-server-secret',
+                server_url='https://connection.eu-central-1.keboola.com',
+                scope='scope',
+                jwt_secret=JWT_KEY,  # the same secret on both
+                session_store=FakeSessionStore(),
+                stack_key=stack_key,
+                router_url=self.ROUTER_URL if stack_key else None,
+            )
+
+        minting = provider(minting_stack)
+        _client, response = self._login(
+            minting, monkeypatch, self._authorize_query(via='router' if minting_stack else None, resource=self.OWN_URL)
+        )
+        code = response['code'][0].removeprefix(f'{minting_stack}.')
+        redeeming = provider(redeeming_stack)
+        client = TestClient(Starlette(routes=redeeming.get_routes()), base_url=self.OWN_URL)
+
+        answer = client.post(
+            '/token',
+            data={
+                'grant_type': 'authorization_code',
+                'code': f'{redeeming_stack}.{code}',
+                'client_id': 'chatgpt-dcr-id',
+                'redirect_uri': 'https://chatgpt.com/connector_platform_oauth_redirect',
+                'code_verifier': 'v' * 43,
+            },
+        )
+
+        assert answer.status_code == expected_status, answer.text
+        if expected_status != 200:
+            assert answer.json()['error'] == 'invalid_grant'

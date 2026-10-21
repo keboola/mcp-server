@@ -733,6 +733,10 @@ class _ExtendedAuthorizationCode(AuthorizationCode):
     # Issued for the global router (`via=router`, DMD-2481): `iss` is the router's issuer, and the code and tokens carry
     # this stack's key as a prefix. Defaults to False for a code from before this field.
     router: bool = False
+    # The stack key of the server that minted the code. Codes are stateless JWTs, so the prefix alone would not stop a
+    # code from being redeemed at another stack that shares the `jwt_secret`: `load_authorization_code` refuses a code
+    # whose claim is not its own stack key. None for a server without a stack key.
+    stack: str | None = None
 
 
 class ProxyAccessToken(AccessToken):
@@ -1827,6 +1831,7 @@ class SimpleOAuthProvider(OAuthProvider):
             'code_challenge': state_data['code_challenge'],
             'resource': state_data.get('resource'),
             'router': bool(state_data.get('router')),
+            'stack': self._stack_key,
             'oauth_access_token': access_token.model_dump(),
             'oauth_refresh_token': refresh_token.model_dump(),
             # Defaults to True (matching _ExtendedAuthorizationCode's own default) for a state JWT
@@ -1901,6 +1906,13 @@ class SimpleOAuthProvider(OAuthProvider):
         # code: /token answers invalid_grant.
         if 'state' in auth_code_raw:
             LOG.debug(f'[load_authorization_code] Not an authorization code, keys: {sorted(auth_code_raw)}')
+            return None
+        if auth_code_raw.get('stack') != self._stack_key:
+            # Minted by another stack (or before this one had a stack key): the SDK answers invalid_grant.
+            LOG.warning(
+                f'[load_authorization_code] Code of another stack refused: '
+                f'stack={_sanitize_for_log(str(auth_code_raw.get("stack")))[:32]!r}, own={self._stack_key!r}'
+            )
             return None
 
         auth_code = _ExtendedAuthorizationCode.model_validate(
