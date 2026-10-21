@@ -39,8 +39,10 @@ whether it is needed.
    missing input table, expired credentials of an extractor or writer, or a schema change in the output table.
    Use `docs_query` for component-specific errors. Propose a fix.
 7. **Fix, only on request.** Ask before changing anything. For an SQL transformation use
-   `update_sql_transformation`; for another component use `get_components` for its schema and then
-   `update_config`. Expired OAuth credentials need the user: create a link with `create_oauth_url` and ask them to
+   `update_sql_transformation`. For a flow use `modify_flow` with its `configuration_id=...`, the `flow_type=...` it
+   already has and a `change_description=...`. For another component use `get_components` for its schema, then
+   `update_config_row` with `configuration_row_id=...` when the fix belongs in a configuration row, or
+   `update_config` for the configuration itself. Expired OAuth credentials need the user: create a link with `create_oauth_url` and ask them to
    reauthorize. Then, with the user's consent, call `run_job` and check the new job with `get_jobs`. If the server
    refuses a write because the user's role is read-only, give the user the proposed fix to pass to a project admin.
 
