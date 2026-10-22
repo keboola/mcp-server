@@ -21,6 +21,15 @@ from keboola_mcp_server.tools.storage_helpers import has_storage_branches
 
 LOG = logging.getLogger(__name__)
 
+# The project feature that makes the MCP server create its workspace governed. Connection does not need it to accept
+# the login type; it is the project's opt-in to row- and column-level security.
+RLS_FEATURE = 'row-level-security'
+
+# The login type of a governed workspace: nobody but Query Service is given its warehouse credentials, and Query
+# Service applies the project's RLS/CLS policies from the Metastore to every query and refuses every table of it that
+# no policy grants. This server does not rewrite or filter anything itself.
+GOVERNED_LOGIN_TYPE = 'governed'
+
 
 @dataclass(frozen=True)
 class JobSubmittedInfo:
@@ -553,13 +562,15 @@ class _WspInfo:
     backend: str
     credentials: str | None  # the backend credentials; it can contain serialized JSON data
     readonly: bool | None
+    login_type: str | None = None  # the `loginType` of the workspace detail, e.g. 'governed'
 
     def __repr__(self) -> str:
         # Redact `credentials` (the backend's credential blob, e.g. a service-account JSON for
         # BigQuery) so a bare `LOG.info(f'... {info}')` anywhere can never leak it.
         return (
             f'_WspInfo(id={self.id!r}, schema={self.schema!r}, backend={self.backend!r}, '
-            f'credentials={"****" if self.credentials else None}, readonly={self.readonly!r})'
+            f'credentials={"****" if self.credentials else None}, readonly={self.readonly!r}, '
+            f'login_type={self.login_type!r})'
         )
 
     @staticmethod
@@ -569,7 +580,10 @@ class _WspInfo:
         _schema = sapi_wsp_info.get('connection', {}).get('schema')
         credentials = sapi_wsp_info.get('connection', {}).get('user')
         readonly = sapi_wsp_info.get('readOnlyStorageAccess')
-        return _WspInfo(id=_id, schema=_schema, backend=backend, credentials=credentials, readonly=readonly)
+        login_type = sapi_wsp_info.get('connection', {}).get('loginType')
+        return _WspInfo(
+            id=_id, schema=_schema, backend=backend, credentials=credentials, readonly=readonly, login_type=login_type
+        )
 
 
 class WorkspaceManager:
@@ -731,6 +745,12 @@ class WorkspaceManager:
                 return info, prod_client
         return None
 
+    async def _is_governed(self, backend: str | None) -> bool:
+        """Whether the MCP workspace of this backend is governed: Query Service enforces the RLS policies in it and
+        nobody else can obtain its credentials. That is the case on Snowflake in a project with the RLS feature;
+        BigQuery has no governed login type yet (the Connection support is open)."""
+        return backend == 'snowflake' and await self._client.has_feature(RLS_FEATURE)
+
     async def _find_ws_in_branch(self) -> _WspInfo | None:
         """Finds the shared read-only MCP workspace in the current branch.
 
@@ -748,8 +768,13 @@ class WorkspaceManager:
             for sapi_wsp_info in await self._client.storage_client.workspace_list_for_config(component_id, config_id):
                 assert isinstance(sapi_wsp_info, dict)
                 info = _WspInfo.from_sapi_info(sapi_wsp_info)
-                if info.id and info.backend and info.schema and info.readonly:
-                    return info
+                if not (info.id and info.backend and info.schema and info.readonly):
+                    continue
+                # An old ordinary workspace that the MCP server created before the feature was switched on is skipped,
+                # so that a governed one is created instead.
+                if await self._is_governed(info.backend) and info.login_type != GOVERNED_LOGIN_TYPE:
+                    continue
+                return info
 
         return None
 
@@ -775,7 +800,7 @@ class WorkspaceManager:
         default_backend = owner_info.get('defaultBackend')
 
         if default_backend == 'snowflake':
-            login_type = 'snowflake-person-sso'
+            login_type = GOVERNED_LOGIN_TYPE if await self._is_governed(default_backend) else 'snowflake-person-sso'
         elif default_backend == 'bigquery':
             login_type = 'default'
         else:
