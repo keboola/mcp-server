@@ -2275,6 +2275,25 @@ class TestDirectoryToolProfile:
         assert DIRECTORY_TOOLS == registered - set(self.EXCLUDED)
 
     @pytest.mark.asyncio
+    async def test_the_preview_route_previews_only_directory_tools(self) -> None:
+        """`/preview/configuration` does not apply the profile (it never sees a router session); that is safe only while
+        every tool it previews is on the allow-list. `PREVIEW_TOOLS` is checked against the route's own dispatch."""
+        from keboola_mcp_server.preview import PREVIEW_TOOLS, _extract_coordinates
+        from keboola_mcp_server.server import create_server
+
+        mcp = create_server(Config(), runtime_info=ServerRuntimeInfo(transport='stdio'))
+        registered = {t.name for t in await mcp.list_tools(run_middleware=False)}
+        workspace_manager = MagicMock()
+        workspace_manager.get_data_app_sql_dialect = AsyncMock(return_value='Snowflake')
+
+        assert PREVIEW_TOOLS <= DIRECTORY_TOOLS
+        for name in PREVIEW_TOOLS:
+            await _extract_coordinates(name, {}, workspace_manager)
+        for name in registered - PREVIEW_TOOLS:
+            with pytest.raises(ValueError, match='Invalid tool name'):
+                await _extract_coordinates(name, {}, workspace_manager)
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize(
         'path',
         [
