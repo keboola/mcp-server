@@ -820,7 +820,8 @@ class UntrustedAuthorizeRedirectMiddleware:
     known origins: Connection's own `server_url` (`_oauth_server_auth_url` and `ConnectionClientRegistry`'s
     own `/oauth/authorize`) or this server's own `mcp_server_url` (`_mcp_callback_url`) -- it never
     redirects straight to the caller-supplied `redirect_uri` (that only happens later, from
-    `/oauth/callback`, after the real grant). So allowlisting the outgoing redirect's origin (scheme,
+    `/oauth/callback`, after the real grant or a denied one -- see `SimpleOAuthProvider.access_denied_redirect`).
+    So allowlisting the outgoing redirect's origin (scheme,
     host and effective port, not the hostname alone) to exactly those two closes the gap without
     touching the intentional "any https host" shape check. The same guard covers `/register`, `/token`,
     `/revoke` and the `/.well-known/*` discovery documents, and the trailing-slash form of each: Starlette's slash normalisation answers
@@ -957,15 +958,17 @@ class AuthorizeRateLimitMiddleware:
 _METADATA_PATH_PREFIXES = ('/.well-known/oauth-authorization-server', '/.well-known/openid-configuration')
 
 
-class _AdvertisePublicClients:
+class _PatchAuthServerMetadata:
     """Wraps an authorization-server metadata endpoint so that it also advertises `none` as a token endpoint
-    authentication method, first.
+    authentication method, first, and RFC 9207 issuer identification.
 
     The MCP SDK hardcodes `["client_secret_post", "client_secret_basic"]`, but this server's clients are public ones
     (PKCE, no secret) and its token endpoint accepts them: a client that picks its `token_endpoint_auth_method` from
-    this document (Open WebUI does) would otherwise register as a confidential client. The SDK bakes the metadata into
-    the handler when it builds the route, so the document is patched on its way out instead. An object, not a function:
-    Starlette would treat a function endpoint as a request handler rather than an ASGI app."""
+    this document (Open WebUI does) would otherwise register as a confidential client. The SDK has no way to set
+    `authorization_response_iss_parameter_supported` either, and ChatGPT uses its stable redirect URI only for an
+    authorization server that announces it. The SDK bakes the metadata into the handler when it builds the route, so
+    the document is patched on its way out instead. An object, not a function: Starlette would treat a function
+    endpoint as a request handler rather than an ASGI app."""
 
     def __init__(self, app: ASGIApp) -> None:
         self._app = app
@@ -992,9 +995,12 @@ class _AdvertisePublicClients:
             assert start is not None
             try:
                 metadata = json.loads(body)
-                methods = metadata.get('token_endpoint_auth_methods_supported')
-                if start['status'] == 200 and isinstance(methods, list) and 'none' not in methods:
-                    metadata['token_endpoint_auth_methods_supported'] = ['none', *methods]
+                if start['status'] == 200 and isinstance(metadata, dict):
+                    methods = metadata.get('token_endpoint_auth_methods_supported')
+                    if isinstance(methods, list) and 'none' not in methods:
+                        metadata['token_endpoint_auth_methods_supported'] = ['none', *methods]
+                    # Every authorization response to the client carries `iss`: see `SimpleOAuthProvider.issuer`.
+                    metadata['authorization_response_iss_parameter_supported'] = True
                     body = json.dumps(metadata).encode()
             except ValueError:
                 pass  # not JSON (an error page, a preflight answer): forwarded as it is
@@ -1096,6 +1102,14 @@ class SimpleOAuthProvider(OAuthProvider):
             o for o in (_origin(mcp_server_url), _origin(server_url)) if o is not None
         )
 
+    @property
+    def issuer(self) -> str:
+        """The issuer identifier, exactly as the metadata `issuer` and the PRM `authorization_servers` serialize it.
+
+        RFC 9207: every authorization response this server sends to the client carries it as `iss`, and a client
+        compares that with the issuer it discovered by exact string, so it must come from the same value."""
+        return str(self.issuer_url)
+
     async def aclose(self) -> None:
         """Releases what the provider holds open (the pooled client of the client registry)."""
         await self._client_registry.aclose()
@@ -1115,9 +1129,9 @@ class SimpleOAuthProvider(OAuthProvider):
         )
 
     def get_routes(self, mcp_path: str | None = None) -> list[Route]:
-        """The SDK's routes, with the authorization-server metadata documents also advertising public clients."""
+        """The SDK's routes, with the authorization-server metadata documents patched by `_PatchAuthServerMetadata`."""
         return [
-            Route(route.path, endpoint=_AdvertisePublicClients(route.endpoint), methods=route.methods)
+            Route(route.path, endpoint=_PatchAuthServerMetadata(route.endpoint), methods=route.methods)
             if isinstance(route, Route) and route.path.startswith(_METADATA_PATH_PREFIXES)
             else route
             for route in super().get_routes(mcp_path)
@@ -1262,8 +1276,8 @@ class SimpleOAuthProvider(OAuthProvider):
             # would make this server 302 to an attacker-chosen host on demand (e.g. by exhausting
             # Connection's rate limit) -- an open redirect. Redirecting to our own callback endpoint
             # instead keeps the browser on this server's own origin; the caller gets no callback at
-            # all for this attempt (same shape as Connection's own Deny-gets-no-callback behavior)
-            # and must time out and retry, same as any other undeliverable authorize attempt.
+            # all for this attempt (same shape as a Deny on Connection's approval screen) and must
+            # time out and retry, same as any other undeliverable authorize attempt.
             return construct_redirect_uri(
                 self._mcp_callback_url,
                 error='temporarily_unavailable',
@@ -1406,6 +1420,29 @@ class SimpleOAuthProvider(OAuthProvider):
         state['expires_at'] = time.time() + 5 * 60
         return self._connection_consent_url(state)
 
+    def _decode_consent_state(self, state: str, log_prefix: str) -> dict[str, Any] | None:
+        """The live consent state `authorize()` encoded, or None. The one definition of a valid consent state for
+        every path Connection sends it back on (the callback and the relayed denial).
+
+        Neither the JWT nor its claims are logged in full: the same secret signs the MCP authorization codes, which
+        carry the user's Connection tokens, and a JWS payload is readable without the key."""
+        try:
+            state_data = self._decode(state)
+        except jwt.InvalidTokenError:
+            LOG.debug(f'{log_prefix} Invalid state, length={len(state)}', exc_info=True)
+            return None
+        # Not a consent state: some other JWT signed with the same secret (an MCP authorization code).
+        if not state_data or 'state' not in state_data:
+            LOG.debug(f'{log_prefix} Invalid state, keys: {sorted(state_data or {})}')
+            return None
+        if state_data.get('expires_at', 0) < time.time():
+            LOG.debug(
+                f'{log_prefix} Expired state: redirect_uri={_sanitize_for_log(str(state_data.get("redirect_uri")))}, '
+                f'expires_at={state_data.get("expires_at")}'
+            )
+            return None
+        return state_data
+
     async def handle_oauth_callback(self, code: str | None, state: str) -> str:
         """
         Handles the callback from the OAuth server.
@@ -1417,18 +1454,8 @@ class SimpleOAuthProvider(OAuthProvider):
         :return: The URL that redirects back to the AI assistant OAuth client.
         """
         # Validate the state first to prevent calling OAuth server with invalid authorization code.
-        try:
-            state_data = self._decode(state)
-        except jwt.InvalidTokenError:
-            LOG.debug(f'[handle_oauth_callback] Invalid state: {state}', exc_info=True)
-            raise HTTPException(400, 'Invalid state parameter')
-
-        if not state_data:
-            LOG.debug(f'[handle_oauth_callback] Invalid state: {state_data}')
-            raise HTTPException(400, 'Invalid state parameter')
-
-        if state_data['expires_at'] < time.time():
-            LOG.debug(f'[handle_oauth_callback] Expired state: {state_data}')
+        state_data = self._decode_consent_state(state, '[handle_oauth_callback]')
+        if state_data is None:
             raise HTTPException(400, 'Invalid state parameter')
 
         if state_data.get('pending'):
@@ -1475,6 +1502,7 @@ class SimpleOAuthProvider(OAuthProvider):
 
         # Create MCP authorization code
         # This is deserialized into _ExtendedAuthorizationCode instance in load_authorization_code() function.
+        # Never add a 'state' key: a consent state and a code are told apart by it.
         auth_code = {
             'code': f'mcp_{secrets.token_hex(16)}',
             'client_id': state_data['client_id'],
@@ -1496,10 +1524,33 @@ class SimpleOAuthProvider(OAuthProvider):
             code=auth_code_jwt,
             state=state_data['state'],
             code_challenge=state_data['code_challenge'],
+            iss=self.issuer,
         )
-        LOG.debug(f'[handle_oauth_callback] mcp_redirect_uri={mcp_redirect_uri}')
+        # Only the base: the code carries the user's Connection tokens, readable without the key.
+        LOG.debug(f'[handle_oauth_callback] Redirecting to the client: redirect_uri={_sanitize_for_log(redirect_uri)}')
 
         return mcp_redirect_uri
+
+    def access_denied_redirect(self, state: str) -> str | None:
+        """The client's own redirect_uri with `error=access_denied` (RFC 6749 §4.1.2.1) and `iss` (RFC 9207), for an
+        authorization Connection denied (the user clicked Deny on the consent screen, or Connection refused the grant),
+        so the client learns of the denial instead of timing out.
+
+        Nothing proves that the error came from Connection, and a state can be replayed until it expires, so this is a
+        redirect anyone can trigger to the state's redirect_uri. It is given only for a redirect_uri Keboola
+        pre-registered itself (`_WELL_KNOWN_CONNECTION_CLIENT_IDS`): a dynamically approved one may have been approved
+        by the very user who wants the redirect, and a pending one by nobody.
+
+        :param state: The state Connection sent back with the error, the one `authorize()` put on the consent URL.
+        :return: The redirect, or None when the state is not a live consent flow of a pre-registered client.
+        """
+        state_data = self._decode_consent_state(state, '[access_denied_redirect]')
+        if state_data is None or state_data.get('pending'):
+            return None
+        redirect_uri = cast(str, state_data['redirect_uri'])
+        if redirect_uri not in _WELL_KNOWN_CONNECTION_CLIENT_IDS:
+            return None
+        return construct_redirect_uri(redirect_uri, error='access_denied', state=state_data['state'], iss=self.issuer)
 
     async def load_authorization_code(
         self, client: OAuthClientInformationFull, authorization_code: str
@@ -1517,7 +1568,14 @@ class SimpleOAuthProvider(OAuthProvider):
         try:
             auth_code_raw = self._decode(authorization_code)
         except jwt.InvalidTokenError:
-            LOG.debug(f'[load_authorization_code] Invalid authorization_code: {authorization_code}', exc_info=True)
+            LOG.debug(
+                f'[load_authorization_code] Invalid authorization_code, length={len(authorization_code)}', exc_info=True
+            )
+            return None
+        # A consent state (the only JWT with a 'state' key) sent as the code is signed with the same secret but is no
+        # code: /token answers invalid_grant.
+        if 'state' in auth_code_raw:
+            LOG.debug(f'[load_authorization_code] Not an authorization code, keys: {sorted(auth_code_raw)}')
             return None
 
         auth_code = _ExtendedAuthorizationCode.model_validate(
@@ -1826,7 +1884,11 @@ class SimpleOAuthProvider(OAuthProvider):
         """
         expires_in = int(data['expires_in'])  # seconds
         if expires_in <= 0:
-            LOG.exception(f'[_read_oauth_tokens] Received already expired token: data={data}')
+            # Only the keys by default: the response carries the Connection access and refresh tokens.
+            LOG.error(
+                f'[_read_oauth_tokens] Received already expired token: expires_in={expires_in}, keys={sorted(data)}'
+            )
+            _log_debug(f'[_read_oauth_tokens] Received already expired token: data={data}')
             raise HTTPException(400, 'The original OAuth access token has already expired.')
 
         current_time = int(time.time())

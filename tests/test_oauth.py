@@ -600,6 +600,20 @@ class TestSimpleOAuthProvider:
         auth_code_raw['redirect_uri'] = str(auth_code_raw['redirect_uri'])  # AnyUrl is not JSON serializable
         return auth_code_raw
 
+    @staticmethod
+    def consent_state() -> Mapping[str, Any]:
+        """The consent state `authorize()` encodes."""
+        return {
+            'redirect_uri': 'foo://bar',
+            'redirect_uri_provided_explicitly': 'True',
+            'scopes': [],
+            'code_challenge': 'foo-code-challenge',
+            'state': 'client-state',
+            'client_id': 'foo-client-id',
+            'expires_at': time.time() + 5 * 60,
+            'projectless': True,
+        }
+
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         ('auth_code', 'key', 'expected'),
@@ -616,6 +630,8 @@ class TestSimpleOAuthProvider:
             (code := authorization_code(expires_at=1), JWT_KEY, _ExtendedAuthorizationCode.model_validate(code)),
             # wrong encryption key
             (code := authorization_code(), '!@#$%^&', None),
+            # a consent state is signed with the same secret: an unknown code (invalid_grant), not a validation error
+            (consent_state(), JWT_KEY, None),
         ],
     )
     async def test_load_authorization_code(
@@ -624,11 +640,21 @@ class TestSimpleOAuthProvider:
         key: str,
         expected: _ExtendedAuthorizationCode,
         oauth_provider: SimpleOAuthProvider,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
     ):
+        from keboola_mcp_server import oauth as oauth_module
+
+        monkeypatch.setattr(oauth_module, '_OAUTH_LOG_ALL', False)  # the gated _log_debug may log the code
         client_info = OAuthClientInformationFull(client_id='foo-client-id', redirect_uris=[AnyUrl('foo://bar')])
         auth_code_str = oauth_provider._encode(auth_code, key=key)
-        loaded_auth_code = await oauth_provider.load_authorization_code(client_info, auth_code_str)
+        with caplog.at_level(logging.DEBUG, logger='keboola_mcp_server.oauth'):
+            loaded_auth_code = await oauth_provider.load_authorization_code(client_info, auth_code_str)
         assert loaded_auth_code == expected
+        # no row logs the JWT or its tokens: a JWS payload, even one with a broken signature, is readable without the key
+        assert auth_code_str not in caplog.text
+        assert 'oauth-access-token' not in caplog.text
+        assert 'oauth-refresh-token' not in caplog.text
 
     @pytest.mark.parametrize(
         ('raw_at', 'raw_rt', 'scopes', 'at_expires_in', 'rt_expires_in'),
@@ -660,6 +686,22 @@ class TestSimpleOAuthProvider:
         assert refresh_token.token == raw_rt
         assert refresh_token.scopes == scopes
         assert 0 <= rt_expires_in - (refresh_token.expires_at - time.time()) < 1
+
+    def test_an_expired_oauth_token_is_refused_without_logging_the_tokens(
+        self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ):
+        from keboola_mcp_server import oauth as oauth_module
+
+        monkeypatch.setattr(oauth_module, '_OAUTH_LOG_ALL', False)
+        data = {'access_token': 'league-at', 'refresh_token': 'league-rt', 'expires_in': 0}
+
+        with caplog.at_level(logging.DEBUG, logger='keboola_mcp_server.oauth'), pytest.raises(HTTPException) as exc:
+            oauth_provider._read_oauth_tokens(data=data, scopes=[])
+
+        assert exc.value.status_code == 400
+        assert 'Received already expired token' in caplog.text
+        assert 'league-at' not in caplog.text
+        assert 'league-rt' not in caplog.text
 
     @pytest.mark.parametrize(
         ('uri', 'valid'),
@@ -2703,17 +2745,16 @@ class TestAuthorizeRateLimitMiddleware:
 
 class TestAuthorizationServerMetadata:
     """The metadata documents advertise `none` first as a token endpoint auth method (AI-3797): this server's clients are
-    public ones, and a client that picks its method from the document would otherwise register with a secret."""
+    public ones, and a client that picks its method from the document would otherwise register with a secret. They also
+    advertise RFC 9207 issuer identification, and every authorization response to the client carries the same issuer
+    (DMD-2468): ChatGPT uses its stable redirect URI only then, and compares the three values by exact string."""
 
     @pytest.fixture
-    def client(self):
-        from starlette.applications import Starlette
-        from starlette.testclient import TestClient
-
-        provider = SimpleOAuthProvider(
+    def provider(self) -> SimpleOAuthProvider:
+        return SimpleOAuthProvider(
             storage_api_url='https://sapi',
             mcp_server_url='https://mcp.example',
-            callback_endpoint='/callback',
+            callback_endpoint='/oauth/callback',
             client_id='mcp-server-id',
             client_secret='mcp-server-secret',
             server_url='https://oauth.example',
@@ -2721,6 +2762,12 @@ class TestAuthorizationServerMetadata:
             jwt_secret=JWT_KEY,
             session_store=FakeSessionStore(),
         )
+
+    @pytest.fixture
+    def client(self, provider: SimpleOAuthProvider):
+        from starlette.applications import Starlette
+        from starlette.testclient import TestClient
+
         return TestClient(Starlette(routes=provider.get_routes()))
 
     def test_public_clients_are_advertised_first(self, client) -> None:
@@ -2734,6 +2781,201 @@ class TestAuthorizationServerMetadata:
         )  # the patched body is what was announced
         assert body['code_challenge_methods_supported'] == ['S256']  # the rest of the document is untouched
         assert body['issuer'].rstrip('/') == 'https://mcp.example'
+        assert body['authorization_response_iss_parameter_supported'] is True
+
+    @staticmethod
+    async def _consent_state(
+        provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch, redirect_uri: str, registration: str
+    ) -> str:
+        """The state `authorize()` puts on the URL it sends the browser to (consent, or approval when not registered)."""
+        from keboola_mcp_server.oauth import _ClientRegistration
+
+        TestSimpleOAuthProvider._stub_client_registration(monkeypatch, _ClientRegistration[registration])
+        params = AuthorizationParams(
+            redirect_uri=AnyUrl(redirect_uri),
+            redirect_uri_provided_explicitly=True,
+            code_challenge='challenge',
+            state='client-state',
+            scopes=None,
+        )
+        client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='dcr-client-id')
+        return parse_qs(urlparse(await provider.authorize(client, params)).query)['state'][0]
+
+    @staticmethod
+    async def _callback(provider: SimpleOAuthProvider, query: str):
+        from starlette.requests import Request
+
+        from keboola_mcp_server.config import Config, ServerRuntimeInfo
+        from keboola_mcp_server.mcp import ServerState
+        from keboola_mcp_server.server import CustomRoutes
+
+        routes = CustomRoutes(
+            server_state=ServerState(config=Config(), runtime_info=ServerRuntimeInfo(transport='streamable-http')),
+            oauth_provider=provider,
+        )
+        return await routes.oauth_callback_handler(
+            Request({'type': 'http', 'headers': [], 'query_string': query.encode()})
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ('response_kind', 'expected_params'),
+        [
+            ('success', {'code', 'state', 'code_challenge', 'iss'}),
+            # the user clicked Deny on Connection's consent screen
+            ('access_denied', {'error', 'state', 'iss'}),
+        ],
+    )
+    async def test_every_authorization_response_carries_the_advertised_issuer(
+        self,
+        provider: SimpleOAuthProvider,
+        client,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        response_kind: str,
+        expected_params: set[str],
+    ) -> None:
+        from keboola_mcp_server import oauth as oauth_module
+
+        redirect_uri = 'https://claude.ai/api/mcp/auth_callback'
+        state = await self._consent_state(provider, monkeypatch, redirect_uri, 'REGISTERED')
+        if response_kind == 'success':
+            token_response = {'access_token': 'league-at', 'refresh_token': 'league-rt', 'expires_in': 3600}
+            transport = httpx.MockTransport(lambda _rq: httpx.Response(200, json=token_response))
+            monkeypatch.setattr(
+                oauth_module, '_create_http_client', lambda **_kw: httpx.AsyncClient(transport=transport)
+            )
+            query = f'code=connection-code&state={state}'
+        else:
+            query = f'error=access_denied&error_description=The+user+denied+the+request&state={state}'
+
+        monkeypatch.setattr(oauth_module, '_OAUTH_LOG_ALL', False)  # the gated _log_debug may log the tokens
+        with caplog.at_level(logging.DEBUG, logger='keboola_mcp_server.oauth'):
+            response = await self._callback(provider, query)
+
+        assert response.status_code == 302
+        location = urlparse(response.headers['location'])
+        assert f'{location.scheme}://{location.netloc}{location.path}' == redirect_uri
+        response_params = parse_qs(location.query)
+        assert set(response_params) == expected_params
+        assert response_params['state'] == ['client-state']
+        if response_kind == 'access_denied':
+            assert response_params['error'] == ['access_denied']
+        else:
+            # the code carries the Connection tokens, readable without the key
+            code = response_params['code'][0]
+            assert code not in caplog.text
+            assert 'league-at' not in caplog.text
+            assert 'league-rt' not in caplog.text
+            # /token must accept what the callback issues (it refuses a JWT with a 'state' key)
+            dcr_client = OAuthClientInformationFull(client_id='dcr-client-id', redirect_uris=[AnyUrl(redirect_uri)])
+            loaded = await provider.load_authorization_code(dcr_client, code)
+            assert loaded is not None
+            assert str(loaded.redirect_uri) == redirect_uri
+            assert loaded.code_challenge == 'challenge'
+
+        issuer = response_params['iss'][0]
+        assert issuer == provider.issuer
+        assert client.get('/.well-known/oauth-authorization-server').json()['issuer'] == issuer
+        assert client.get('/.well-known/oauth-protected-resource').json()['authorization_servers'] == [issuer]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ('redirect_uri', 'registration', 'state_change'),
+        [
+            # not approved by anyone yet: sending the browser there would be an open redirect
+            ('https://claude.ai/api/mcp/auth_callback', 'NOT_REGISTERED', None),
+            # approved, but possibly by the very user who wants the redirect
+            ('https://attacker.example/cb', 'REGISTERED', None),
+            ('https://claude.ai/api/mcp/auth_callback', 'REGISTERED', 'expired'),
+            ('https://claude.ai/api/mcp/auth_callback', 'REGISTERED', 'forged'),
+            ('https://claude.ai/api/mcp/auth_callback', 'REGISTERED', 'garbage'),
+            # a JWT signed with the same secret that is not a state; it would crash on the missing 'state' key
+            ('https://claude.ai/api/mcp/auth_callback', 'REGISTERED', 'authorization_code'),
+        ],
+    )
+    async def test_a_denial_is_relayed_only_for_a_live_flow_of_a_pre_registered_client(
+        self,
+        provider: SimpleOAuthProvider,
+        monkeypatch: pytest.MonkeyPatch,
+        redirect_uri: str,
+        registration: str,
+        state_change: str | None,
+    ) -> None:
+        """Anyone can mint a state and send the denial themselves, so the relay is a redirect anyone can trigger: it must
+        stay limited to the redirect_uris Keboola vouches for. Every other denial keeps the generic page."""
+        provider._dynamic_client_approval = True
+        state = await self._consent_state(provider, monkeypatch, redirect_uri, registration)
+        state = self._change_state(provider, state, state_change, redirect_uri)
+
+        assert provider.access_denied_redirect(state) is None
+        response = await self._callback(provider, f'error=access_denied&state={state}')
+        assert response.status_code == 400
+        assert response.headers['content-type'].startswith('text/html')
+        assert 'location' not in response.headers
+
+    @staticmethod
+    def _authorization_code(provider: SimpleOAuthProvider, redirect_uri: str) -> str:
+        """An MCP authorization code as far as it matters here: signed with the state's secret, with a live `expires_at`,
+        the client's `redirect_uri` and the Connection tokens, but no `state`. The client sees it, so it can send it
+        back."""
+        return provider._encode(
+            {
+                'code': 'mcp_code',
+                'client_id': 'dcr-client-id',
+                'redirect_uri': redirect_uri,
+                'redirect_uri_provided_explicitly': True,
+                'expires_at': int(time.time() + 5 * 60),
+                'scopes': [],
+                'code_challenge': 'challenge',
+                'oauth_access_token': {'token': 'league-at'},
+                'oauth_refresh_token': {'token': 'league-rt'},
+            }
+        )
+
+    @classmethod
+    def _change_state(cls, provider: SimpleOAuthProvider, state: str, change: str | None, redirect_uri: str) -> str:
+        if change == 'expired':
+            return provider._encode({**provider._decode(state), 'expires_at': time.time() - 1})
+        if change == 'forged':
+            return provider._encode(provider._decode(state), key='another-key')
+        if change == 'garbage':
+            return 'not-a-jwt'
+        if change == 'authorization_code':
+            return cls._authorization_code(provider, redirect_uri)
+        return state
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize('state_change', ['expired', 'forged', 'garbage', 'authorization_code'])
+    async def test_the_callback_refuses_what_is_not_a_live_consent_state_before_the_token_exchange(
+        self,
+        provider: SimpleOAuthProvider,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        state_change: str,
+    ) -> None:
+        """The callback half of the state check the denial shares: each of these is a 400, the Connection code is
+        never exchanged, and the refused JWT is not logged (a JWS payload, an authorization code's tokens included, is
+        readable without the key)."""
+        from keboola_mcp_server import oauth as oauth_module
+
+        redirect_uri = 'https://claude.ai/api/mcp/auth_callback'
+        state = await self._consent_state(provider, monkeypatch, redirect_uri, 'REGISTERED')
+        state = self._change_state(provider, state, state_change, redirect_uri)
+        exchanges = []
+        transport = httpx.MockTransport(lambda rq: exchanges.append(rq) or httpx.Response(500))
+        monkeypatch.setattr(oauth_module, '_create_http_client', lambda **_kw: httpx.AsyncClient(transport=transport))
+
+        monkeypatch.setattr(oauth_module, '_OAUTH_LOG_ALL', False)
+
+        with caplog.at_level(logging.DEBUG, logger='keboola_mcp_server.oauth'), pytest.raises(HTTPException) as excinfo:
+            await self._callback(provider, f'code=connection-code&state={state}')
+
+        assert excinfo.value.status_code == 400
+        assert exchanges == []
+        assert state not in caplog.text
+        assert 'league-at' not in caplog.text
+        assert 'league-rt' not in caplog.text
 
     def test_a_preflight_answer_is_left_alone(self, client) -> None:
         response = client.options(

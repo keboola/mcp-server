@@ -7,6 +7,7 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Literal
+from urllib.parse import urlparse
 
 from fastmcp import FastMCP
 from pydantic import AliasChoices, BaseModel, Field
@@ -164,9 +165,21 @@ class CustomRoutes:
         that it's no longer host-restricted, so that branch redirects here (this server's own
         origin) with `error`/`error_description` instead of `code`/`state`. The AI assistant that
         started this attempt gets no callback at all in that case and must time out and retry --
-        same shape as Connection's own "Deny gets no callback" behavior.
+        same shape as a Deny on Connection's approval screen. A Deny on its consent screen does reach
+        the client, see `SimpleOAuthProvider.access_denied_redirect`.
         """
         error = request.query_params.get('error')
+        # Connection denied the authorization: tell the client, when the state proves it is a pre-registered one.
+        if (
+            error == 'access_denied'
+            and self.oauth_provider
+            and (state := request.query_params.get('state'))
+            and (redirect_uri := self.oauth_provider.access_denied_redirect(state))
+        ):
+            LOG.info(
+                f'Relaying access_denied to a pre-registered client: {urlparse(redirect_uri)._replace(query="").geturl()}'
+            )
+            return RedirectResponse(status_code=302, url=redirect_uri)
         if error:
             # strip control/bidi chars so a crafted query param can't forge log lines
             safe_error = ''.join(ch for ch in error if ch.isprintable())[:200]
@@ -187,9 +200,9 @@ class CustomRoutes:
             # review, AI-2883). `authorize()`'s own fail-closed branch only ever emits two fixed
             # error_description strings, so a single fixed message loses nothing legitimate.
             #
-            # A user clicking Deny on Connection's consent screen lands here too (error=access_denied);
-            # that is not an outage, so it gets its own fixed message. Still never anything derived
-            # from the query string.
+            # A Deny on Connection's consent screen that is not relayed to the client (see above) lands
+            # here too (error=access_denied); that is not an outage, so it gets its own fixed message.
+            # Still never anything derived from the query string.
             if error == 'access_denied':
                 title = message = 'Authorization was denied. You can close this window.'
             elif error == 'unregistered_client':
