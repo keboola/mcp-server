@@ -2378,6 +2378,22 @@ class TestDirectoryToolProfile:
                 assert await self._call_through_chain(context, AsyncMock(return_value=expected)) is expected
 
     @pytest.mark.asyncio
+    async def test_call_tool_checks_the_resolved_name(self, mcp_context_client) -> None:
+        """The allow-list is checked against the tool the server resolves the requested name to."""
+        mcp_context_client.fastmcp = SimpleNamespace(get_tool=AsyncMock(return_value=_tool('run_sync_action')))
+        context = MiddlewareContext(
+            message=SimpleNamespace(name='get_tables', arguments={}),
+            fastmcp_context=mcp_context_client,
+            method='tools/call',
+        )
+
+        with (
+            patch('keboola_mcp_server.mcp.get_http_request_or_none', return_value=self._request(True)),
+            pytest.raises(ToolError, match='"run_sync_action" is not available in the Keboola plugin'),
+        ):
+            await self._call_through_chain(context, AsyncMock())
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize(
         ('tool_name', 'expect_verified'),
         [

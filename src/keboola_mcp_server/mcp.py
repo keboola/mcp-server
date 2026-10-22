@@ -1328,8 +1328,11 @@ class DirectoryProfileMiddleware(fmw.Middleware):
         context: MiddlewareContext[mt.CallToolRequestParams],
         call_next: CallNext[mt.CallToolRequestParams, mt.CallToolResult],
     ) -> mt.CallToolResult:
-        if is_directory_session() and context.message.name not in DIRECTORY_TOOLS:
-            raise ToolError(directory_denial(context.message.name))
+        if is_directory_session():
+            # The resolved name, not the requested one, so that a renaming tool transform cannot slip past the list.
+            tool = await context.fastmcp_context.fastmcp.get_tool(context.message.name)
+            if tool.name not in DIRECTORY_TOOLS:
+                raise ToolError(directory_denial(tool.name))
         return await call_next(context)
 
 
