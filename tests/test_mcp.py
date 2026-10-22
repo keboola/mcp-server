@@ -3,7 +3,6 @@ import base64
 import dataclasses
 import functools
 import logging
-import re
 import time
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -2435,14 +2434,21 @@ class TestDirectoryToolProfile:
         assert '<!--' not in directory_prompt
         assert '<!--' not in regular_prompt
 
-        def blocks(kind: str) -> list[str]:
-            raw = load_prompt('project_system_prompt.md')
-            return re.findall(rf'<!-- directory:{kind} -->\n(.*?)<!-- /directory:{kind} -->\n', raw, re.DOTALL)
-
-        # Every other session reads the prompt it had before the profile: the `omit` text, never the `only` text.
-        assert blocks('only') and blocks('omit')
-        assert [block for block in blocks('only') if block in regular_prompt] == []
-        assert [block for block in blocks('omit') if block not in regular_prompt] == []
+        # Every other session reads the prompt file byte for byte without the marker lines and the `only` blocks.
+        # Stripped line by line here, independently of the regular expressions in `prompts/__init__.py`.
+        expected, in_only_block = [], False
+        for line in load_prompt('project_system_prompt.md').splitlines(keepends=True):
+            if line == '<!-- directory:only -->\n':
+                in_only_block = True
+            elif line == '<!-- /directory:only -->\n':
+                in_only_block = False
+            elif line not in ('<!-- directory:omit -->\n', '<!-- /directory:omit -->\n') and not in_only_block:
+                expected.append(line)
+        assert len(expected) < len(load_prompt('project_system_prompt.md').splitlines())
+        if sql_dialect:
+            assert regular_prompt.endswith('\n\n---\n\n' + ''.join(expected))
+        else:
+            assert regular_prompt == ''.join(expected)
 
 
 class TestUnauthorizedDropsARevokedSession:
