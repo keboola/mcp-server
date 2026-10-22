@@ -894,7 +894,7 @@ class UntrustedAuthorizeRedirectMiddleware:
 _AUTHORIZE_RATE_LIMIT_WINDOW_SECONDS = 60
 
 
-def _caller_address(scope: Scope, trusted_hops: int) -> str | None:
+def caller_address(scope: Scope, trusted_hops: int) -> str | None:
     """The caller's address as the nearest proxy we trust saw it, or None when there is none to count.
 
     Behind `trusted_hops` proxies that each append the address they received the connection from, the caller is the entry
@@ -942,7 +942,7 @@ class AuthorizeRateLimitMiddleware:
             await self._app(scope, receive, send)
             return
 
-        address = _caller_address(scope, self._trusted_hops)
+        address = caller_address(scope, self._trusted_hops)
         if address is None:  # nothing to tell the caller apart by: not counted, rather than pooled with everybody else
             await self._app(scope, receive, send)
             return
