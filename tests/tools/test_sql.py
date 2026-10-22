@@ -1,6 +1,8 @@
 import asyncio
 import contextlib
 import json
+import logging
+import time
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, Mock, call
 
@@ -9,9 +11,16 @@ import pytest
 from fastmcp import Context
 from mcp.types import ProgressNotification
 
+from keboola_mcp_server.clients.base import InvalidArgumentError
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.clients.query import QueryServiceClient
-from keboola_mcp_server.tools.sql import QueryDataOutput, _watch_for_http_disconnect, query_data
+from keboola_mcp_server.tools.sql import (
+    MAX_SQL_QUERY_LENGTH,
+    QueryDataOutput,
+    _watch_for_http_disconnect,
+    query_data,
+    validate_read_only_statement,
+)
 from keboola_mcp_server.workspace import (
     JobSubmittedInfo,
     QueryResult,
@@ -67,10 +76,10 @@ def _truncate_data(qr: QueryResult, max_rows: int | None, max_chars: int | None)
             'id,name,email\r\n1,John,john@foo.com\r\n2,Joe,joe@bar.com\r\n',  # CSV
         ),
         (
-            'create table foo (id integer, name varchar);',
-            'Create Table Operation',
-            QueryResult(status='ok', data=None, message='1 table created'),
-            'message\r\n1 table created\r\n',  # CSV
+            'show tables;',
+            'Table List',
+            QueryResult(status='ok', data=None, message='no result set'),
+            'message\r\nno result set\r\n',  # CSV
         ),
     ],
 )
@@ -78,6 +87,7 @@ async def test_query_data(
     query: str, query_name: str, result: QueryResult, expected_csv: str, mcp_context_client: Context, mocker
 ):
     manager = mocker.AsyncMock(WorkspaceManager)
+    manager.get_sql_dialect.return_value = 'Snowflake'
     manager.execute_query.return_value = result
     mcp_context_client.session.state[WorkspaceManager.STATE_KEY] = manager
 
@@ -85,6 +95,180 @@ async def test_query_data(
     assert isinstance(result, QueryDataOutput)
     assert result.query_name == query_name
     assert result.csv_data == expected_csv
+
+
+_READ_ONLY_STATEMENTS = [
+    'SELECT 1',
+    'select * from "in.c-main"."orders" limit 10;',
+    'WITH "a" AS (SELECT 1 AS "x") SELECT "x" FROM "a"',
+    'SELECT 1 UNION ALL SELECT 2',
+    '(SELECT 1)',
+    'SHOW TABLES',
+    'DESCRIBE TABLE "in.c-main"."orders"',
+    'DESC TABLE "orders"',
+    'EXPLAIN SELECT 1',
+    'EXPLAIN USING TEXT SELECT 1',
+    'EXPLAIN SELECT comment, load FROM "t"',  # keyword-named columns are not write keywords
+    "SELECT ';DROP TABLE t;' AS \"s\"",
+    'SELECT 1 /* ; DROP TABLE t */',
+    'SELECT 1 -- ; DROP TABLE t',
+    '-- leading comment\nSELECT 1;;',
+    'SELECT 1; -- trailing comment',
+    'SHOW TABLES; /* trailing comment */',
+    'SELECT FROM WHERE',  # unparseable, left to the backend's syntax error
+]
+_REJECTED_STATEMENTS = [
+    '',
+    ';',
+    '-- only a comment',
+    'INSERT INTO "t" VALUES (1)',
+    'UPDATE "t" SET "a" = 1',
+    'DELETE FROM "t"',
+    'MERGE INTO "t" USING "s" ON "t"."a" = "s"."a" WHEN MATCHED THEN DELETE',
+    'DROP TABLE "t"',
+    'TRUNCATE TABLE "t"',
+    'CREATE TABLE "t" AS SELECT 1',
+    'ALTER TABLE "t" ADD COLUMN "c" INT',
+    'GRANT SELECT ON TABLE "t" TO ROLE "r"',
+    'CALL "p"()',
+    "EXECUTE IMMEDIATE 'DROP TABLE t'",
+    'SELECT * INTO "t2" FROM "t"',
+    'WITH "a" AS (SELECT 1) INSERT INTO "t" SELECT * FROM "a"',
+    'SELECT 1; DROP TABLE "t"',
+    'SELECT 1; SELECT 2',
+    'SHOW TABLES; DROP TABLE "t"',
+    'EXPLAIN; DROP TABLE "t"',
+    '/* SELECT 1 */ DROP TABLE "t"',
+    '-- SELECT 1\nDELETE FROM "t"',
+    "SELECT 'unterminated",
+    'SELECT FROM WHERE; DELETE FROM "t"',
+    'SELECT x FROM (DELETE FROM "t")',
+    'WITH "d" AS (DELETE FROM "t" RETURNING *) SELECT * FROM "d"',
+    'BEGIN; DROP TABLE "t"; END',
+    'SET x = 1',
+    'SELECT 1 -- x\u2028; DROP TABLE "t"',
+    'EXPLAIN DELETE FROM "t"',
+    # The Snowflake pipe operator `->>` chains statements: parsed, command and fallback paths.
+    'SELECT 1 ->> DELETE FROM "t"',
+    'SHOW GRANTS ->> DROP TABLE "t"',
+    'EXPLAIN SELECT 1 ->> DROP TABLE "t"',
+    'SELECT 1 ->> SELECT 2 ->> UNDROP TABLE "t"',
+    'DESCRIBE TABLE "t" ->> REVOKE ROLE "r" FROM USER "u"',
+    # Unparseable statements that start like a read but carry a state change.
+    'SELECT FROM WHERE COMMENT ON TABLE "t" IS \'x\'',
+    'SELECT FROM WHERE USE ROLE "accountadmin"',
+    'SELECT FROM WHERE COMMIT',
+]
+
+
+_DIALECTS = ['Snowflake', 'BigQuery']
+
+
+@pytest.mark.parametrize(
+    ('sql_query', 'dialect'),
+    [(sql_query, dialect) for sql_query in _READ_ONLY_STATEMENTS for dialect in _DIALECTS]
+    + [
+        # Dialect-specific quoting keeps the smuggled statement inside one literal or identifier.
+        ('SELECT $$; DROP TABLE t$$', 'Snowflake'),
+        ("SELECT $1 FROM @s/dir/file.csv (FILE_FORMAT => 'csv')", 'Snowflake'),
+        ('SELECT $1 FROM @"my st"/dir/f.csv', 'Snowflake'),
+        ("SELECT $1 FROM @s/f.csv(FILE_FORMAT => 'x')", 'Snowflake'),
+        ('SELECT $1 FROM @db."my schema".st/f.csv', 'Snowflake'),
+        ('SELECT $1 FROM @%"My Table"/f.csv', 'Snowflake'),
+        ('SELECT $1 FROM @~/f.csv, @s/g.csv', 'Snowflake'),
+        ('SELECT ' + 'REPLACE(' * 60 + '"c"' + ", 'a', 'b')" * 60 + ' FROM "t"', 'Snowflake'),
+        ('SELECT ' + '(' * 200 + '1' + ')' * 200, 'Snowflake'),  # too deep to parse, left to the backend
+        ('SELECT * FROM (SELECT $1 FROM @s/a)', 'Snowflake'),
+        ('SELECT * FROM `project.dataset.t;DROP TABLE t`', 'BigQuery'),
+    ],
+)
+def test_validate_read_only_statement_allows(sql_query: str, dialect: str):
+    validate_read_only_statement(sql_query, dialect)
+
+
+@pytest.mark.parametrize(
+    ('sql_query', 'dialect'),
+    [(sql_query, dialect) for sql_query in _REJECTED_STATEMENTS for dialect in _DIALECTS]
+    + [
+        ('SELECT FROM WHERE UNDROP TABLE "t"', 'Snowflake'),
+        # Snowflake reads an unquoted stage path up to whitespace.
+        ('SELECT $1 FROM @s/a//b; DROP TABLE "t"', 'Snowflake'),
+        ('SELECT $1 FROM @~/a--b; DROP TABLE "t"', 'Snowflake'),
+        ('SELECT $1 FROM @s/a/*b; DROP TABLE "t"; */', 'Snowflake'),
+        ('SELECT $1 FROM @"my st"/a//b; DROP TABLE "t"', 'Snowflake'),
+        ('SELECT $1 FROM @db."my schema".st/a--b; DROP TABLE "t"', 'Snowflake'),
+        ('SELECT $1 FROM @s/{#a//b; DROP TABLE "t"', 'Snowflake'),
+        ('SELECT $1 FROM @s/a(//b; DROP TABLE "t"', 'Snowflake'),
+        ('SELECT $1 FROM @s/a" ; DROP TABLE "t"; SELECT " --"', 'Snowflake'),
+        ("SELECT $1 FROM @s/a' ; DROP TABLE \"t\"; SELECT ' --'", 'Snowflake'),
+        ('SELECT $1 FROM @s" ; DROP TABLE "t"; SELECT " --"', 'Snowflake'),
+        ('SELECT $1 FROM @s/f." ; DROP TABLE "t"; SELECT " --"', 'Snowflake'),
+        ('SELECT $1 FROM @~/a." ; DROP TABLE "t"; SELECT " --"', 'Snowflake'),
+        ('SELECT $1 FROM @s/a\xa0--b; DROP TABLE "t"', 'Snowflake'),  # non-ASCII whitespace is part of the path
+        ("SELECT $1 FROM @s/f.csv(FILE_FORMAT=>'x')", 'Snowflake'),  # a quote needs whitespace before it
+        ('EXPLAIN EXPLAIN SELECT 1', 'Snowflake'),
+        ('SELECT $1 FROM @s/$$ ; DROP TABLE "t"; $$', 'Snowflake'),
+        # Too deep to parse: the keyword fallback still applies.
+        ('SELECT ' + '(' * 200 + '1' + ')' * 200 + ' FROM "t" WHERE x IN (DELETE FROM "t")', 'Snowflake'),
+        ('SELECT ' + '(' * 200 + '1' + ')' * 200 + ' INTO "t2" FROM "t"', 'Snowflake'),
+        ('SELECT 1 INTO "t" UNION SELECT 2', 'Snowflake'),
+        ('(SELECT 1 INTO "t")', 'Snowflake'),
+        ('SELECT * FROM (SELECT 1 INTO "t")', 'Snowflake'),
+        ('SELECT $1 FROM @s/a;/* ; DROP TABLE "t"; */', 'Snowflake'),
+        # sqlglot reads `{# ... #}` as a comment; Snowflake does not, BigQuery reads `#` as a line comment.
+        ('SELECT 1 {# ; DROP TABLE "t"; #}', 'Snowflake'),
+        ('SELECT 1 {# ->> DROP TABLE "t" #}', 'Snowflake'),
+        ("SELECT 1 {# '\n; DROP TABLE d.t; SELECT '' --'", 'BigQuery'),
+        ("SELECT 1 EXPORT DATA OPTIONS (uri = 'gs://b/*') AS SELECT 1", 'BigQuery'),
+        # BigQuery escapes a backtick in a quoted identifier with a backslash.
+        ('SELECT 1 AS `\\``; DROP TABLE d.t; SELECT 1 #`', 'BigQuery'),
+        ('SELECT * FROM `p.d.t` WHERE `\\`` = 1; DELETE FROM d.t WHERE TRUE; SELECT 1 #`', 'BigQuery'),
+        ('SELECT `\\``\n; TRUNCATE TABLE d.t --`', 'BigQuery'),
+    ],
+)
+def test_validate_read_only_statement_rejects(sql_query: str, dialect: str):
+    with pytest.raises(InvalidArgumentError):
+        validate_read_only_statement(sql_query, dialect)
+
+
+def test_validate_read_only_statement_does_not_log_sql(caplog):
+    # sqlglot's unsupported-syntax warning quotes the SQL; BigQuery SHOW takes that path.
+    with caplog.at_level(logging.DEBUG, logger='sqlglot'):
+        validate_read_only_statement('SHOW TABLES', 'BigQuery')
+    assert not [record for record in caplog.records if record.name.startswith('sqlglot')]
+
+
+@pytest.mark.parametrize('dialect', _DIALECTS)
+def test_validate_read_only_statement_rejects_long_query(dialect: str):
+    with pytest.raises(InvalidArgumentError, match='at most'):
+        validate_read_only_statement('SELECT 1' + ' ' * MAX_SQL_QUERY_LENGTH, dialect)
+
+
+def test_validate_read_only_statement_is_linear():
+    # 90 KB of stage references, rejected after the stage scan and before parsing: rescanning the path at each
+    # reference took seconds here.
+    sql_query = 'SELECT ' + ','.join(['@a'] * 30000) + '; SELECT 1'
+    start = time.perf_counter()
+    with pytest.raises(InvalidArgumentError, match='exactly one SQL statement'):
+        validate_read_only_statement(sql_query, 'Snowflake')
+    assert time.perf_counter() - start < 5
+
+
+@pytest.mark.parametrize('dialect', ['Redshift', None])
+def test_validate_read_only_statement_unknown_dialect(dialect: str | None):
+    with pytest.raises(ValueError, match='unsupported SQL dialect'):
+        validate_read_only_statement('SELECT 1', dialect)
+
+
+@pytest.mark.asyncio
+async def test_query_data_rejects_write_before_workspace_call(mcp_context_client: Context, mocker):
+    manager = mocker.AsyncMock(WorkspaceManager)
+    manager.get_sql_dialect.return_value = 'Snowflake'
+    mcp_context_client.session.state[WorkspaceManager.STATE_KEY] = manager
+
+    with pytest.raises(InvalidArgumentError, match='exactly one read-only statement'):
+        await query_data('SELECT 1; DROP TABLE "t"', 'Smuggled Drop', mcp_context_client)
+    manager.execute_query.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -106,6 +290,7 @@ async def test_query_data_emits_progress_notification_with_job_id(mcp_context_cl
         return QueryResult(status='ok', data=SqlSelectData(columns=['a'], rows=[{'a': 1}]), message=None)
 
     manager = mocker.AsyncMock(WorkspaceManager)
+    manager.get_sql_dialect.return_value = 'Snowflake'
     manager.execute_query.side_effect = fake_execute_query
     mcp_context_client.session.state[WorkspaceManager.STATE_KEY] = manager
 
@@ -152,6 +337,7 @@ async def test_query_data_skips_progress_when_no_token(mcp_context_client: Conte
         return QueryResult(status='ok', data=SqlSelectData(columns=['a'], rows=[{'a': 1}]), message=None)
 
     manager = mocker.AsyncMock(WorkspaceManager)
+    manager.get_sql_dialect.return_value = 'Snowflake'
     manager.execute_query.side_effect = fake_execute_query
     mcp_context_client.session.state[WorkspaceManager.STATE_KEY] = manager
 
@@ -183,6 +369,7 @@ async def test_query_data_skips_progress_when_request_id_missing(mcp_context_cli
         return QueryResult(status='ok', data=SqlSelectData(columns=['a'], rows=[{'a': 1}]), message=None)
 
     manager = mocker.AsyncMock(WorkspaceManager)
+    manager.get_sql_dialect.return_value = 'Snowflake'
     manager.execute_query.side_effect = fake_execute_query
     mcp_context_client.session.state[WorkspaceManager.STATE_KEY] = manager
 
@@ -1210,6 +1397,7 @@ class TestQueryCancellation:
             await asyncio.Event().wait()
 
         manager = AsyncMock(WorkspaceManager)
+        manager.get_sql_dialect.return_value = 'Snowflake'
         manager.execute_query.side_effect = never_returns
         mcp_context_client.session.state[WorkspaceManager.STATE_KEY] = manager
 
@@ -1240,6 +1428,7 @@ class TestQueryCancellation:
             await asyncio.Event().wait()
 
         manager = AsyncMock(WorkspaceManager)
+        manager.get_sql_dialect.return_value = 'Snowflake'
         manager.execute_query.side_effect = never_returns
         mcp_context_client.session.state[WorkspaceManager.STATE_KEY] = manager
 
@@ -1264,6 +1453,7 @@ class TestQueryCancellation:
         completed, the `CancelledError` must propagate (not be swallowed by `_cancel_and_drain`
         and cause a result to be returned), while the shielded drain still runs to completion."""
         manager = AsyncMock(WorkspaceManager)
+        manager.get_sql_dialect.return_value = 'Snowflake'
         manager.execute_query.return_value = QueryResult(
             status='ok',
             data=SqlSelectData(columns=['a'], rows=[{'a': 1}]),
@@ -1308,6 +1498,7 @@ class TestQueryCancellation:
         """When there is no HTTP request bound (stdio transport), the disconnect race is skipped
         entirely and the query runs directly to completion."""
         manager = AsyncMock(WorkspaceManager)
+        manager.get_sql_dialect.return_value = 'Snowflake'
         manager.execute_query.return_value = QueryResult(
             status='ok',
             data=SqlSelectData(columns=['a'], rows=[{'a': 1}]),
