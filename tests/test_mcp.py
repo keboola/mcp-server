@@ -2314,14 +2314,18 @@ class TestDirectoryToolProfile:
 
     @staticmethod
     async def _call_through_chain(context: MiddlewareContext, call_next: AsyncMock) -> Any:
-        """Runs a tools/call through the server's own middleware list, from `DirectoryProfileMiddleware` to
-        `ToolsFilteringMiddleware`, in the order `create_server` registers them."""
+        """Runs a tools/call through `DirectoryProfileMiddleware`, `MultiProjectMiddleware` and
+        `ToolsFilteringMiddleware` of the server's own middleware list, in the order `create_server` registers them.
+        The middlewares in between need a live session; the order check covers them."""
         from keboola_mcp_server.server import create_server
 
         middleware = create_server(Config(), runtime_info=ServerRuntimeInfo(transport='stdio')).middleware
         kinds = [type(m) for m in middleware]
-        chain = middleware[kinds.index(DirectoryProfileMiddleware) : kinds.index(ToolsFilteringMiddleware) + 1]
-        assert MultiProjectMiddleware in [type(m) for m in chain]
+        assert kinds.index(DirectoryProfileMiddleware) < kinds.index(SessionStateMiddleware)
+        assert kinds.index(DirectoryProfileMiddleware) < kinds.index(MultiProjectMiddleware)
+        chain_kinds = (DirectoryProfileMiddleware, MultiProjectMiddleware, ToolsFilteringMiddleware)
+        chain = [m for m in middleware if type(m) in chain_kinds]
+        assert [type(m) for m in chain] == list(chain_kinds)
 
         handler = call_next
         for mw in reversed(chain):

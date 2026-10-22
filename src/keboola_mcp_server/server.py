@@ -432,15 +432,15 @@ def create_server(
         auth=oauth_provider,
         middleware=[
             SanitizedLoggingMiddleware(log_level=logging.DEBUG),
+            # Ahead of SessionStateMiddleware: a plugin session's call to an excluded tool is refused before any
+            # session state, token or project work. It reads only the request's authenticated user.
+            DirectoryProfileMiddleware(),
             SessionStateMiddleware(),
             ToolAuthorizationMiddleware(),
             ToolDeferralMiddleware(),
             # Outside MultiProjectMiddleware: a single-project call's UrlActionRequiredError reaches it as is,
             # while a multi-project fan-out keeps per-project failures (incl. their links) as text notes.
             UrlElicitationMiddleware(),
-            # Ahead of MultiProjectMiddleware: a plugin session's call to an excluded tool is refused before any
-            # project swap or token exchange.
-            DirectoryProfileMiddleware(),
             # MultiProjectMiddleware must wrap ToolsFilteringMiddleware (run first in this list =
             # outer), not the reverse: it swaps the active KeboolaClient per project during fan-out,
             # and ToolsFilteringMiddleware's per-project feature/role/branch checks must be

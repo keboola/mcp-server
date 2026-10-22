@@ -1323,8 +1323,8 @@ class SessionStateMiddleware(fmw.Middleware):
 
 
 class DirectoryProfileMiddleware(fmw.Middleware):
-    """Refuses a call to a tool outside `DIRECTORY_TOOLS` in a session of the ChatGPT plugin. Placed ahead of
-    `MultiProjectMiddleware` (`server.py`), so an excluded tool never reaches a project swap, a token exchange or
+    """Refuses a call to a tool outside `DIRECTORY_TOOLS` in a session of the ChatGPT plugin. Registered right after
+    the logging middleware (`server.py`), so an excluded tool never reaches `SessionStateMiddleware`, a project swap or
     `ToolsFilteringMiddleware`'s bootstrap exemption and token verification."""
 
     async def on_call_tool(
