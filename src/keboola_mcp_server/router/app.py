@@ -1,6 +1,6 @@
-"""The router app (`--mode=router`): OAuth metadata, `/register`, the stack picker on `/authorize`, and `/token` and
-`/revoke` routed by the stack key prefix. It holds no Keboola credentials, no database and no session state, and talks
-only to the MCP servers in its stack table, never to Connection."""
+"""The router app (`--mode=router`): OAuth metadata, `/register`, the stack picker on `/authorize`, and `/token`,
+`/revoke` and `/mcp` routed by the stack key prefix. It holds no Keboola credentials, no database and no session
+state, and talks only to the MCP servers in its stack table, never to Connection."""
 
 import contextlib
 import logging
@@ -11,7 +11,7 @@ from urllib.parse import parse_qs, parse_qsl, urlencode
 import httpx
 from mcp.server.auth.handlers.register import RegistrationHandler
 from mcp.server.auth.settings import ClientRegistrationOptions
-from mcp.server.transport_security import RequestBodyLimitMiddleware
+from mcp.server.transport_security import DEFAULT_MAX_REQUEST_BODY_SIZE, RequestBodyLimitMiddleware
 from mcp.shared.auth import OAuthClientInformationFull
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
@@ -21,13 +21,15 @@ from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, R
 from starlette.routing import Route, request_response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from keboola_mcp_server.router.mcp_proxy import create_mcp_proxy
 from keboola_mcp_server.router.picker import PICKER_CSS, PICKER_HEADERS, PICKER_STYLESHEET_PATH, render_picker
 from keboola_mcp_server.router.rate_limit import (
     FixedWindowCounter,
+    InFlightLimiter,
     PerAddressRateLimitMiddleware,
     credential_key,
-    too_many_requests,
 )
+from keboola_mcp_server.router.responses import oauth_error, too_many_requests, upstream_failure
 from keboola_mcp_server.router.settings import RouterSettings
 from keboola_mcp_server.router.stacks import Stack, router_resource, stack_key_of
 
@@ -79,7 +81,7 @@ class _RequestLogMiddleware:
             await self._app(scope, receive, send_and_record)
         finally:
             path = scope['path'] if scope['path'] in self._known_paths else '<other>'
-            method = scope['method'] if scope['method'] in ('GET', 'POST', 'OPTIONS', 'HEAD') else '<other>'
+            method = scope['method'] if scope['method'] in ('GET', 'POST', 'DELETE', 'OPTIONS', 'HEAD') else '<other>'
             LOG.info(
                 f'[router] {method} {path} status={status} stack_key={state.get("stack_key") or "-"} '
                 f'duration_ms={(time.perf_counter() - started) * 1000:.0f}'
@@ -95,12 +97,25 @@ class _StatelessClients:
         return None
 
 
+# One set for every cross-origin route: what a browser-based client sends to and reads from the MCP transport and the
+# OAuth endpoints (`Authorization` carries client_secret_basic on `/token` too, `Retry-After` comes with any 429). Any
+# request header may be sent, because `Mcp-Param-*` names come from each tool's schema and CORS cannot match a prefix;
+# what reaches a stack is still only what the proxy forwards.
+_CORS_ALLOW_HEADERS = ['*']
+_CORS_EXPOSE_HEADERS = ['Mcp-Session-Id', 'Mcp-Protocol-Version', 'WWW-Authenticate', 'Retry-After']
+
+
 def _endpoint(
-    handler: Callable[[Request], Awaitable[Response]], *, methods: list[str], cross_origin: bool
+    handler: Callable[[Request], Awaitable[Response]],
+    *,
+    methods: list[str],
+    cross_origin: bool,
+    max_body_bytes: int = _MAX_BODY_BYTES,
 ) -> tuple[ASGIApp, list[str]]:
-    """The ASGI app and the methods of a route: the body capped at `_MAX_BODY_BYTES` (413 above it), and with
-    `cross_origin`, CORS for browser-based MCP clients, which read the metadata and call `/register` and `/token`
-    from another origin (as the SDK does on the regional server; never on `/authorize`, which is navigated to)."""
+    """The ASGI app and the methods of a route: the body capped at `max_body_bytes` (413 above it), and with
+    `cross_origin`, CORS for browser-based MCP clients, which read the metadata and call `/register`, `/token` and
+    `/mcp` from another origin (as the SDK does on the regional server; never on `/authorize`, which is navigated to).
+    """
     served = [*methods, 'HEAD'] if 'GET' in methods else methods
 
     async def only_its_methods(request: Request) -> Response:
@@ -110,13 +125,18 @@ def _endpoint(
             return Response(status_code=405, headers={'Allow': ', '.join(served)})
         return await handler(request)
 
-    app: ASGIApp = RequestBodyLimitMiddleware(request_response(only_its_methods), _MAX_BODY_BYTES)
+    app: ASGIApp = RequestBodyLimitMiddleware(request_response(only_its_methods), max_body_bytes)
     if not cross_origin:
         return app, methods
     allowed = [*methods, 'OPTIONS']
-    return CORSMiddleware(
-        app, allow_origins=['*'], allow_methods=allowed, allow_headers=['Mcp-Protocol-Version']
-    ), allowed
+    cors = CORSMiddleware(
+        app,
+        allow_origins=['*'],
+        allow_methods=allowed,
+        allow_headers=_CORS_ALLOW_HEADERS,
+        expose_headers=_CORS_EXPOSE_HEADERS,
+    )
+    return cors, allowed
 
 
 def _form_fields(body: bytes) -> dict[str, list[str]]:
@@ -132,14 +152,6 @@ def _single(fields: dict[str, list[str]], name: str) -> str | None:
     if len(values) > 1:
         raise ValueError(name)
     return values[0]
-
-
-def _oauth_error(error: str, description: str, status_code: int = 400) -> JSONResponse:
-    return JSONResponse(
-        {'error': error, 'error_description': description},
-        status_code=status_code,
-        headers={'Cache-Control': 'no-store', 'Pragma': 'no-cache'},
-    )
 
 
 def create_router_app(
@@ -160,6 +172,17 @@ def create_router_app(
         timeout=httpx.Timeout(settings.upstream_timeout_seconds),
         follow_redirects=False,
     )
+    # Pools of their own, one per stack: an MCP request holds a connection for as long as its answer lasts (a long
+    # tool call, an SSE stream), and those must not use up the connections that logins and refreshes need, nor those
+    # of the other stacks when one stack answers slowly.
+    mcp_upstreams = {
+        key: httpx.AsyncClient(
+            transport=upstream_transport,
+            follow_redirects=False,
+            limits=httpx.Limits(max_connections=settings.mcp_max_connections, max_keepalive_connections=100),
+        )
+        for key in stacks
+    }
 
     async def protected_resource_metadata(_request: Request) -> Response:
         return JSONResponse(
@@ -226,27 +249,32 @@ def create_router_app(
         )
         return response
 
-    # Separate caps, so a flood of credentials cannot stop the counting of addresses; only known-stack credentials count.
+    # Three counters, each with its own cap on distinct keys: a flood on one kind must not stop the counting of another.
+    # /mcp has its own because its prefix is public and its traffic the highest. Only known-stack credentials count.
+    # Past the cap /mcp fails open instead of sharing an overflow bucket: such a bucket would refuse the tool calls of
+    # every session not yet counted in the window, and random tokens let through only get a 401 from their stack.
     address_counter = FixedWindowCounter(rate_limit_clock)
-    credential_counter = FixedWindowCounter(rate_limit_clock, overflow_limit=_CREDENTIAL_OVERFLOW_LIMIT_PER_MINUTE)
+    oauth_credential_counter = FixedWindowCounter(
+        rate_limit_clock, overflow_limit=_CREDENTIAL_OVERFLOW_LIMIT_PER_MINUTE
+    )
+    mcp_token_counter = FixedWindowCounter(rate_limit_clock)
+    mcp_in_flight = InFlightLimiter()
 
-    def over_credential_limit(path: str, credential: str) -> bool:
+    def over_credential_limit(counter: FixedWindowCounter, path: str, credential: str, limit: int) -> bool:
         key = credential_key(credential)
-        return credential_counter.over_limit(
-            f'credential:{path}', key, settings.token_rate_limit_per_credential, log_key=f'sha256:{key[:12]}'
-        )
+        return counter.over_limit(f'credential:{path}', key, limit, log_key=f'sha256:{key[:12]}')
+
+    def acquire_mcp_slot(token: str) -> Callable[[], None] | None:
+        key = credential_key(token)
+        return mcp_in_flight.acquire(key, settings.mcp_max_in_flight_per_token, log_key=f'sha256:{key[:12]}')
 
     async def forward(request: Request, stack: Stack, path: str, body: bytes) -> Response:
         request.state.stack_key = stack.key
         headers = {name: value for name in _FORWARDED_REQUEST_HEADERS if (value := request.headers.get(name))}
         try:
             answer = await upstream.post(f'{stack.upstream}{path}', content=body, headers=headers)
-        except httpx.TimeoutException:
-            LOG.warning(f'[router] Upstream timed out: stack_key={stack.key}, path={path}')
-            return _oauth_error('temporarily_unavailable', 'The Keboola stack did not answer in time.', 504)
         except httpx.HTTPError as e:
-            LOG.warning(f'[router] Upstream unreachable: stack_key={stack.key}, path={path}: {type(e).__name__}')
-            return _oauth_error('temporarily_unavailable', 'The Keboola stack could not be reached.', 502)
+            return upstream_failure(e, stack_key=stack.key, path=path)
         return Response(
             answer.content,
             status_code=answer.status_code,
@@ -259,19 +287,17 @@ def create_router_app(
         try:
             grant_type = _single(fields, 'grant_type')
             if (parameter := _GRANT_TOKEN_PARAMETER.get(grant_type or '')) is None:
-                return _oauth_error(
-                    'unsupported_grant_type', 'Only authorization_code and refresh_token are supported.'
-                )
+                return oauth_error('unsupported_grant_type', 'Only authorization_code and refresh_token are supported.')
             value = _single(fields, parameter)
         except ValueError as e:
-            return _oauth_error('invalid_request', f'The parameter {e} is repeated.')
+            return oauth_error('invalid_request', f'The parameter {e} is repeated.')
         if value is None:
-            return _oauth_error('invalid_request', f'The {parameter} parameter is missing.')
+            return oauth_error('invalid_request', f'The {parameter} parameter is missing.')
         if (stack := stacks.get(stack_key_of(value) or '')) is None:
             # Answered here, without asking any stack: no stack issued a grant without a known prefix.
-            return _oauth_error('invalid_grant', f'The {parameter} was not issued by this authorization server.')
-        if over_credential_limit('/token', value):
-            return too_many_requests(credential_counter.seconds_left())
+            return oauth_error('invalid_grant', f'The {parameter} was not issued by this authorization server.')
+        if over_credential_limit(oauth_credential_counter, '/token', value, settings.token_rate_limit_per_credential):
+            return too_many_requests(oauth_credential_counter.seconds_left())
         return await forward(request, stack, '/token', body)
 
     async def revoke(request: Request) -> Response:
@@ -279,14 +305,14 @@ def create_router_app(
         try:
             value = _single(_form_fields(body), 'token')
         except ValueError:
-            return _oauth_error('invalid_request', 'The parameter token is repeated.')
+            return oauth_error('invalid_request', 'The parameter token is repeated.')
         if value is None:
-            return _oauth_error('invalid_request', 'The token parameter is missing.')  # RFC 7009 §2.1
+            return oauth_error('invalid_request', 'The token parameter is missing.')  # RFC 7009 §2.1
         if (stack := stacks.get(stack_key_of(value) or '')) is None:
             # RFC 7009 §2.2: an unknown token is answered with 200, there is nothing to revoke.
             return Response(status_code=200)
-        if over_credential_limit('/revoke', value):
-            return too_many_requests(credential_counter.seconds_left())
+        if over_credential_limit(oauth_credential_counter, '/revoke', value, settings.token_rate_limit_per_credential):
+            return too_many_requests(oauth_credential_counter.seconds_left())
         return await forward(request, stack, '/revoke', body)
 
     async def openai_apps_challenge(_request: Request) -> Response:
@@ -296,6 +322,19 @@ def create_router_app(
 
     async def picker_stylesheet(_request: Request) -> Response:
         return Response(PICKER_CSS, media_type='text/css', headers={'Cache-Control': 'public, max-age=3600'})
+
+    mcp_proxy = create_mcp_proxy(
+        stacks=stacks,
+        upstreams=mcp_upstreams,
+        resource_metadata_url=f'{issuer}/.well-known/oauth-protected-resource',
+        connect_timeout_seconds=settings.upstream_timeout_seconds,
+        read_timeout_seconds=settings.mcp_read_timeout_seconds,
+        over_limit=lambda token: over_credential_limit(
+            mcp_token_counter, '/mcp', token, settings.mcp_rate_limit_per_token
+        ),
+        retry_after=mcp_token_counter.seconds_left,
+        acquire_slot=acquire_mcp_slot,
+    )
 
     async def health_check(_request: Request) -> Response:
         return JSONResponse({'status': 'ok'})
@@ -311,6 +350,8 @@ def create_router_app(
             yield
         finally:
             await upstream.aclose()
+            for client in mcp_upstreams.values():
+                await client.aclose()
 
     limits: dict[str, int] = {}
     if settings.authorize_rate_limit_per_ip:
@@ -341,11 +382,20 @@ def create_router_app(
     for path, handler, methods, cross_origin in endpoints:
         app, allowed = _endpoint(handler, methods=methods, cross_origin=cross_origin)
         routes.append(Route(path, app, methods=allowed))
+    # The MCP endpoint under both spellings a client may be configured with (the trailing-slash redirect is off).
+    mcp_app, mcp_methods = _endpoint(
+        mcp_proxy,
+        methods=['GET', 'POST', 'DELETE'],
+        cross_origin=True,
+        max_body_bytes=DEFAULT_MAX_REQUEST_BODY_SIZE,
+    )
+    mcp_paths = ('/mcp', '/mcp/')
+    routes.extend(Route(path, mcp_app, methods=mcp_methods) for path in mcp_paths)
 
     router_app = Starlette(
         routes=routes,
         middleware=[
-            Middleware(_RequestLogMiddleware, known_paths=frozenset(path for path, *_ in endpoints)),
+            Middleware(_RequestLogMiddleware, known_paths=frozenset([*(path for path, *_ in endpoints), *mcp_paths])),
             Middleware(
                 PerAddressRateLimitMiddleware,
                 limits=limits,

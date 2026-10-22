@@ -11,11 +11,11 @@ import logging
 import time
 from collections.abc import Callable
 
-from starlette.responses import JSONResponse, Response
 from starlette.routing import get_route_path
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from keboola_mcp_server.oauth import caller_address
+from keboola_mcp_server.router.responses import too_many_requests
 
 LOG = logging.getLogger(__name__)
 
@@ -28,15 +28,6 @@ _OVERFLOW_KEY = '*overflow*'
 def credential_key(credential: str) -> str:
     """What a credential is counted (and, shortened, logged) by: its SHA-256, never the value."""
     return hashlib.sha256(credential.encode()).hexdigest()
-
-
-def too_many_requests(retry_after: int = WINDOW_SECONDS) -> Response:
-    """:param retry_after: Seconds until the window that refused the request ends."""
-    return JSONResponse(
-        {'error': 'temporarily_unavailable', 'error_description': 'Too many requests. Try again later.'},
-        status_code=429,
-        headers={'Retry-After': str(retry_after)},
-    )
 
 
 class FixedWindowCounter:
@@ -106,3 +97,42 @@ class PerAddressRateLimitMiddleware:
             await self._app(scope, receive, send)
             return
         await too_many_requests(self._counter.seconds_left())(scope, receive, send)
+
+
+class InFlightLimiter:
+    """Requests in flight per key: what a rate limit cannot bound when each request may hold a pooled connection for
+    minutes. A key leaves the map when its last request ends, so the map is as large as the requests in flight."""
+
+    def __init__(self) -> None:
+        self._in_flight: dict[str, int] = {}
+        # Keys refused since they last had a free slot: logged once, so a client retrying in a loop does not flood the
+        # log. Never larger than the map.
+        self._refused: set[str] = set()
+
+    def acquire(self, key: str, limit: int, *, log_key: str) -> Callable[[], None] | None:
+        """Takes one of `key`'s `limit` slots: its release, which may be called more than once, or None when every
+        slot is taken.
+
+        :param log_key: What the log line names the key by, as in `FixedWindowCounter.over_limit`.
+        """
+        held = self._in_flight.get(key, 0)
+        if held >= limit:
+            if key not in self._refused:
+                self._refused.add(key)
+                LOG.warning(f'[router] Concurrency limit reached: key={log_key}, limit={limit}')
+            return None
+        self._in_flight[key] = held + 1
+        released = False
+
+        def release() -> None:
+            nonlocal released
+            if released:
+                return
+            released = True
+            self._refused.discard(key)
+            if (left := self._in_flight[key] - 1) > 0:
+                self._in_flight[key] = left
+            else:
+                del self._in_flight[key]
+
+        return release

@@ -9,42 +9,15 @@ from starlette.testclient import TestClient
 from keboola_mcp_server.cli import parse_args
 from keboola_mcp_server.router import app as router_app
 from keboola_mcp_server.router import rate_limit
-from keboola_mcp_server.router.app import create_router_app
 from keboola_mcp_server.router.picker import render_picker
 from keboola_mcp_server.router.settings import RouterSettings
 from keboola_mcp_server.router.stacks import DEFAULT_STACKS, parse_stacks, router_issuer, router_resource
-
-ROUTER_URL = 'https://mcp-router.example.com'
-
-
-class _Upstream:
-    """Records what the router sends to the regional servers and answers with a fixed response."""
-
-    def __init__(self, response: httpx.Response | Exception | None = None) -> None:
-        self.requests: list[httpx.Request] = []
-        self._response = response or httpx.Response(200, json={'access_token': 'eu-aws.at'})
-
-    def __call__(self, request: httpx.Request) -> httpx.Response:
-        self.requests.append(request)
-        if isinstance(self._response, Exception):
-            raise self._response
-        return self._response
-
-
-def _client(upstream: _Upstream | None = None, *, now: float = 120.0, **settings) -> TestClient:
-    router_settings = RouterSettings(router_url=ROUTER_URL, stacks=parse_stacks(None), **settings)
-    app = create_router_app(
-        router_settings,
-        upstream_transport=httpx.MockTransport(upstream or _Upstream()),
-        # one rate-limit window for the whole test, so a minute boundary cannot reset the counts halfway
-        rate_limit_clock=lambda: now,
-    )
-    return TestClient(app, base_url=ROUTER_URL, follow_redirects=False)
+from tests.router.helpers import ROUTER_URL, Upstream, router_client
 
 
 class TestMetadata:
     def test_one_issuer_in_both_documents(self) -> None:
-        with _client() as client:
+        with router_client() as client:
             prm = client.get('/.well-known/oauth-protected-resource').json()
             prm_path_aware = client.get('/.well-known/oauth-protected-resource/mcp').json()
             metadata = client.get('/.well-known/oauth-authorization-server').json()
@@ -74,7 +47,7 @@ class TestMetadata:
 
     @pytest.mark.parametrize(('challenge', 'expected_status'), [('token-from-openai', 200), (None, 404)])
     def test_openai_apps_challenge(self, challenge: str | None, expected_status: int) -> None:
-        with _client(openai_apps_challenge=challenge) as client:
+        with router_client(openai_apps_challenge=challenge) as client:
             response = client.get('/.well-known/openai-apps-challenge')
 
         assert response.status_code == expected_status
@@ -83,9 +56,9 @@ class TestMetadata:
             assert response.text == challenge
 
     def test_register_answers_locally_with_a_fresh_client_id(self) -> None:
-        upstream = _Upstream()
+        upstream = Upstream()
         body = {'redirect_uris': ['https://chatgpt.com/connector_platform_oauth_redirect'], 'client_name': 'ChatGPT'}
-        with _client(upstream) as client:
+        with router_client(upstream) as client:
             first = client.post('/register', json={**body, 'token_endpoint_auth_method': 'none'})
             second = client.post('/register', json={**body, 'token_endpoint_auth_method': 'none'})
 
@@ -103,7 +76,7 @@ class TestAuthorize:
 
     @pytest.mark.parametrize('stack', [s.key for s in DEFAULT_STACKS])
     def test_a_stack_from_the_table_skips_the_picker(self, stack: str) -> None:
-        with _client() as client:
+        with router_client() as client:
             response = client.get(f'/authorize?{self.QUERY}&stack={stack}&via=direct')
 
         assert response.status_code == 302
@@ -119,7 +92,7 @@ class TestAuthorize:
 
     @pytest.mark.parametrize('stack', ['', 'evil', 'https://attacker.example', 'us-aws.', 'US-AWS'])
     def test_any_other_stack_shows_the_picker(self, stack: str) -> None:
-        with _client() as client:
+        with router_client() as client:
             response = client.get(f'/authorize?{self.QUERY}&stack={stack}')
 
         assert response.status_code == 200
@@ -158,7 +131,7 @@ class TestAuthorize:
     def test_each_stack_is_a_link_carrying_every_parameter(self) -> None:
         """Following a stack's link reaches that stack with every original parameter, in order, duplicates and blanks
         included."""
-        with _client() as client:
+        with router_client() as client:
             page = client.get(f'/authorize?{self.QUERY}&stack=no-such-stack')
             links = self._links(page.text)
             followed = client.get(links['EU Frankfurt GCP'])
@@ -174,7 +147,7 @@ class TestAuthorize:
         ]
 
     def test_choosing_a_stack_remembers_it_for_the_picker(self) -> None:
-        with _client() as client:
+        with router_client() as client:
             response = client.get(f'/authorize?{self.QUERY}&stack=eu-gcp')
             client.cookies.set('keboola_mcp_stack', 'eu-gcp', path='/authorize')
             picker = client.get(f'/authorize?{self.QUERY}')
@@ -188,7 +161,7 @@ class TestAuthorize:
         assert 'stack=eu-gcp"' in picker.text.split('last-used')[1].split('>')[0]
 
     def test_a_post_is_not_served(self) -> None:
-        with _client() as client:
+        with router_client() as client:
             response = client.post(f'/authorize?{self.QUERY}', data={'stack': 'eu-gcp'})
 
         assert response.status_code == 405
@@ -220,7 +193,7 @@ class TestAuthorize:
 
     def test_a_hostile_query_string_through_the_route(self) -> None:
         hostile = 'state=%22%3E%3Cscript%3Ealert(1)%3C%2Fscript%3E&redirect_uri=x%26stack%3Dus-gcp'
-        with _client() as client:
+        with router_client() as client:
             page = client.get(f'/authorize?{hostile}')
             followed = client.get(self._links(page.text)['EU Frankfurt AWS'])
 
@@ -234,7 +207,7 @@ class TestAuthorize:
         ]
 
     def test_the_picker_stylesheet_is_served_by_the_router_itself(self) -> None:
-        with _client() as client:
+        with router_client() as client:
             page = client.get('/authorize')
             stylesheet = client.get('/router-static/picker.css')
 
@@ -252,8 +225,8 @@ class TestTokenAndRevoke:
         ],
     )
     def test_token_is_forwarded_verbatim_to_the_stack_of_the_prefix(self, form: dict, upstream_host: str) -> None:
-        upstream = _Upstream(httpx.Response(200, json={'access_token': 'x'}, headers={'Cache-Control': 'no-store'}))
-        with _client(upstream) as client:
+        upstream = Upstream(httpx.Response(200, json={'access_token': 'x'}, headers={'Cache-Control': 'no-store'}))
+        with router_client(upstream) as client:
             response = client.post(
                 '/token',
                 data={**form, 'client_id': 'abc'},
@@ -281,7 +254,7 @@ class TestTokenAndRevoke:
             json={'error': 'invalid_grant'},
             headers={'Set-Cookie': 'upstream=1', 'Location': 'https://elsewhere.example', 'WWW-Authenticate': 'Basic'},
         )
-        with _client(_Upstream(answer)) as client:
+        with router_client(Upstream(answer)) as client:
             response = client.post('/token', data={'grant_type': 'refresh_token', 'refresh_token': 'us-aws.rt'})
 
         assert response.status_code == 400
@@ -305,8 +278,8 @@ class TestTokenAndRevoke:
     def test_token_without_a_known_prefix_is_answered_without_an_upstream_call(
         self, form: dict, expected_status: int, expected_error: str
     ) -> None:
-        upstream = _Upstream()
-        with _client(upstream) as client:
+        upstream = Upstream()
+        with router_client(upstream) as client:
             response = client.post('/token', data=form)
 
         assert response.status_code == expected_status
@@ -327,8 +300,8 @@ class TestTokenAndRevoke:
     def test_revoke_routes_by_prefix_and_answers_200_for_an_unknown_token(
         self, token: str | None, expected_status: int, expected_upstream: str | None
     ) -> None:
-        upstream = _Upstream(httpx.Response(200))
-        with _client(upstream) as client:
+        upstream = Upstream(httpx.Response(200))
+        with router_client(upstream) as client:
             response = client.post('/revoke', data={'token': token, 'client_id': 'abc'} if token else {})
 
         assert response.status_code == expected_status
@@ -339,7 +312,7 @@ class TestTokenAndRevoke:
         [(httpx.ReadTimeout('slow'), 504), (httpx.ConnectError('down'), 502)],
     )
     def test_an_upstream_failure_is_a_gateway_error(self, failure: Exception, expected_status: int) -> None:
-        with _client(_Upstream(failure)) as client:
+        with router_client(Upstream(failure)) as client:
             response = client.post('/token', data={'grant_type': 'refresh_token', 'refresh_token': 'us-aws.rt'})
 
         assert response.status_code == expected_status
@@ -347,7 +320,7 @@ class TestTokenAndRevoke:
 
     def test_logs_carry_metadata_only(self, caplog: pytest.LogCaptureFixture) -> None:
         secrets = ['Basic c2VjcmV0LWNsaWVudDpzM2NyM3Q=', 'eu-aws.the-authorization-code', 'the-code-verifier']
-        with caplog.at_level(logging.DEBUG), _client() as client:
+        with caplog.at_level(logging.DEBUG), router_client() as client:
             client.post(
                 '/token',
                 data={'grant_type': 'authorization_code', 'code': secrets[1], 'code_verifier': secrets[2]},
@@ -367,7 +340,7 @@ class TestTokenAndRevoke:
         assert '[router] GET /authorize status=302 stack_key=us-aws' in logged
 
     def test_a_path_the_router_does_not_serve_is_not_logged(self, caplog: pytest.LogCaptureFixture) -> None:
-        with caplog.at_level(logging.INFO), _client() as client:
+        with caplog.at_level(logging.INFO), router_client() as client:
             client.get('/nothing%0a[router] GET /token status=200 stack_key=forged')
 
         [line] = [r.getMessage() for r in caplog.records if ' status=' in r.getMessage()]
@@ -378,7 +351,7 @@ class TestTokenAndRevoke:
         'path', ['/authorize/', '/token/', '/register/', '/.well-known/oauth-authorization-server/']
     )
     def test_a_trailing_slash_never_redirects_to_the_request_host(self, path: str) -> None:
-        with _client() as client:
+        with router_client() as client:
             response = client.request(
                 'POST' if path in ('/token/', '/register/') else 'GET',
                 f'{path}?state=s',
@@ -389,8 +362,8 @@ class TestTokenAndRevoke:
         assert 'location' not in response.headers
 
     def test_bodies_are_capped(self) -> None:
-        upstream = _Upstream()
-        with _client(upstream) as client:
+        upstream = Upstream()
+        with router_client(upstream) as client:
             register = client.post(
                 '/register', json={'redirect_uris': ['https://a.example/cb'], 'client_name': 'x' * 70_000}
             )
@@ -398,13 +371,19 @@ class TestTokenAndRevoke:
                 '/token', data={'grant_type': 'refresh_token', 'refresh_token': 'us-aws.' + 'x' * 70_000}
             )
 
+            # /mcp takes what the SDK takes (4 MiB): a large tool call passes the 64 KiB cap of the OAuth endpoints
+            tool_call = {'jsonrpc': '2.0', 'id': 2, 'method': 'tools/call', 'params': {'sql': 'x' * 100_000}}
+            mcp = client.post('/mcp', json=tool_call, headers={'Authorization': 'Bearer us-aws.opaque'})
+
         assert register.status_code == token.status_code == 413
-        assert upstream.requests == []
+        assert mcp.status_code == 200
+        [sent] = upstream.requests
+        assert json.loads(sent.content) == tool_call
 
 
 class TestRateLimits:
     def test_authorize_is_limited_per_browser_address(self) -> None:
-        with _client(authorize_rate_limit_per_ip=2) as client:
+        with router_client(authorize_rate_limit_per_ip=2) as client:
             statuses = [
                 client.get('/authorize', headers={'X-Forwarded-For': '203.0.113.7'}).status_code for _ in range(3)
             ]
@@ -416,9 +395,9 @@ class TestRateLimits:
     def test_register_is_limited_per_address_only_when_configured(self) -> None:
         body = {'redirect_uris': ['https://chatgpt.com/connector_platform_oauth_redirect']}
         headers = {'X-Forwarded-For': '198.51.100.1'}
-        with _client() as client:
+        with router_client() as client:
             unlimited = {client.post('/register', json=body, headers=headers).status_code for _ in range(5)}
-        with _client(api_rate_limit_per_ip=2) as client:
+        with router_client(api_rate_limit_per_ip=2) as client:
             limited = [client.post('/register', json=body, headers=headers).status_code for _ in range(3)]
 
         assert unlimited == {201}
@@ -435,8 +414,8 @@ class TestRateLimits:
     def test_token_and_revoke_are_limited_per_credential_not_per_address(self, path: str, form) -> None:
         """Every ChatGPT user calls from OpenAI's few egress addresses: two credentials from one address are counted
         apart, and the limit holds for a credential whatever address it comes from."""
-        upstream = _Upstream(httpx.Response(200, json={}))
-        with _client(upstream, token_rate_limit_per_credential=2) as client:
+        upstream = Upstream(httpx.Response(200, json={}))
+        with router_client(upstream, token_rate_limit_per_credential=2) as client:
             statuses = [
                 client.post(path, data=form(credential), headers={'X-Forwarded-For': address}).status_code
                 for credential, address in [
@@ -453,10 +432,10 @@ class TestRateLimits:
     def test_credential_limits_are_kept_apart(self) -> None:
         """One credential counts separately at /token and /revoke (a throttled refresh token can still be revoked);
         the optional per-address ceiling is for /register only; a value without a known stack is not counted."""
-        upstream = _Upstream(httpx.Response(200, json={}))
+        upstream = Upstream(httpx.Response(200, json={}))
         headers = {'X-Forwarded-For': '198.51.100.9'}
         refresh = {'grant_type': 'refresh_token', 'refresh_token': 'us-aws.rt'}
-        with _client(upstream, token_rate_limit_per_credential=1, api_rate_limit_per_ip=1) as client:
+        with router_client(upstream, token_rate_limit_per_credential=1, api_rate_limit_per_ip=1) as client:
             token = [client.post('/token', data=refresh, headers=headers).status_code for _ in range(2)]
             revoke = client.post('/revoke', data={'token': 'us-aws.rt'}, headers=headers).status_code
             unknown = [
@@ -474,7 +453,7 @@ class TestRateLimits:
         credential = 'us-aws.the-refresh-token'
         app = build(
             RouterSettings(router_url=ROUTER_URL, stacks=parse_stacks(None), token_rate_limit_per_credential=1),
-            upstream_transport=httpx.MockTransport(_Upstream()),
+            upstream_transport=httpx.MockTransport(Upstream()),
         )
         with caplog.at_level(logging.DEBUG), TestClient(app, base_url=ROUTER_URL) as client:
             for _ in range(3):
@@ -485,10 +464,10 @@ class TestRateLimits:
         assert credential not in logged and 'the-refresh-token' not in logged
 
     def test_an_options_request_that_is_no_preflight_is_counted_and_never_handled(self) -> None:
-        upstream = _Upstream()
+        upstream = Upstream()
         body = {'redirect_uris': ['https://a.example/cb']}
         headers = {'X-Forwarded-For': '198.51.100.2'}
-        with _client(upstream, api_rate_limit_per_ip=1) as client:
+        with router_client(upstream, api_rate_limit_per_ip=1) as client:
             statuses = [
                 client.request('OPTIONS', '/register', json=body, headers=headers).status_code for _ in range(2)
             ]
@@ -503,7 +482,7 @@ class TestRateLimits:
 
     def test_retry_after_is_the_rest_of_the_window(self) -> None:
         refresh = {'grant_type': 'refresh_token', 'refresh_token': 'us-aws.rt'}
-        with _client(now=125.0, authorize_rate_limit_per_ip=1, token_rate_limit_per_credential=1) as client:
+        with router_client(now=125.0, authorize_rate_limit_per_ip=1, token_rate_limit_per_credential=1) as client:
             authorize = [client.get('/authorize', headers={'X-Forwarded-For': '203.0.113.1'}) for _ in range(2)][-1]
             token = [client.post('/token', data=refresh) for _ in range(2)][-1]
 
@@ -516,8 +495,8 @@ class TestRateLimits:
         credential counted before keeps its own count, and a refused request is not forwarded."""
         monkeypatch.setattr(rate_limit, '_MAX_TRACKED_KEYS', 1)
         monkeypatch.setattr(router_app, '_CREDENTIAL_OVERFLOW_LIMIT_PER_MINUTE', 1)
-        upstream = _Upstream(httpx.Response(200, json={}))
-        with _client(upstream, authorize_rate_limit_per_ip=1, token_rate_limit_per_credential=2) as client:
+        upstream = Upstream(httpx.Response(200, json={}))
+        with router_client(upstream, authorize_rate_limit_per_ip=1, token_rate_limit_per_credential=2) as client:
             addresses = [
                 client.get('/authorize', headers={'X-Forwarded-For': address}).status_code
                 for address in ('203.0.113.1', '203.0.113.1', '203.0.113.2', '203.0.113.2')
@@ -543,8 +522,13 @@ class TestSettings:
                 'KBC_ROUTER_API_RATE_LIMIT_PER_IP': '600',
                 'KBC_ROUTER_TOKEN_RATE_LIMIT_PER_CREDENTIAL': '20',
                 'KBC_OAUTH_TRUSTED_PROXY_HOPS': '2',
+                'KBC_ROUTER_MCP_READ_TIMEOUT_SECONDS': '900',
+                'KBC_ROUTER_MCP_MAX_CONNECTIONS': '50',
+                'KBC_ROUTER_MCP_RATE_LIMIT_PER_TOKEN': '120',
+                'KBC_ROUTER_MCP_MAX_IN_FLIGHT_PER_TOKEN': '5',
             }
         )
+        defaults = RouterSettings.from_env({'KBC_ROUTER_URL': ROUTER_URL})
 
         assert settings.issuer == ROUTER_URL
         assert list(settings.stacks) == ['dev']
@@ -552,9 +536,17 @@ class TestSettings:
         assert settings.authorize_rate_limit_per_ip == 60
         assert settings.api_rate_limit_per_ip == 600
         assert settings.token_rate_limit_per_credential == 20
-        assert RouterSettings.from_env({'KBC_ROUTER_URL': ROUTER_URL}).token_rate_limit_per_credential == 10
+        assert defaults.token_rate_limit_per_credential == 10
         assert settings.trusted_proxy_hops == 2
-        assert list(RouterSettings.from_env({'KBC_ROUTER_URL': ROUTER_URL}).stacks) == [s.key for s in DEFAULT_STACKS]
+        assert list(defaults.stacks) == [s.key for s in DEFAULT_STACKS]
+        mcp = (
+            'mcp_read_timeout_seconds',
+            'mcp_max_connections',
+            'mcp_rate_limit_per_token',
+            'mcp_max_in_flight_per_token',
+        )
+        assert [getattr(settings, name) for name in mcp] == [900, 50, 120, 5]
+        assert [getattr(defaults, name) for name in mcp] == [300, 1000, 600, 20]
 
     @pytest.mark.parametrize(
         'env',
