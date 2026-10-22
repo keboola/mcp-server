@@ -107,6 +107,10 @@ class Config:
     address is the entry that many places from the end of the header; the entries before it are caller-supplied and never
     used. Set it to match the ingress in front of the server, or the per-address limit will count the proxy instead of the
     caller."""
+    oauth_resource_binding: str | None = None
+    """What an OAuth token bound to another RFC 8707 resource than this server does: `log` (the default when unset)
+    logs and counts the mismatch and lets the request through, `enforce` refuses it (`invalid_target` at `/authorize`
+    and `/token`, 401 at `/mcp`). Deployment-level only."""
     allow_anonymous_provisioning: bool | None = None
     """Whether this deployment also serves the unauthenticated entry point (`/mcp-anonymous`), where a
     caller with no Keboola account at all can call `create_project` and then work in the project that

@@ -84,6 +84,8 @@ class OAuthSession:
     # where a dynamically-approved client got 'claudai' alone. Kept so load_access_token /
     # load_refresh_token advertise the scope such a session actually has.
     oauth_projectless: bool
+    # The RFC 8707 resource the session's tokens were issued for; None when the client named none.
+    resource: str | None = None
 
 
 class LockedSession:
@@ -126,6 +128,7 @@ class SessionStore(Protocol):
         kbc_refresh_token: str,
         kbc_access_expires_at: datetime,
         oauth_projectless: bool = True,
+        resource: str | None = None,
     ) -> tuple[str, str, OAuthSession]:
         """Creates a session row. Returns (opaque_access_token, opaque_refresh_token, session)."""
         ...
@@ -242,6 +245,7 @@ class PostgresSessionStore:
             ),
             scope_scoped_expires_at=row['scope_scoped_expires_at'],
             oauth_projectless=row['oauth_projectless'],
+            resource=row['resource'],
         )
 
     @guard_db_errors
@@ -254,6 +258,7 @@ class PostgresSessionStore:
         kbc_refresh_token: str,
         kbc_access_expires_at: datetime,
         oauth_projectless: bool = True,
+        resource: str | None = None,
     ) -> tuple[str, str, OAuthSession]:
         access_token = generate_opaque_token()
         refresh_token = generate_opaque_token()
@@ -262,8 +267,8 @@ class PostgresSessionStore:
             """
             INSERT INTO oauth_sessions (
                 access_token_hash, refresh_token_hash, client_id, user_email,
-                kbc_access_token_enc, kbc_refresh_token_enc, kbc_access_expires_at, oauth_projectless
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                kbc_access_token_enc, kbc_refresh_token_enc, kbc_access_expires_at, oauth_projectless, resource
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             RETURNING *
             """,
             _hash_token(access_token),
@@ -274,6 +279,7 @@ class PostgresSessionStore:
             crypto.encrypt(kbc_refresh_token.encode('utf-8'), self._key),
             kbc_access_expires_at,
             oauth_projectless,
+            resource,
         )
         assert row is not None
         return access_token, refresh_token, self._to_session(row)

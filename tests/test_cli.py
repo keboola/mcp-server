@@ -1,4 +1,5 @@
 import base64
+import logging
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -551,6 +552,87 @@ class TestLegacySsePath:
         assert metadata['issuer'] == 'https://mcp.keboola.com/'
         assert prm['authorization_servers'] == [metadata['issuer']]
         assert metadata['authorization_response_iss_parameter_supported'] is True
+
+    @pytest.mark.parametrize('mode', [None, 'log', 'enforce'])
+    @pytest.mark.parametrize(
+        ('session_resource', 'foreign'),
+        [
+            ('https://mcp.keboola.com/mcp', False),
+            # normalized: scheme and host case, default port, trailing slash, the origin (the PRM `resource`) and /mcp
+            ('https://MCP.keboola.com:443/', False),
+            ('HTTPS://Mcp.Keboola.com/mcp/', False),
+            # minted for some other resource: logged in the `log` mode (the default), not replayed in `enforce`
+            ('https://mcp.eu-central-1.keboola.com/mcp', True),
+            # every session from before DMD-2469: accepted in both modes
+            (None, False),
+        ],
+    )
+    def test_mcp_refuses_a_token_bound_to_another_resource_only_when_enforced(
+        self,
+        session_resource: str | None,
+        foreign: bool,
+        mode: str | None,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        from datetime import datetime, timedelta, timezone
+
+        from keboola_mcp_server.session_store.repository import OAuthSession, PostgresSessionStore
+
+        session = OAuthSession(
+            id='1',
+            client_id='client',
+            user_email=None,
+            kbc_access_token='kbc_at_x',
+            kbc_refresh_token='kbc_rt_x',
+            kbc_access_expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+            scope_project_ids=None,
+            scope_read_only=False,
+            scope_confirmed=False,
+            scope_scoped_token=None,
+            scope_scoped_expires_at=None,
+            oauth_projectless=True,
+            resource=session_resource,
+        )
+        monkeypatch.setattr(PostgresSessionStore, 'get_by_access_token', AsyncMock(return_value=session))
+        config = Config(
+            storage_api_url=STACK,
+            oauth_client_id='client-id',
+            oauth_client_secret='client-secret',
+            oauth_server_url=STACK,
+            mcp_server_url='https://mcp.keboola.com',
+            postgres_dsn='postgresql://user:pass@localhost:1/db',
+            session_encryption_key=base64.b64encode(b'0' * 32).decode(),
+            oauth_resource_binding=mode,
+        )
+        with caplog.at_level(logging.WARNING), _http_client(config) as client:
+            response = client.post(
+                '/mcp',
+                json=INITIALIZE_REQUEST,
+                headers={**STREAMABLE_HTTP_HEADERS, 'Authorization': 'Bearer opaque-token'},
+            )
+
+        assert response.status_code == (401 if foreign and mode == 'enforce' else 200), response.text
+        mismatches = [r.message for r in caplog.records if 'Resource mismatch' in r.message]
+        assert len(mismatches) == foreign
+        if foreign:
+            assert "received='https://mcp.eu-central-1.keboola.com/mcp'" in mismatches[0]
+            assert 'https://mcp.keboola.com/mcp' in mismatches[0]  # expected
+
+    def test_an_unknown_resource_binding_mode_stops_startup(self) -> None:
+        with pytest.raises(ValueError, match='resource binding mode'):
+            _http_client(
+                Config(
+                    storage_api_url=STACK,
+                    oauth_client_id='client-id',
+                    oauth_client_secret='client-secret',
+                    oauth_server_url=STACK,
+                    mcp_server_url='https://mcp.keboola.com',
+                    postgres_dsn='postgresql://user:pass@localhost:1/db',
+                    session_encryption_key=base64.b64encode(b'0' * 32).decode(),
+                    oauth_resource_binding='strict',
+                )
+            )
 
     @pytest.mark.parametrize('path', ['/mcp', '/sse', '/sse/'])
     def test_oauth_challenge(self, path: str) -> None:

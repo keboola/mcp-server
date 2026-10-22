@@ -179,7 +179,7 @@ class TestConfig:
             'oauth_client_id=None, oauth_client_secret=None, '
             'oauth_server_url=None, oauth_scope=None, mcp_server_url=None, '
             "jwt_secret=None, postgres_dsn='****', session_encryption_key='****', "
-            'bearer_token=None, conversation_id=None, project_id=None, oauth_validate_rate_limit=None, oauth_dynamic_client_approval=None, oauth_dynamic_client_approval_daily_limit=None, oauth_validate_fleet_rate_limit=None, oauth_authorize_rate_limit_per_ip=None, oauth_trusted_proxy_hops=None, allow_anonymous_provisioning=None)'
+            'bearer_token=None, conversation_id=None, project_id=None, oauth_validate_rate_limit=None, oauth_dynamic_client_approval=None, oauth_dynamic_client_approval_daily_limit=None, oauth_validate_fleet_rate_limit=None, oauth_authorize_rate_limit_per_ip=None, oauth_trusted_proxy_hops=None, oauth_resource_binding=None, allow_anonymous_provisioning=None)'
         )
 
     def test_workspace_id_must_be_numeric(self) -> None:

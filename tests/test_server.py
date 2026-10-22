@@ -760,6 +760,8 @@ async def test_oauth_callback_handler_accepts_a_missing_code_but_not_a_missing_s
         ('unregistered_client', 'not registered with keboola'),
         # the daily budget of new clients is used up: the page names the next 00:00 UTC reset
         ('approval_limit_reached', 'try again after 20'),
+        # the client named another resource than this server (RFC 8707)
+        ('invalid_target', 'check the mcp server url'),
     ],
 )
 @pytest.mark.asyncio

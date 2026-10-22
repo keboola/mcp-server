@@ -6,7 +6,7 @@ import os
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from datetime import datetime, timedelta, timezone
-from typing import Literal
+from typing import Literal, cast
 from urllib.parse import urlparse
 
 from fastmcp import FastMCP
@@ -197,7 +197,7 @@ class CustomRoutes:
             # can link `/oauth/callback?error=x&error_description=<arbitrary text>` and have that
             # text shown under a "Keboola login temporarily unavailable" heading here -- content
             # spoofing, not XSS (HTML-escaping alone doesn't stop that) (Vojtěch Biberle + Devin
-            # review, AI-2883). `authorize()`'s own fail-closed branch only ever emits two fixed
+            # review, AI-2883). `authorize()`'s own error branches only ever emit fixed
             # error_description strings, so a single fixed message loses nothing legitimate.
             #
             # A Deny on Connection's consent screen that is not relayed to the client (see above) lands
@@ -208,6 +208,11 @@ class CustomRoutes:
             elif error == 'unregistered_client':
                 title = message = (
                     'This application is not registered with Keboola. Ask your Keboola administrator to register it.'
+                )
+            elif error == 'invalid_target':
+                title = message = (
+                    'The application asked for access to another server than this Keboola MCP server. '
+                    'Check the MCP server URL configured in the application.'
                 )
             elif error == 'approval_limit_reached':
                 # The shared counter uses fixed UTC-day windows (see PostgresRateLimitStore.claim), so the budget
@@ -282,6 +287,11 @@ class CustomRoutes:
             )
             if rate_limit := self.oauth_provider.authorize_rate_limit_middleware():
                 app.add_middleware(rate_limit.cls, **rate_limit.kwargs)
+
+
+def _resource_binding_mode(raw: str | None) -> Literal['log', 'enforce']:
+    """`KBC_OAUTH_RESOURCE_BINDING`: `log` when unset; the provider refuses anything but `log` or `enforce`."""
+    return cast(Literal['log', 'enforce'], (raw or 'log').strip().lower())
 
 
 def create_server(
@@ -366,6 +376,7 @@ def create_server(
             ),
             trusted_proxy_hops=_parse_positive_int('oauth_trusted_proxy_hops', config.oauth_trusted_proxy_hops) or 1,
             encryption_key=encryption_key,
+            resource_binding=_resource_binding_mode(config.oauth_resource_binding),
         )
     else:
         oauth_provider = None

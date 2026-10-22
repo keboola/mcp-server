@@ -69,6 +69,7 @@ class FakeSessionStore:
         kbc_refresh_token,
         kbc_access_expires_at,
         oauth_projectless: bool = True,
+        resource: str | None = None,
     ) -> tuple[str, str, OAuthSession]:
         self._next_id += 1
         session_id = str(self._next_id)
@@ -85,6 +86,7 @@ class FakeSessionStore:
             scope_scoped_token=None,
             scope_scoped_expires_at=None,
             oauth_projectless=oauth_projectless,
+            resource=resource,
         )
         self._sessions[session_id] = session
         access_token, refresh_token = self._new_token_pair(session_id)
@@ -566,6 +568,27 @@ class TestSimpleOAuthProvider:
             dynamic_client_approval=True,  # off by default; these tests exercise the approval flow
         )
 
+    @pytest.fixture
+    def provider_with_binding(self):
+        """The `oauth_provider` fixture's provider, in a given resource-binding mode."""
+
+        def build(resource_binding: str) -> SimpleOAuthProvider:
+            return SimpleOAuthProvider(
+                storage_api_url='https://sapi',
+                mcp_server_url='https://mcp',
+                callback_endpoint='/callback',
+                client_id='mcp-server-id',
+                client_secret='mcp-server-secret',
+                server_url='https://oauth',
+                scope='scope',
+                jwt_secret=JWT_KEY,
+                session_store=FakeSessionStore(),
+                dynamic_client_approval=True,
+                resource_binding=resource_binding,
+            )
+
+        return build
+
     def test_dynamic_client_approval_is_off_unless_enabled(self) -> None:
         provider = SimpleOAuthProvider(
             storage_api_url='https://sapi',
@@ -582,14 +605,20 @@ class TestSimpleOAuthProvider:
 
     @staticmethod
     def authorization_code(
-        *, scopes: list[str] | None = None, expires_at: float | None = None, oauth_projectless: bool = True
+        *,
+        scopes: list[str] | None = None,
+        expires_at: float | None = None,
+        oauth_projectless: bool = True,
+        resource: str | None = None,
+        code_challenge: str = 'foo-code-challenge',
     ) -> Mapping[str, Any]:
         auth_code = _ExtendedAuthorizationCode(
             code='foo',
             scopes=scopes or [],
             expires_at=expires_at or time.time() + 5 * 60,  # 5 minutes from now
             client_id='foo-client-id',
-            code_challenge='foo-code-challenge',
+            code_challenge=code_challenge,
+            resource=resource,
             redirect_uri=AnyUrl('foo://bar'),
             redirect_uri_provided_explicitly=True,
             oauth_access_token=AccessToken(token='oauth-access-token', client_id='mcp-server', scopes=['foo']),
@@ -1938,6 +1967,251 @@ class TestSimpleOAuthProvider:
         assert loaded.scope_confirmed is True
         assert loaded.scope_project_ids == [1, 2]
         assert loaded.scope_scoped_token is None
+
+    @pytest.mark.parametrize('mode', ['log', 'enforce'])
+    @pytest.mark.parametrize(
+        ('code_resource', 'request_resources', 'outcome'),
+        [
+            # every client from before RFC 8707: no binding, accepted as before
+            (None, [], 'ok'),
+            # named at /authorize (what ChatGPT does), repeated or left out at /token
+            ('https://mcp/mcp', [], 'ok'),
+            ('https://mcp/mcp', ['https://mcp/mcp/'], 'ok'),
+            # normalized: letter case, default port, trailing slash, the origin as well as /mcp
+            ('HTTPS://MCP:443/mcp/', [], 'ok'),
+            # named at /token only
+            (None, ['https://mcp/'], 'ok'),
+            # the origin at /authorize and /mcp at /token: two names of this server
+            ('https://mcp', ['https://mcp/mcp'], 'ok'),
+            # not this server: logged and let through in the `log` mode, invalid_target in `enforce`
+            ('https://other.example/mcp', [], 'foreign'),
+            (None, ['https://other.example/mcp'], 'foreign'),
+            (None, ['https://mcp/mcp?x=1'], 'foreign'),
+            (None, ['http://[::1'], 'foreign'),
+            # RFC 8707 §2 invalid_target in both modes: another resource than the authorized one, or two of them
+            ('https://mcp/mcp', ['https://other.example/mcp'], 'error'),
+            (None, ['https://mcp/mcp', 'https://mcp/'], 'error'),
+            # two different malformed values are not the same resource
+            ('http://[::1', ['http://[::2'], 'error'),
+        ],
+    )
+    def test_token_endpoint_binds_the_session_to_the_requested_resource(
+        self,
+        provider_with_binding,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        mode: str,
+        code_resource: str | None,
+        request_resources: list[str],
+        outcome: str,
+    ):
+        from starlette.applications import Starlette
+        from starlette.testclient import TestClient
+
+        from keboola_mcp_server import oauth as oauth_module
+
+        oauth_provider = provider_with_binding(mode)
+        monkeypatch.setattr(oauth_module, 'deployed_sa_token_path', lambda: '/tmp/sa-token')
+        captured: dict[str, Any] = {}
+        self._stub_exchanger(monkeypatch, captured)
+        monkeypatch.setattr(oauth_module, 'introspect_token', mock.AsyncMock(side_effect=httpx.ConnectError('down')))
+        verifier = secrets.token_urlsafe(32)
+        challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip('=')
+        code = oauth_provider._encode(self.authorization_code(resource=code_resource, code_challenge=challenge))
+        client = TestClient(Starlette(routes=oauth_provider.get_routes()))
+
+        with caplog.at_level(logging.WARNING):
+            response = client.post(
+                '/token',
+                data={
+                    'grant_type': 'authorization_code',
+                    'code': code,
+                    'client_id': 'foo-client-id',
+                    'redirect_uri': 'foo://bar',
+                    'code_verifier': verifier,
+                    'resource': request_resources,
+                },
+            )
+
+        mismatch_lines = [r.message for r in caplog.records if 'Resource mismatch' in r.message]
+        assert oauth_provider.resource_mismatches['token'] == len(mismatch_lines) == (outcome == 'foreign')
+        refused = outcome == 'error' or (outcome == 'foreign' and mode == 'enforce')
+        if refused:
+            assert response.status_code == 400, response.text
+            assert response.json()['error'] == 'invalid_target'
+            assert 'oauth_access_token' not in captured  # refused before the exchange
+            return
+        assert response.status_code == 200, response.text
+        if outcome == 'foreign':
+            [line] = mismatch_lines
+            assert f"mode={mode}" in line and 'received=' in line and "expected=['https://mcp'" in line
+        session = asyncio.run(oauth_provider._session_store.get_by_access_token(response.json()['access_token']))
+        assert session is not None
+        assert session.resource == (code_resource or (request_resources[0] if request_resources else None))
+
+    @pytest.mark.parametrize('mode', ['log', 'enforce'])
+    @pytest.mark.parametrize(
+        ('session_resource', 'request_resources', 'log_status', 'enforce_status'),
+        [
+            ('https://mcp/mcp', [], 200, 200),
+            ('https://mcp/mcp', ['https://mcp/mcp'], 200, 200),
+            # two names of this server
+            ('https://mcp/mcp', ['https://mcp'], 200, 200),
+            ('https://mcp/mcp', ['https://other.example/mcp'], 400, 400),
+            # a session bound to a foreign resource (stored in the `log` mode): refused once enforced
+            ('https://other.example/mcp', [], 200, 400),
+            # a session from before DMD-2469 is not bound now
+            (None, ['https://other.example/mcp'], 200, 200),
+        ],
+    )
+    def test_refresh_keeps_the_resource_of_the_session(
+        self,
+        provider_with_binding,
+        monkeypatch: pytest.MonkeyPatch,
+        mode: str,
+        session_resource: str | None,
+        request_resources: list[str],
+        log_status: int,
+        enforce_status: int,
+    ):
+        oauth_provider = provider_with_binding(mode)
+        expected_status = log_status if mode == 'log' else enforce_status
+        from starlette.applications import Starlette
+        from starlette.testclient import TestClient
+
+        from keboola_mcp_server import oauth as oauth_module
+        from keboola_mcp_server.auth_login import TokenSet
+
+        async def _fake_refresh_tokens(storage_api_url: str, *, refresh_token: str, transport=None):
+            return TokenSet(access_token='kbc_at_new', refresh_token='kbc_rt_new', expires_at=time.time() + 3600)
+
+        monkeypatch.setattr(oauth_module, 'refresh_tokens', _fake_refresh_tokens)
+        _at, opaque_refresh_token, _session = asyncio.run(
+            oauth_provider._session_store.create(
+                client_id='foo-client-id',
+                user_email=None,
+                kbc_access_token='kbc_at_old',
+                kbc_refresh_token='kbc_rt_old',
+                kbc_access_expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+                resource=session_resource,
+            )
+        )
+        client = TestClient(Starlette(routes=oauth_provider.get_routes()))
+
+        response = client.post(
+            '/token',
+            data={
+                'grant_type': 'refresh_token',
+                'refresh_token': opaque_refresh_token,
+                'client_id': 'foo-client-id',
+                'resource': request_resources,
+            },
+        )
+
+        assert response.status_code == expected_status, response.text
+        if expected_status != 200:
+            assert response.json()['error'] == 'invalid_target'
+            return
+        loaded = asyncio.run(oauth_provider.load_access_token(response.json()['access_token']))
+        assert loaded is not None
+        assert loaded.resource == session_resource
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ('resource', 'drop_from_state', 'expected_code_resource'),
+        [
+            ('https://mcp/mcp', False, 'https://mcp/mcp'),
+            (None, False, None),
+            # a state minted before this release has no `resource` key
+            ('https://mcp/mcp', True, None),
+        ],
+    )
+    async def test_the_authorized_resource_reaches_the_code(
+        self,
+        oauth_provider: SimpleOAuthProvider,
+        monkeypatch: pytest.MonkeyPatch,
+        resource: str | None,
+        drop_from_state: bool,
+        expected_code_resource: str | None,
+    ):
+        from keboola_mcp_server import oauth as oauth_module
+        from keboola_mcp_server.oauth import _ClientRegistration
+
+        self._stub_client_registration(monkeypatch, _ClientRegistration.REGISTERED)
+        client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
+        params = AuthorizationParams(
+            redirect_uri=AnyUrl('https://claude.ai/api/mcp/auth_callback'),
+            redirect_uri_provided_explicitly=True,
+            code_challenge='challenge',
+            state='client-state',
+            scopes=None,
+            resource=resource,
+        )
+        state = parse_qs(urlparse(await oauth_provider.authorize(client, params)).query)['state'][0]
+        if drop_from_state:
+            state_data = oauth_provider._decode(state)
+            del state_data['resource']
+            state = oauth_provider._encode(state_data)
+        token_response = {'access_token': 'league-at', 'refresh_token': 'league-rt', 'expires_in': 3600}
+        transport = httpx.MockTransport(lambda _rq: httpx.Response(200, json=token_response))
+        monkeypatch.setattr(oauth_module, '_create_http_client', lambda **_kw: httpx.AsyncClient(transport=transport))
+
+        redirect = await oauth_provider.handle_oauth_callback('connection-code', state)
+
+        code = parse_qs(urlparse(redirect).query)['code'][0]
+        loaded = await oauth_provider.load_authorization_code(client, code)
+        assert loaded is not None
+        assert loaded.resource == expected_code_resource
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize('mode', ['log', 'enforce'])
+    async def test_authorize_refuses_another_resource_before_consent_only_when_enforced(
+        self, provider_with_binding, monkeypatch: pytest.MonkeyPatch, mode: str
+    ):
+        oauth_provider = provider_with_binding(mode)
+        from keboola_mcp_server.oauth import _ClientRegistration
+
+        self._stub_client_registration(monkeypatch, _ClientRegistration.REGISTERED)
+        client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
+        params = AuthorizationParams(
+            redirect_uri=AnyUrl('https://claude.ai/api/mcp/auth_callback'),
+            redirect_uri_provided_explicitly=True,
+            code_challenge='challenge',
+            state='client-state',
+            scopes=None,
+            resource='https://mcp.eu-central-1.keboola.com/mcp',
+        )
+
+        url = await oauth_provider.authorize(client, params)
+
+        assert oauth_provider.resource_mismatches['authorize'] == 1
+        if mode == 'enforce':
+            assert url.startswith(oauth_provider._mcp_callback_url)
+            assert parse_qs(urlparse(url).query)['error'] == ['invalid_target']
+        else:
+            assert urlparse(url).path == '/oauth/consent'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize('mode', ['log', 'enforce'])
+    async def test_mcp_logs_a_foreign_session_once_and_counts_every_request(
+        self, provider_with_binding, caplog: pytest.LogCaptureFixture, mode: str
+    ):
+        oauth_provider = provider_with_binding(mode)
+        access_token, _rt, _session = await oauth_provider._session_store.create(
+            client_id='foo-client-id',
+            user_email=None,
+            kbc_access_token='kbc_at',
+            kbc_refresh_token='kbc_rt',
+            kbc_access_expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+            resource='https://other.example/mcp',
+        )
+
+        with caplog.at_level(logging.WARNING):
+            loaded = [await oauth_provider.load_access_token(access_token) for _ in range(3)]
+
+        assert [token is None for token in loaded] == [mode == 'enforce'] * 3
+        assert oauth_provider.resource_mismatches['mcp'] == 3
+        assert len([r for r in caplog.records if 'Resource mismatch' in r.message]) == 1
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
