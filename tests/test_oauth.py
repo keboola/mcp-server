@@ -601,10 +601,9 @@ class TestSimpleOAuthProvider:
         return auth_code_raw
 
     @staticmethod
-    def consent_state(*, typed: bool = True) -> Mapping[str, Any]:
-        """The consent state `authorize()` encodes; untyped: one issued before the `typ` claim, alive until its TTL."""
-        state = {
-            'typ': 'state',
+    def consent_state() -> Mapping[str, Any]:
+        """The consent state `authorize()` encodes."""
+        return {
             'redirect_uri': 'foo://bar',
             'redirect_uri_provided_explicitly': 'True',
             'scopes': [],
@@ -614,7 +613,6 @@ class TestSimpleOAuthProvider:
             'expires_at': time.time() + 5 * 60,
             'projectless': True,
         }
-        return state if typed else {k: v for k, v in state.items() if k != 'typ'}
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -632,11 +630,8 @@ class TestSimpleOAuthProvider:
             (code := authorization_code(expires_at=1), JWT_KEY, _ExtendedAuthorizationCode.model_validate(code)),
             # wrong encryption key
             (code := authorization_code(), '!@#$%^&', None),
-            # typed, as handle_oauth_callback issues it now
-            (code := {**authorization_code(), 'typ': 'code'}, JWT_KEY, _ExtendedAuthorizationCode.model_validate(code)),
             # a consent state is signed with the same secret: an unknown code (invalid_grant), not a validation error
             (consent_state(), JWT_KEY, None),
-            (consent_state(typed=False), JWT_KEY, None),
         ],
     )
     async def test_load_authorization_code(
@@ -2862,7 +2857,7 @@ class TestAuthorizationServerMetadata:
             assert code not in caplog.text
             assert 'league-at' not in caplog.text
             assert 'league-rt' not in caplog.text
-            # /token must accept what the callback issues (the two are tied by the `typ` claim)
+            # /token must accept what the callback issues (it refuses a JWT with a 'state' key)
             dcr_client = OAuthClientInformationFull(client_id='dcr-client-id', redirect_uris=[AnyUrl(redirect_uri)])
             loaded = await provider.load_authorization_code(dcr_client, code)
             assert loaded is not None
@@ -2887,7 +2882,6 @@ class TestAuthorizationServerMetadata:
             ('https://claude.ai/api/mcp/auth_callback', 'REGISTERED', 'garbage'),
             # a JWT signed with the same secret that is not a state; it would crash on the missing 'state' key
             ('https://claude.ai/api/mcp/auth_callback', 'REGISTERED', 'authorization_code'),
-            ('https://claude.ai/api/mcp/auth_callback', 'REGISTERED', 'untyped_authorization_code'),
         ],
     )
     async def test_a_denial_is_relayed_only_for_a_live_flow_of_a_pre_registered_client(
@@ -2917,7 +2911,6 @@ class TestAuthorizationServerMetadata:
         `state`. The client sees it, so it can send it back."""
         return provider._encode(
             {
-                'typ': 'code',
                 'code': 'mcp_code',
                 'client_id': 'dcr-client-id',
                 'redirect_uri': redirect_uri,
@@ -2938,20 +2931,10 @@ class TestAuthorizationServerMetadata:
             return 'not-a-jwt'
         if change == 'authorization_code':
             return cls._authorization_code(provider, redirect_uri)
-        if change == 'untyped_authorization_code':  # issued before the `typ` claim, still alive
-            return provider._encode(
-                {
-                    k: v
-                    for k, v in provider._decode(cls._authorization_code(provider, redirect_uri)).items()
-                    if k != 'typ'
-                }
-            )
         return state
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        'state_change', ['expired', 'forged', 'garbage', 'authorization_code', 'untyped_authorization_code']
-    )
+    @pytest.mark.parametrize('state_change', ['expired', 'forged', 'garbage', 'authorization_code'])
     async def test_the_callback_refuses_what_is_not_a_live_consent_state_before_the_token_exchange(
         self, provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch, state_change: str
     ) -> None:

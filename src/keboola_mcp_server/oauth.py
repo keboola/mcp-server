@@ -230,12 +230,6 @@ def _strip_unprintable(value: str) -> str:
     return ''.join(ch for ch in value if ch.isprintable())
 
 
-def _jwt_kind(payload: Mapping[str, Any]) -> str:
-    """'state' or 'code': which of the two JWTs signed with the same secret this is. A JWT issued before the `typ`
-    claim existed (alive until its TTL runs out) is told apart by the `state` key that only a consent state has."""
-    return payload.get('typ') or ('state' if 'state' in payload else 'code')
-
-
 def _sign_mcp_client_id(secret: str, mcp_client_id: str, state: str) -> str:
     """Authenticates the `mcp_client_id` this server puts on Connection's consent URL (AI-3995).
 
@@ -1318,7 +1312,6 @@ class SimpleOAuthProvider(OAuthProvider):
         # The states expire after 5 minutes.
         scopes = cast(list[str], params.scopes or [])
         state = {
-            'typ': 'state',
             'redirect_uri': redirect_uri_str,
             'redirect_uri_provided_explicitly': str(params.redirect_uri_provided_explicitly),
             # the scopes sent by the MCP server's OAuth client (e.g. claude.ai)
@@ -1439,7 +1432,7 @@ class SimpleOAuthProvider(OAuthProvider):
             LOG.debug(f'{log_prefix} Invalid state, length={len(state)}', exc_info=True)
             return None
         # Not a consent state: some other JWT signed with the same secret (an MCP authorization code).
-        if not state_data or 'state' not in state_data or _jwt_kind(state_data) != 'state':
+        if not state_data or 'state' not in state_data:
             LOG.debug(f'{log_prefix} Invalid state, keys: {sorted(state_data or {})}')
             return None
         if state_data.get('expires_at', 0) < time.time():
@@ -1510,7 +1503,6 @@ class SimpleOAuthProvider(OAuthProvider):
         # Create MCP authorization code
         # This is deserialized into _ExtendedAuthorizationCode instance in load_authorization_code() function.
         auth_code = {
-            'typ': 'code',
             'code': f'mcp_{secrets.token_hex(16)}',
             'client_id': state_data['client_id'],
             'redirect_uri': redirect_uri,
@@ -1579,8 +1571,9 @@ class SimpleOAuthProvider(OAuthProvider):
                 f'[load_authorization_code] Invalid authorization_code, length={len(authorization_code)}', exc_info=True
             )
             return None
-        # A consent state sent as the code is signed with the same secret but is no code: /token answers invalid_grant.
-        if _jwt_kind(auth_code_raw) != 'code':
+        # A consent state (the only JWT with a 'state' key) sent as the code is signed with the same secret but is no
+        # code: /token answers invalid_grant.
+        if 'state' in auth_code_raw:
             LOG.debug(f'[load_authorization_code] Not an authorization code, keys: {sorted(auth_code_raw)}')
             return None
 
