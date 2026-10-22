@@ -1,17 +1,20 @@
 import asyncio
 import base64
 import dataclasses
+import functools
 import logging
 import re
 import time
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
 from fastmcp import Context
 from fastmcp.exceptions import ToolError
+from fastmcp.server.middleware import MiddlewareContext
 from fastmcp.tools import Tool
 from mcp.server.auth.middleware.bearer_auth import AuthenticatedUser
 from pydantic import BaseModel, Field
@@ -29,6 +32,7 @@ from keboola_mcp_server.mcp import (
     LISTED_BRANCH_ID,
     STORAGE_API_URL,
     AggregateError,
+    DirectoryProfileMiddleware,
     ServerState,
     SessionStateMiddleware,
     ToolsFilteringMiddleware,
@@ -40,6 +44,7 @@ from keboola_mcp_server.mcp import (
     toon_serializer,
     unwrap_results,
 )
+from keboola_mcp_server.multiproject import MultiProjectMiddleware
 from keboola_mcp_server.oauth import ProxyAccessToken
 from keboola_mcp_server.scope import (
     SCOPE_KEY,
@@ -2308,6 +2313,22 @@ class TestDirectoryToolProfile:
         for name in (*self.EXCLUDED, 'a_tool_added_later'):
             assert (name not in names) is expect_hidden
 
+    @staticmethod
+    async def _call_through_chain(context: MiddlewareContext, call_next: AsyncMock) -> Any:
+        """Runs a tools/call through the server's own middleware list, from `DirectoryProfileMiddleware` to
+        `ToolsFilteringMiddleware`, in the order `create_server` registers them."""
+        from keboola_mcp_server.server import create_server
+
+        middleware = create_server(Config(), runtime_info=ServerRuntimeInfo(transport='stdio')).middleware
+        kinds = [type(m) for m in middleware]
+        chain = middleware[kinds.index(DirectoryProfileMiddleware) : kinds.index(ToolsFilteringMiddleware) + 1]
+        assert MultiProjectMiddleware in [type(m) for m in chain]
+
+        handler = call_next
+        for mw in reversed(chain):
+            handler = functools.partial(mw, call_next=handler)
+        return await handler(context)
+
     @pytest.mark.asyncio
     @pytest.mark.parametrize('tool_name', [*EXCLUDED, 'a_tool_added_later'])
     @pytest.mark.parametrize(('directory_profile', 'expect_denied'), [(True, True), (False, False)])
@@ -2319,18 +2340,49 @@ class TestDirectoryToolProfile:
             return_value={'owner': {'features': []}, 'admin': {'role': 'admin'}}
         )
         mcp_context_client.fastmcp = SimpleNamespace(get_tool=AsyncMock(return_value=_tool(tool_name)))
-        context = SimpleNamespace(fastmcp_context=mcp_context_client, message=SimpleNamespace(name=tool_name))
+        context = MiddlewareContext(
+            message=SimpleNamespace(name=tool_name, arguments={}),
+            fastmcp_context=mcp_context_client,
+            method='tools/call',
+        )
         expected = MagicMock()
 
         with patch('keboola_mcp_server.mcp.get_http_request_or_none', return_value=self._request(directory_profile)):
             if expect_denied:
                 with pytest.raises(ToolError, match='not available in the Keboola plugin'):
-                    await ToolsFilteringMiddleware().on_call_tool(context, AsyncMock(return_value=expected))
+                    await self._call_through_chain(context, AsyncMock(return_value=expected))
                 keboola_client.storage_client.verify_token.assert_not_called()
             else:
-                assert (
-                    await ToolsFilteringMiddleware().on_call_tool(context, AsyncMock(return_value=expected)) is expected
-                )
+                assert await self._call_through_chain(context, AsyncMock(return_value=expected)) is expected
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize('tool_name', EXCLUDED)
+    async def test_call_tool_refused_before_the_project_scope(
+        self, mcp_context_client, keboola_client, tool_name: str
+    ) -> None:
+        """With a confirmed multi-project scope, an excluded tool gets the directory message, not a project swap, a
+        "Pass project_id" error or a per-project failure from `MultiProjectMiddleware`."""
+        mcp_context_client.session.state[SCOPE_KEY] = SessionScope(project_ids=[11, 22], confirmed=True)
+        # A read tool would fan out across both projects, a write tool asks which project to target.
+        tool = _tool(tool_name, read_only=tool_name == 'get_data_app_preview_link')
+        mcp_context_client.fastmcp = SimpleNamespace(get_tool=AsyncMock(return_value=tool))
+        context = MiddlewareContext(
+            message=SimpleNamespace(name=tool_name, arguments={}),
+            fastmcp_context=mcp_context_client,
+            method='tools/call',
+        )
+        call_next = AsyncMock()
+
+        with (
+            patch('keboola_mcp_server.mcp.get_http_request_or_none', return_value=self._request(True)),
+            patch.object(MultiProjectMiddleware, '_swap_project', AsyncMock()) as swap,
+            pytest.raises(ToolError, match='not available in the Keboola plugin'),
+        ):
+            await self._call_through_chain(context, call_next)
+
+        swap.assert_not_awaited()
+        call_next.assert_not_awaited()
+        keboola_client.storage_client.verify_token.assert_not_called()
 
     @pytest.mark.parametrize('sql_dialect', ['', 'Snowflake', 'BigQuery'])
     def test_the_directory_instructions_name_only_directory_tools(self, sql_dialect: str) -> None:

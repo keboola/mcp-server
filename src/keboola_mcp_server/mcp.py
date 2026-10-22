@@ -1322,6 +1322,21 @@ class SessionStateMiddleware(fmw.Middleware):
         return state
 
 
+class DirectoryProfileMiddleware(fmw.Middleware):
+    """Refuses a call to a tool outside `DIRECTORY_TOOLS` in a session of the ChatGPT plugin. Placed ahead of
+    `MultiProjectMiddleware` (`server.py`), so an excluded tool never reaches a project swap, a token exchange or
+    `ToolsFilteringMiddleware`'s bootstrap exemption and token verification."""
+
+    async def on_call_tool(
+        self,
+        context: MiddlewareContext[mt.CallToolRequestParams],
+        call_next: CallNext[mt.CallToolRequestParams, mt.CallToolResult],
+    ) -> mt.CallToolResult:
+        if is_directory_session() and context.message.name not in DIRECTORY_TOOLS:
+            raise ToolError(directory_denial(context.message.name))
+        return await call_next(context)
+
+
 class ToolsFilteringMiddleware(fmw.Middleware):
     """
     This middleware filters out tools that are not available in the current project. The filtering is based on the
@@ -1561,9 +1576,6 @@ class ToolsFilteringMiddleware(fmw.Middleware):
     ) -> mt.CallToolResult:
         tool = await context.fastmcp_context.fastmcp.get_tool(context.message.name)
         directory_profile = is_directory_session()
-        if directory_profile and tool.name not in DIRECTORY_TOOLS:
-            # Before everything else: the bootstrap exemption below and a failing verify_token must not reach the tool.
-            raise ToolError(directory_denial(tool.name))
 
         # Bootstrap tools (get_accessible_projects/set_project_scope) must work before any project
         # is chosen -- that's their entire purpose. verify_token() needs a single-project context
