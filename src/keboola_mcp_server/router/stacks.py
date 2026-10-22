@@ -79,12 +79,16 @@ def parse_stacks(raw: str | None) -> dict[str, Stack]:
             raise ValueError(f'A router stack table entry needs key, name, upstream and login_host: {e!r}') from e
     table: dict[str, Stack] = {}
     for stack in stacks:
-        if not _STACK_KEY_PATTERN.match(stack.key):
+        if not is_valid_stack_key(stack.key):
             raise ValueError(f'Invalid stack key {stack.key!r}: lowercase letters, digits and dashes only.')
         if stack.key in table:
             raise ValueError(f'Duplicate stack key {stack.key!r}.')
         table[stack.key] = stack
     return table
+
+
+def is_valid_stack_key(key: str) -> bool:
+    return bool(_STACK_KEY_PATTERN.match(key))
 
 
 def stack_key_of(value: str | None) -> str | None:

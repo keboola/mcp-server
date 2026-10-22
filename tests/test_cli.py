@@ -552,6 +552,9 @@ class TestLegacySsePath:
         assert metadata['issuer'] == 'https://mcp.keboola.com/'
         assert prm['authorization_servers'] == [metadata['issuer']]
         assert metadata['authorization_response_iss_parameter_supported'] is True
+        # DMD-2481: /revoke, which public clients call without a secret like /token
+        assert metadata['revocation_endpoint'] == 'https://mcp.keboola.com/revoke'
+        assert metadata['revocation_endpoint_auth_methods_supported'][0] == 'none'
 
     @pytest.mark.parametrize('mode', [None, 'log', 'enforce'])
     @pytest.mark.parametrize(

@@ -111,6 +111,13 @@ class Config:
     """What an OAuth token bound to another RFC 8707 resource than this server does: `log` (the default when unset)
     logs and counts the mismatch and lets the request through, `enforce` refuses it (`invalid_target` at `/authorize`
     and `/token`, 401 at `/mcp`). Deployment-level only."""
+    stack_key: str | None = None
+    """This stack's key in the global MCP router's stack table (e.g. `eu-aws`, ChatGPT plugin). With `router_url` it
+    turns on the flows the router sends here: their codes and tokens carry this key as a prefix, so the router knows
+    where to send them. Both or neither. Deployment-level only."""
+    router_url: str | None = None
+    """The public URL of the global MCP router. The router's issuer (the `iss` of its flows) and its resource (what
+    their tokens are bound to) are derived from it, with the functions the router itself uses. Deployment-level only."""
     allow_anonymous_provisioning: bool | None = None
     """Whether this deployment also serves the unauthenticated entry point (`/mcp-anonymous`), where a
     caller with no Keboola account at all can call `create_project` and then work in the project that
