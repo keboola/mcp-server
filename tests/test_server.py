@@ -758,6 +758,8 @@ async def test_oauth_callback_handler_accepts_a_missing_code_but_not_a_missing_s
         ('access_denied', 'authorization was denied'),
         # dynamic client approval is switched off and the client is not registered
         ('unregistered_client', 'not registered with keboola'),
+        # a pre-registered client's row is missing on this stack: an administrator cannot register it
+        ('pre_registered_client_missing', 'contact keboola support'),
         # the daily budget of new clients is used up: the page names the next 00:00 UTC reset
         ('approval_limit_reached', 'try again after 20'),
         # the client named another resource than this server (RFC 8707)

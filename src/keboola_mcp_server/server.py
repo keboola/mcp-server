@@ -209,6 +209,11 @@ class CustomRoutes:
                 title = message = (
                     'This application is not registered with Keboola. Ask your Keboola administrator to register it.'
                 )
+            elif error == 'pre_registered_client_missing':
+                # No Keboola administrator can fix this one: the row comes from a Connection release.
+                title = message = (
+                    'This Keboola stack is not ready for this application yet. Please contact Keboola support.'
+                )
             elif error == 'invalid_target':
                 title = message = (
                     'The application asked for access to another server than this Keboola MCP server. '

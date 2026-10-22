@@ -384,10 +384,18 @@ class TestConnectionClientIdentity:
     client bookkeeping and the identity Connection's oauth2_client registry actually understands
     (see AI-2883 RFC, Resolution Strategy §4)."""
 
-    def test_well_known_redirect_uri_maps_to_pre_registered_client_id(self):
+    @pytest.mark.parametrize(
+        ('redirect_uri', 'client_id'),
+        [
+            ('https://claude.ai/api/mcp/auth_callback', 'claude-ai'),
+            # DMD-2478: pre-registered by PreRegisterChatGptOAuthClientMigration (DMD-2475)
+            ('https://chatgpt.com/connector_platform_oauth_redirect', 'chatgpt'),
+        ],
+    )
+    def test_well_known_redirect_uri_maps_to_pre_registered_client_id(self, redirect_uri: str, client_id: str):
         from keboola_mcp_server.oauth import _connection_client_id
 
-        assert _connection_client_id('https://claude.ai/api/mcp/auth_callback', _KEY) == 'claude-ai'
+        assert _connection_client_id(redirect_uri, _KEY) == client_id
 
     def test_unknown_redirect_uri_derives_a_stable_short_id(self):
         from keboola_mcp_server.oauth import _connection_client_id
@@ -780,19 +788,25 @@ class TestSimpleOAuthProvider:
                 info.validate_redirect_uri(uri)
 
     @staticmethod
-    def _stub_client_registration(monkeypatch: pytest.MonkeyPatch, status) -> None:
+    def _stub_client_registration(monkeypatch: pytest.MonkeyPatch, status) -> list[tuple[str, str]]:
+        """Answers `status` for every pair; returns the (connection_client_id, redirect_uri) pairs asked about."""
         from keboola_mcp_server import oauth as oauth_module
 
+        checked: list[tuple[str, str]] = []
+
         async def _fake(self, connection_client_id: str, redirect_uri: str):
+            checked.append((connection_client_id, redirect_uri))
             return status
 
         monkeypatch.setattr(oauth_module.ConnectionClientRegistry, 'check_registration', _fake)
+        return checked
 
     @pytest.mark.parametrize(
         ('redirect_uri', 'pre_registered'),
         [
-            # pre-registered by Keboola in Connection (claude-ai)
+            # pre-registered by Keboola in Connection (claude-ai, chatgpt)
             ('https://claude.ai/api/mcp/auth_callback', True),
+            ('https://chatgpt.com/connector_platform_oauth_redirect', True),
             # became REGISTERED via the dynamic-approval screen (Flow B)
             ('https://my-self-service-tool.example/cb', False),
         ],
@@ -809,9 +823,9 @@ class TestSimpleOAuthProvider:
         """Every REGISTERED client -- pre-registered or dynamically approved -- gets the whole-stack
         'projectless' grant via /oauth/consent, and the request is logged at INFO with its callback
         and whether it was pre-registered (Connection keeps no registry listing to inspect later)."""
-        from keboola_mcp_server.oauth import _ClientRegistration
+        from keboola_mcp_server.oauth import _WELL_KNOWN_CONNECTION_CLIENT_IDS, _ClientRegistration
 
-        self._stub_client_registration(monkeypatch, _ClientRegistration.REGISTERED)
+        checked = self._stub_client_registration(monkeypatch, _ClientRegistration.REGISTERED)
         client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
         params = AuthorizationParams(
             redirect_uri=AnyUrl(redirect_uri),
@@ -827,6 +841,13 @@ class TestSimpleOAuthProvider:
         assert parsed.path == '/oauth/consent'
         query = parse_qs(parsed.query)
         assert query['scope'] == ['claudai projectless']
+
+        if pre_registered:
+            # one check, of the literal id against the client's own URI (the limiter exemption and the stale-REGISTERED
+            # fallback key on that pair)
+            assert checked == [(_WELL_KNOWN_CONNECTION_CLIENT_IDS[redirect_uri], redirect_uri)]
+        else:
+            assert checked[0][1] == oauth_provider._mcp_callback_url
 
         [record] = [r for r in caplog.records if 'Registered client proceeding to consent' in r.message]
         assert record.levelno == logging.INFO
@@ -1446,6 +1467,49 @@ class TestSimpleOAuthProvider:
             assert url.path == urlparse(oauth_provider._mcp_callback_url).path
             assert query['error'] == ['unregistered_client']
             assert 'pending_mcp_client' not in query
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        'redirect_uri',
+        ['https://claude.ai/api/mcp/auth_callback', 'https://chatgpt.com/connector_platform_oauth_redirect'],
+    )
+    @pytest.mark.parametrize('approval_on', [True, False])
+    async def test_authorize_refuses_a_pre_registered_client_missing_in_connection_whatever_the_approval_switch(
+        self,
+        oauth_provider: SimpleOAuthProvider,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        redirect_uri: str,
+        approval_on: bool,
+    ):
+        """Deployed ahead of the Connection migration that registers the row: approving the literal id would leave a
+        row bound to this server's callback that no login can use and the migration stops on, so it fails closed, is
+        logged at WARNING, and uses none of the daily approval budget."""
+        from keboola_mcp_server.oauth import _ApprovalBudget, _ClientRegistration
+
+        self._stub_client_registration(monkeypatch, _ClientRegistration.NOT_REGISTERED)
+        monkeypatch.setattr(oauth_provider, '_dynamic_client_approval', approval_on)
+        monkeypatch.setattr(oauth_provider, '_approval_daily_limit', 1)
+        monkeypatch.setattr(oauth_provider, '_approval_budget', _ApprovalBudget(1))
+        client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
+        params = AuthorizationParams(
+            redirect_uri=AnyUrl(redirect_uri),
+            redirect_uri_provided_explicitly=True,
+            code_challenge='challenge',
+            state='client-state',
+            scopes=None,
+        )
+
+        with caplog.at_level(logging.INFO):
+            url = urlparse(await oauth_provider.authorize(client, params))
+        query = parse_qs(url.query)
+
+        assert url.netloc == urlparse(oauth_provider._mcp_callback_url).netloc
+        assert query['error'] == ['pre_registered_client_missing']
+        assert 'pending_mcp_client' not in query
+        assert oauth_provider._approval_budget._granted_at == {}
+        [record] = [r for r in caplog.records if 'Pre-registered client not registered in Connection' in r.message]
+        assert record.levelno == logging.WARNING
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize('approval_on', [True, False])
@@ -3093,6 +3157,10 @@ class TestAuthorizationServerMetadata:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
+        'redirect_uri',
+        ['https://claude.ai/api/mcp/auth_callback', 'https://chatgpt.com/connector_platform_oauth_redirect'],
+    )
+    @pytest.mark.parametrize(
         ('response_kind', 'expected_params'),
         [
             ('success', {'code', 'state', 'code_challenge', 'iss'}),
@@ -3106,12 +3174,12 @@ class TestAuthorizationServerMetadata:
         client,
         monkeypatch: pytest.MonkeyPatch,
         caplog: pytest.LogCaptureFixture,
+        redirect_uri: str,
         response_kind: str,
         expected_params: set[str],
     ) -> None:
         from keboola_mcp_server import oauth as oauth_module
 
-        redirect_uri = 'https://claude.ai/api/mcp/auth_callback'
         state = await self._consent_state(provider, monkeypatch, redirect_uri, 'REGISTERED')
         if response_kind == 'success':
             token_response = {'access_token': 'league-at', 'refresh_token': 'league-rt', 'expires_in': 3600}
@@ -3157,8 +3225,9 @@ class TestAuthorizationServerMetadata:
     @pytest.mark.parametrize(
         ('redirect_uri', 'registration', 'state_change'),
         [
-            # not approved by anyone yet: sending the browser there would be an open redirect
-            ('https://claude.ai/api/mcp/auth_callback', 'NOT_REGISTERED', None),
+            # not approved by anyone yet: sending the browser there would be an open redirect (authorize no longer
+            # issues a pending state for this URI, but one signed earlier is still live)
+            ('https://claude.ai/api/mcp/auth_callback', 'REGISTERED', 'pending'),
             # approved, but possibly by the very user who wants the redirect
             ('https://attacker.example/cb', 'REGISTERED', None),
             ('https://claude.ai/api/mcp/auth_callback', 'REGISTERED', 'expired'),
@@ -3209,6 +3278,8 @@ class TestAuthorizationServerMetadata:
 
     @classmethod
     def _change_state(cls, provider: SimpleOAuthProvider, state: str, change: str | None, redirect_uri: str) -> str:
+        if change == 'pending':
+            return provider._encode({**provider._decode(state), 'pending': True})
         if change == 'expired':
             return provider._encode({**provider._decode(state), 'expires_at': time.time() - 1})
         if change == 'forged':
