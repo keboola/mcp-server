@@ -655,3 +655,75 @@ class TestLegacySsePath:
         assert response.headers['www-authenticate'] == (
             'Bearer resource_metadata="https://mcp.keboola.com/.well-known/oauth-protected-resource"'
         )
+
+
+class TestDirectoryToolProfile:
+    @pytest.mark.parametrize(
+        ('session_resource', 'expect_profile'),
+        [
+            # created through the ChatGPT plugin (router flow, DMD-2481), in another spelling too
+            ('https://mcp-router.example.com/mcp', True),
+            ('https://MCP-Router.example.com/mcp/', True),
+            # a direct connector (Claude.ai, a ChatGPT custom connector) and every session from before
+            ('https://mcp.keboola.com/mcp', False),
+            (None, False),
+        ],
+    )
+    def test_router_sessions_get_the_directory_tool_profile(
+        self, session_resource: str | None, expect_profile: bool, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """DMD-2482 through the production wiring: the bearer token's session decides the tool list, and a call to an
+        excluded tool is refused before anything else runs."""
+        import json
+        from datetime import datetime, timedelta, timezone
+
+        from keboola_mcp_server.mcp import DIRECTORY_TOOLS
+        from keboola_mcp_server.session_store.repository import OAuthSession, PostgresSessionStore
+
+        session = OAuthSession(
+            id='1',
+            client_id='client',
+            user_email=None,
+            kbc_access_token='kbc_at_x',
+            kbc_refresh_token='kbc_rt_x',
+            kbc_access_expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+            scope_project_ids=None,
+            scope_read_only=False,
+            scope_confirmed=False,
+            scope_scoped_token=None,
+            scope_scoped_expires_at=None,
+            oauth_projectless=True,
+            resource=session_resource,
+        )
+        monkeypatch.setattr(PostgresSessionStore, 'get_by_access_token', AsyncMock(return_value=session))
+        config = Config(
+            storage_api_url=STACK,
+            oauth_client_id='client-id',
+            oauth_client_secret='client-secret',
+            oauth_server_url=STACK,
+            mcp_server_url='https://mcp.keboola.com',
+            postgres_dsn='postgresql://user:pass@localhost:1/db',
+            session_encryption_key=base64.b64encode(b'0' * 32).decode(),
+            stack_key='us-aws',
+            router_url='https://mcp-router.example.com',
+        )
+        headers = {**STREAMABLE_HTTP_HEADERS, 'Authorization': 'Bearer us-aws.opaque'}
+
+        def rpc(client: TestClient, method: str, params: dict) -> dict:
+            response = client.post(
+                '/mcp', json={'jsonrpc': '2.0', 'id': 1, 'method': method, 'params': params}, headers=headers
+            )
+            assert response.status_code == 200, response.text
+            [data] = [line[len('data: ') :] for line in response.text.splitlines() if line.startswith('data: ')]
+            return json.loads(data)['result']
+
+        with _http_client(config) as client:
+            names = {t['name'] for t in rpc(client, 'tools/list', {})['tools']}
+            if expect_profile:
+                call = rpc(client, 'tools/call', {'name': 'run_sync_action', 'arguments': {}})
+
+        assert (names <= DIRECTORY_TOOLS) is expect_profile
+        assert {'get_tables', 'query_data', 'get_accessible_projects'} <= names
+        if expect_profile:
+            assert call['isError'] is True
+            assert 'not available in the Keboola plugin' in call['content'][0]['text']

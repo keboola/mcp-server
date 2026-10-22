@@ -26,7 +26,13 @@ from keboola_mcp_server.config import (
 )
 from keboola_mcp_server.elicitation import UrlElicitationMiddleware
 from keboola_mcp_server.errors import SanitizedLoggingMiddleware, ValidationErrorMiddleware
-from keboola_mcp_server.mcp import KeboolaMcpServer, ServerState, SessionStateMiddleware, ToolsFilteringMiddleware
+from keboola_mcp_server.mcp import (
+    DirectoryProfileMiddleware,
+    KeboolaMcpServer,
+    ServerState,
+    SessionStateMiddleware,
+    ToolsFilteringMiddleware,
+)
 from keboola_mcp_server.multiproject import MultiProjectMiddleware
 from keboola_mcp_server.oauth import SimpleOAuthProvider, UntrustedAuthorizeRedirectMiddleware
 from keboola_mcp_server.preview import preview_config_diff
@@ -426,6 +432,9 @@ def create_server(
         auth=oauth_provider,
         middleware=[
             SanitizedLoggingMiddleware(log_level=logging.DEBUG),
+            # Ahead of SessionStateMiddleware: a plugin session's call to an excluded tool is refused before any
+            # session state, token or project work. It reads only the request's authenticated user.
+            DirectoryProfileMiddleware(),
             SessionStateMiddleware(),
             ToolAuthorizationMiddleware(),
             ToolDeferralMiddleware(),

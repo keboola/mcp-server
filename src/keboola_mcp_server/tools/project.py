@@ -25,7 +25,13 @@ from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import MetadataField, deployed_sa_token_path
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
-from keboola_mcp_server.mcp import CONVERSATION_ID, STORAGE_API_URL, ServerState, process_concurrently
+from keboola_mcp_server.mcp import (
+    CONVERSATION_ID,
+    STORAGE_API_URL,
+    ServerState,
+    is_directory_session,
+    process_concurrently,
+)
 from keboola_mcp_server.mcp import PlainFunctionTool as FunctionTool
 from keboola_mcp_server.multiproject import MultiProjectMiddleware
 from keboola_mcp_server.resources.prompts import get_project_system_prompt
@@ -311,7 +317,7 @@ async def get_project_info(
         is_development_branch=is_development_branch,
         user_role=user_role,
         toolset_restrictions=_get_toolset_restrictions(user_role),
-        llm_instruction=get_project_system_prompt(sql_dialect),
+        llm_instruction=get_project_system_prompt(sql_dialect, directory=is_directory_session()),
     )
 
     LOG.info('Returning unified project info.')
@@ -527,6 +533,7 @@ async def get_accessible_projects(
     # sent once per distinct dialect rather than duplicated per project.
     base_instructions: list[BaseInstructionGroup] | None = None
     if with_llm_instruction:
+        directory = is_directory_session()
         by_dialect: dict[str | None, list[int]] = {}
         for p in projects:
             by_dialect.setdefault(p.sql_dialect, []).append(p.id)
@@ -536,7 +543,7 @@ async def get_accessible_projects(
                 sql_dialect=dialect,
                 # No/unknown dialect -> pass '' so the prompt omits dialect-specific guidance rather
                 # than defaulting to Snowflake (which would mislead a BigQuery/unknown project).
-                instructions=get_project_system_prompt(dialect or ''),
+                instructions=get_project_system_prompt(dialect or '', directory=directory),
             )
             for dialect, ids in by_dialect.items()
         ]

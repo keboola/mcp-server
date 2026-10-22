@@ -150,6 +150,60 @@ DATA_APP_BRANCH_GATED_TOOLS = {
     'get_data_app_preview_link',
 }
 
+# The tools a session created through the ChatGPT plugin (bound to the global router's resource) may see and call: an
+# explicit allow-list, so that a tool added later stays hidden there until it is reviewed for the plugin directory
+# (OpenAI scans the plugin's tool list and holds new tools until approved). Not listed: `run_sync_action` (an arbitrary
+# action on any component, a generic executor by OpenAI's rules), `create_project` (an unowned PAYG project, next to
+# the commerce rules), and the tools that hand out a secret, which OpenAI forbids in responses:
+# `create_python_js_data_app_git_credential` and `modify_python_js_data_app` (git URLs with an embedded secret),
+# `delete_python_js_data_app_draft` (part of that git workflow) and `get_data_app_preview_link` (a URL that carries a
+# secret and skips the app login).
+DIRECTORY_TOOLS = frozenset(
+    {
+        'add_config_row',
+        'create_conditional_flow',
+        'create_config',
+        'create_flow',
+        'create_oauth_url',
+        'create_sql_transformation',
+        'create_stream',
+        'deploy_data_app',
+        'docs_query',
+        'find_component_id',
+        'get_accessible_projects',
+        'get_buckets',
+        'get_components',
+        'get_config_examples',
+        'get_configs',
+        'get_data_apps',
+        'get_flow_examples',
+        'get_flow_schema',
+        'get_flows',
+        'get_jobs',
+        'get_project_info',
+        'get_semantic_context',
+        'get_semantic_schema',
+        'get_shared_buckets',
+        'get_streams',
+        'get_tables',
+        'link_shared_bucket',
+        'modify_flow',
+        'modify_streamlit_data_app',
+        'query_data',
+        'run_job',
+        'search',
+        'search_semantic_context',
+        'set_project_scope',
+        'update_config',
+        'update_config_row',
+        'update_descriptions',
+        'update_flow',
+        'update_project_description',
+        'update_sql_transformation',
+        'validate_semantic_query',
+    }
+)
+
 
 def _is_unauthorized(error: BaseException) -> bool:
     """True when `error` is, or was caused by, a 401 from a Keboola API.
@@ -371,6 +425,26 @@ def get_http_request_or_none() -> Request | None:
         return get_http_request()
     except RuntimeError:
         return None
+
+
+def is_directory_session() -> bool:
+    """Whether the MCP call being handled comes from a session bound to the global router's resource
+    (`ProxyAccessToken.directory_profile`), which gets only the `DIRECTORY_TOOLS`. Read from the session row through
+    the bearer token, before and independently of any Keboola token verification, so no fallback path can widen it."""
+    http_rq = get_http_request_or_none()
+    user = http_rq.scope.get('user') if http_rq is not None else None
+    return (
+        isinstance(user, AuthenticatedUser)
+        and isinstance(user.access_token, ProxyAccessToken)
+        and user.access_token.directory_profile
+    )
+
+
+def directory_denial(tool_name: str) -> str:
+    return (
+        f'The tool "{tool_name}" is not available in the Keboola plugin. '
+        'Use Keboola through its own MCP server URL to reach every tool.'
+    )
 
 
 #: Exceptions this middleware raises whose message *is* the answer the caller needs, rather than a
@@ -1244,6 +1318,24 @@ class SessionStateMiddleware(fmw.Middleware):
         return state
 
 
+class DirectoryProfileMiddleware(fmw.Middleware):
+    """Refuses a call to a tool outside `DIRECTORY_TOOLS` in a session of the ChatGPT plugin. Registered right after
+    the logging middleware (`server.py`), so an excluded tool never reaches `SessionStateMiddleware`, a project swap or
+    `ToolsFilteringMiddleware`'s bootstrap exemption and token verification."""
+
+    async def on_call_tool(
+        self,
+        context: MiddlewareContext[mt.CallToolRequestParams],
+        call_next: CallNext[mt.CallToolRequestParams, mt.CallToolResult],
+    ) -> mt.CallToolResult:
+        if is_directory_session():
+            # The resolved name, not the requested one, so that a renaming tool transform cannot slip past the list.
+            tool = await context.fastmcp_context.fastmcp.get_tool(context.message.name)
+            if tool.name not in DIRECTORY_TOOLS:
+                raise ToolError(directory_denial(tool.name))
+        return await call_next(context)
+
+
 class ToolsFilteringMiddleware(fmw.Middleware):
     """
     This middleware filters out tools that are not available in the current project. The filtering is based on the
@@ -1312,6 +1404,9 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         self, context: MiddlewareContext[mt.ListToolsRequest], call_next: CallNext[mt.ListToolsRequest, list[Tool]]
     ) -> list[Tool]:
         tools = await call_next(context)
+        if is_directory_session():
+            # First, so that every path below (the bootstrap superset, the verify_token fallback) starts from it.
+            tools = [t for t in tools if t.name in DIRECTORY_TOOLS]
 
         # A bootstrap session (no credential yet -- see `create_session_state`) has no client to
         # verify a token with, so there is nothing to filter on. Advertise the superset; the
