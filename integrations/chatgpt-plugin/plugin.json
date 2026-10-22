@@ -1,0 +1,38 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "keboola",
+  "version": "0.1.0",
+  "description": "Explore, query and build in your Keboola projects: inspect tables, run SELECT queries, create SQL transformations and flows, and debug failed jobs through the Keboola MCP server.",
+  "author": {
+    "name": "Keboola",
+    "url": "https://www.keboola.com"
+  },
+  "homepage": "https://help.keboola.com/ai/mcp-server/",
+  "repository": "https://github.com/keboola/mcp-server",
+  "license": "MIT",
+  "keywords": ["keboola", "data", "sql", "etl", "transformations", "flows", "mcp"],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "Keboola",
+        "shortDescription": "Work with your Keboola data",
+        "longDescription": "Connect ChatGPT to your Keboola projects. Explore buckets and tables, query data with SQL, build Snowflake or BigQuery SQL transformations, orchestrate them in flows, and find out why a job failed. You log in with your Keboola account and choose which projects ChatGPT may use; the plugin's workflows ask you to confirm the project before they change anything.",
+        "developerName": "Keboola",
+        "category": "Developer Tools",
+        "capabilities": ["Read", "Write"],
+        "websiteURL": "https://www.keboola.com",
+        "supportURL": "https://help.keboola.com/ai/mcp-server/",
+        "privacyPolicyURL": "https://www.keboola.com/privacy-policy",
+        "termsOfServiceURL": "https://www.keboola.com/terms-and-conditions",
+        "defaultPrompt": [
+          "Show me the tables in my Keboola project and what they contain.",
+          "Create a SQL transformation that aggregates daily orders.",
+          "Why did my last Keboola job fail?"
+        ],
+        "brandColor": "#0072EF",
+        "composerIcon": "./assets/icon.png",
+        "logo": "./assets/icon.png"
+      }
+    }
+  }
+}

@@ -20,6 +20,7 @@ from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config, MetadataField, ServerRuntimeInfo
 from keboola_mcp_server.links import Link
 from keboola_mcp_server.mcp import STORAGE_API_URL, ServerState, SessionStateMiddleware
+from keboola_mcp_server.resources.prompts import get_project_system_prompt
 from keboola_mcp_server.scope import (
     OAUTH_SESSION_ID_KEY,
     SCOPE_KEY,
@@ -151,10 +152,12 @@ _DEV_BRANCH = {'id': 456, 'name': 'feature-x', 'isDefault': False}
         ('admin', 'admin', [], True, 'Snowflake', '"DATABASE"."SCHEMA"."TABLE"', '456', 456, 'feature-x', True),
     ],
 )
+@pytest.mark.parametrize('directory', [False, True])
 @pytest.mark.asyncio
 async def test_get_project_info(
     mocker: MockerFixture,
     mcp_context_client: Context,
+    directory: bool,
     token_role: str | None,
     expected_user_role: str,
     expected_restriction_substrings: list[str],
@@ -195,9 +198,13 @@ async def test_get_project_info(
         new=mocker.AsyncMock(return_value=mock_links_manager),
     )
 
+    # a ChatGPT plugin session (DMD-2482) gets the prompt that names only its tools
+    mocker.patch('keboola_mcp_server.tools.project.is_directory_session', return_value=directory)
+
     result = await get_project_info(mcp_context_client)
 
     assert isinstance(result, ProjectInfo)
+    assert result.llm_instruction == get_project_system_prompt(sql_dialect, directory=directory)
     assert result.project_id == 'proj-123'
     assert result.project_name == 'Test Project'
     assert result.organization_id == 'org-456'
@@ -390,9 +397,10 @@ async def test_get_accessible_projects_llm_instructions_grouped_by_dialect(
     assert all(g.instructions for g in result.base_instructions)
 
 
+@pytest.mark.parametrize('directory', [False, True])
 @pytest.mark.asyncio
 async def test_get_accessible_projects_unknown_dialect_omits_snowflake_guidance(
-    mcp_context_client: Context, mocker: MockerFixture
+    mcp_context_client: Context, mocker: MockerFixture, directory: bool
 ) -> None:
     # A project whose dialect can't be resolved (None) must NOT fall back to Snowflake guidance —
     # that would mislead the assistant into Snowflake-specific SQL for a non-Snowflake project.
@@ -407,14 +415,17 @@ async def test_get_accessible_projects_unknown_dialect_omits_snowflake_guidance(
         new=mocker.AsyncMock(side_effect=lambda _ss, _url, _tok, pid: (pid, None, None, None)),
     )
 
+    mocker.patch('keboola_mcp_server.tools.project.is_directory_session', return_value=directory)
+
     result = await get_accessible_projects(mcp_context_client, with_llm_instruction=True)
 
     assert result.base_instructions is not None
     (group,) = result.base_instructions
     assert group.sql_dialect is None
-    # The unknown-dialect group gets the no-dialect prompt, not the Snowflake one.
-    assert group.instructions == get_project_system_prompt('')
-    assert group.instructions != get_project_system_prompt('Snowflake')
+    # The unknown-dialect group gets the no-dialect prompt, not the Snowflake one; a ChatGPT plugin session (DMD-2482)
+    # gets the variant that names only its tools.
+    assert group.instructions == get_project_system_prompt('', directory=directory)
+    assert group.instructions != get_project_system_prompt('Snowflake', directory=directory)
 
 
 @pytest.mark.asyncio

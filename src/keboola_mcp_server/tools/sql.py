@@ -3,10 +3,13 @@ import contextlib
 import csv
 import logging
 import os
-from collections.abc import Awaitable, Mapping
+import re
+import threading
+from collections.abc import Awaitable, Iterator, Mapping
 from io import StringIO
-from typing import Annotated
+from typing import Annotated, ClassVar
 
+import sqlglot
 from fastmcp import Context, FastMCP
 from mcp.types import (
     ProgressNotification,
@@ -15,8 +18,14 @@ from mcp.types import (
     ToolAnnotations,
 )
 from pydantic import BaseModel, Field
+from sqlglot import exp
+from sqlglot.dialects.bigquery import BigQuery
+from sqlglot.dialects.snowflake import Snowflake
+from sqlglot.errors import ParseError, TokenError
+from sqlglot.tokens import Token, TokenType
 from starlette.requests import Request
 
+from keboola_mcp_server.clients.base import InvalidArgumentError
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.mcp import PlainFunctionTool as FunctionTool
@@ -46,6 +55,232 @@ RLS_MAX_QUERY_CHARS = 20_000
 # How often to check whether the HTTP client has disconnected during a long query.
 # Mirrors the 1 s job-poll cadence in `_Workspace.execute_query`.
 _DISCONNECT_POLL_INTERVAL = 1.0
+
+
+class _BackendBigQuery(BigQuery):
+    class Tokenizer(BigQuery.Tokenizer):
+        # BigQuery applies the string escapes to quoted identifiers too; sqlglot's BigQuery tokenizer does not, so
+        # it would end the identifier at `\`` and see a different statement than BigQuery runs.
+        IDENTIFIER_ESCAPES: ClassVar[list[str]] = ['\\']
+
+
+# Workspace dialect names (`WorkspaceManager.get_sql_dialect`) mapped to sqlglot dialects.
+_SQLGLOT_DIALECTS: dict[str, type[sqlglot.Dialect] | str] = {'snowflake': 'snowflake', 'bigquery': _BackendBigQuery}
+_EXPLAIN_OPTIONS = re.compile(r'^\s*USING\s+\w+\s', re.IGNORECASE)
+# sqlglot ends line comments only at \n and \r; reject other line breaks a backend might end them at.
+_UNUSUAL_LINE_BREAKS = re.compile('[\x0b\x0c\x85\u2028\u2029]')
+# Longer SQL is rejected before it is checked, which keeps the check's time bounded.
+MAX_SQL_QUERY_LENGTH = 2_000_000  # above the longest statement observed in query_data, about 1.6 MB
+# Snowflake reads an unquoted stage path up to whitespace, sqlglot reads it as tokens. Where the two could disagree,
+# fail closed: outside quoted names in the stage-name part, a path must not contain a quote, `$$` or a comment start.
+_QUOTED_NAME = r'"(?:[^"]|"")*"'
+_UNQUOTED_NAME = r'[^ \t\n\r/."\']*'
+_STAGE_PATH = re.compile(
+    rf'(?P<name>[~%]?(?:{_QUOTED_NAME}|{_UNQUOTED_NAME})(?:\.(?:{_QUOTED_NAME}|{_UNQUOTED_NAME}))*)(?P<rest>[^ \t\n\r]*)'
+)
+_QUOTED_NAME_RE = re.compile(_QUOTED_NAME)
+_UNSAFE_IN_STAGE_PATH = ('"', "'", '$$', '//', '--', '/*')
+_READ_ONLY_EXPRESSIONS = (exp.Select, exp.SetOperation, exp.Subquery, exp.Show, exp.Describe)
+# Statements sqlglot cannot model fully are parsed as `exp.Command` named by their first keyword.
+_READ_ONLY_COMMANDS = frozenset({'SHOW', 'DESCRIBE', 'DESC'})
+_WRITE_EXPRESSIONS = (exp.Insert, exp.Update, exp.Delete, exp.Merge, exp.Create, exp.Drop, exp.Alter, exp.Command)
+_READ_ONLY_FIRST_TOKENS = frozenset(
+    {TokenType.SELECT, TokenType.WITH, TokenType.SHOW, TokenType.DESCRIBE, TokenType.DESC, TokenType.L_PAREN}
+)
+_WRITE_TOKENS = frozenset(
+    {
+        TokenType.INSERT,
+        TokenType.INTO,  # SELECT ... INTO, which the parsed path rejects too
+        TokenType.UPDATE,
+        TokenType.DELETE,
+        TokenType.MERGE,
+        TokenType.CREATE,
+        TokenType.DROP,
+        TokenType.UNDROP,
+        TokenType.ALTER,
+        TokenType.TRUNCATE,
+        TokenType.GRANT,
+        TokenType.REVOKE,
+        TokenType.COMMENT,
+        TokenType.COPY,
+        TokenType.EXPORT,
+        TokenType.LOAD,
+        TokenType.PUT,
+        TokenType.SET,
+        TokenType.USE,
+        TokenType.BEGIN,
+        TokenType.COMMIT,
+        TokenType.ROLLBACK,
+        TokenType.EXECUTE,
+        TokenType.COMMAND,
+    }
+)
+_NOT_READ_ONLY_MSG = (
+    'query_data runs exactly one read-only statement: SELECT, WITH ... SELECT, SHOW, DESCRIBE or EXPLAIN. '
+    'Writes and other statements are not allowed; use a transformation to modify data.'
+)
+
+
+def _expand_commands(dialect: sqlglot.Dialect, tokens: list[Token]) -> list[Token]:
+    """The tokenizer keeps everything after a command keyword (`EXPLAIN`, BigQuery `SHOW`) as one raw string;
+    tokenize that string too, so the checks see what follows the keyword. One level only, which keeps the check
+    linear; a command nested in a command is rejected."""
+    expanded: list[Token] = []
+    commands = dialect.tokenizer_class.COMMANDS
+    for i, token in enumerate(tokens):
+        if i > 0 and tokens[i - 1].token_type in commands and token.token_type == TokenType.STRING:
+            inner = dialect.tokenize(token.text)
+            if any(t.token_type in commands for t in inner):
+                raise InvalidArgumentError(f'Nested commands are not allowed. {_NOT_READ_ONLY_MSG}')
+            expanded.extend(inner)
+        else:
+            expanded.append(token)
+    return expanded
+
+
+def _check_stage_paths(sql_query: str, tokens: list[Token]) -> None:
+    """Rejects Snowflake stage paths that sqlglot might read differently from Snowflake (see `_STAGE_PATH`).
+    Every character is scanned at most once."""
+    scanned_until = 0
+    for token in tokens:
+        if token.token_type != TokenType.PARAMETER or token.text != '@' or token.start < scanned_until:
+            continue
+        path = _STAGE_PATH.match(sql_query, token.end + 1)
+        scanned_until = path.end()
+        unquoted = _QUOTED_NAME_RE.sub('x', path.group('name')) + path.group('rest')
+        if any(unsafe in unquoted for unsafe in _UNSAFE_IN_STAGE_PATH):
+            raise InvalidArgumentError(
+                'Stage paths must not contain quotes, $$ or comment starts (//, --, /*) outside quoted stage names; '
+                'put whitespace between the path and what follows it.'
+            )
+
+
+def _is_read_only_expression(expression: exp.Expression, tokens: list[Token]) -> bool:
+    if isinstance(expression, exp.Command):
+        # sqlglot keeps the rest of an unmodelled statement as raw text, so check its tokens instead.
+        return expression.name.upper() in _READ_ONLY_COMMANDS and not any(
+            token.token_type in _WRITE_TOKENS for token in tokens[1:]
+        )
+    if not isinstance(expression, _READ_ONLY_EXPRESSIONS):
+        return False
+    if expression.find(exp.Into) is not None:
+        return False  # SELECT ... INTO creates a table, also inside a union or subquery
+    # Data-modifying CTEs or subqueries.
+    return expression.find(*_WRITE_EXPRESSIONS) is None
+
+
+def _is_read_only_tokens(tokens: list[Token]) -> bool:
+    """Keyword check for a single statement sqlglot cannot parse, so that valid SQL beyond its grammar is
+    left to the backend instead of being rejected here.
+
+    Allowing by default is safe only because a single Snowflake or BigQuery statement that starts with one of
+    `_READ_ONLY_FIRST_TOKENS` cannot run another statement except through the `->>` pipe (rejected before this
+    check) or a keyword in `_WRITE_TOKENS`. Re-check that before allowing another first token here.
+    """
+    if tokens[0].token_type not in _READ_ONLY_FIRST_TOKENS:
+        return False
+    return not any(token.token_type in _WRITE_TOKENS for token in tokens[1:])
+
+
+class _QuietSqlglotFilter(logging.Filter):
+    """Drops sqlglot records while the current thread checks a query: sqlglot's 'unsupported syntax' warning quotes
+    the user's SQL for an allowed SHOW or DESCRIBE. Thread-local, because the check runs in worker threads."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._state = threading.local()
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return not getattr(self._state, 'active', False)
+
+    @contextlib.contextmanager
+    def active(self) -> Iterator[None]:
+        self._state.active = True
+        try:
+            yield
+        finally:
+            self._state.active = False
+
+
+_QUIET_SQLGLOT = _QuietSqlglotFilter()
+logging.getLogger('sqlglot').addFilter(_QUIET_SQLGLOT)
+
+
+def validate_read_only_statement(sql_query: str, sql_dialect: str | None) -> None:
+    """Raises `InvalidArgumentError` unless `sql_query` is exactly one SELECT, WITH ... SELECT, SHOW, DESCRIBE
+    or EXPLAIN statement in the given workspace dialect.
+
+    The sqlglot tokenizer drops comments and keeps string literals and quoted identifiers whole, so statements
+    smuggled in either are not counted. This is not a sandbox: side effects inside a SELECT (procedures,
+    `SYSTEM$` functions) are limited by the workspace's database role.
+    """
+    if (sqlglot_dialect := _SQLGLOT_DIALECTS.get((sql_dialect or '').lower())) is None:
+        raise ValueError(f'Cannot check SQL statements for the unsupported SQL dialect "{sql_dialect}".')
+    if len(sql_query) > MAX_SQL_QUERY_LENGTH:
+        raise InvalidArgumentError(
+            f'The SQL query is {len(sql_query)} characters long; query_data accepts at most {MAX_SQL_QUERY_LENGTH}.'
+        )
+    if _UNUSUAL_LINE_BREAKS.search(sql_query):
+        raise InvalidArgumentError(f'The SQL query contains an unsupported line break character. {_NOT_READ_ONLY_MSG}')
+    dialect = sqlglot.Dialect.get_or_raise(sqlglot_dialect)
+    # sqlglot treats `{# ... #}` as a (Jinja) comment in every dialect; neither backend does. On BigQuery `#` starts
+    # a line comment, which `{ #` keeps; on Snowflake `#` is no comment, and `{x` keeps the stage-path scan whole.
+    jinja_comment = '{ #' if isinstance(dialect, BigQuery) else '{x'
+    try:
+        _validate_statement(dialect, sql_query.replace('{#', jinja_comment))
+    except RecursionError as e:  # a safety net; the parser's own RecursionError falls back to the keyword check
+        raise InvalidArgumentError(f'The SQL query is nested too deeply to check. {_NOT_READ_ONLY_MSG}') from e
+
+
+def _validate_statement(dialect: sqlglot.Dialect, sql_query: str, *, explained: bool = False) -> None:
+    try:
+        tokens = dialect.tokenize(sql_query)
+    except TokenError as e:
+        raise InvalidArgumentError(f'Cannot parse the SQL query: {e}. {_NOT_READ_ONLY_MSG}') from e
+
+    if isinstance(dialect, Snowflake):
+        _check_stage_paths(sql_query, tokens)
+
+    statements: list[list[Token]] = [[]]
+    for token in tokens:
+        if token.token_type == TokenType.SEMICOLON:
+            statements.append([])
+        else:
+            statements[-1].append(token)
+    statements = [statement for statement in statements if statement]
+    if len(statements) != 1:
+        raise InvalidArgumentError(f'Expected exactly one SQL statement, got {len(statements)}. {_NOT_READ_ONLY_MSG}')
+
+    try:
+        statement = _expand_commands(dialect, statements[0])
+    except TokenError as e:
+        raise InvalidArgumentError(f'Cannot parse the SQL query: {e}. {_NOT_READ_ONLY_MSG}') from e
+    # The Snowflake pipe operator `->>` chains any statements, including writes, into one; sqlglot reads it as
+    # a JSON operator. BigQuery has no such operator.
+    if any(token.token_type == TokenType.DARROW for token in statement):
+        raise InvalidArgumentError(f'The pipe operator ->> is not allowed. {_NOT_READ_ONLY_MSG}')
+
+    first = statements[0][0]
+    if first.token_type == TokenType.COMMAND and first.text.upper() == 'EXPLAIN':
+        if explained:
+            raise InvalidArgumentError(f'Nested EXPLAIN is not allowed. {_NOT_READ_ONLY_MSG}')
+        # The tokenizer keeps the explained statement as one raw string; check it as a statement of its own.
+        explained_sql = statements[0][1].text if len(statements[0]) > 1 else ''
+        _validate_statement(dialect, _EXPLAIN_OPTIONS.sub('', explained_sql, count=1), explained=True)
+        return
+
+    try:
+        # A comment after the final `;` comes back as an `exp.Semicolon`.
+        with _QUIET_SQLGLOT.active():
+            parsed = dialect.parser().parse(tokens, sql_query)
+        expressions = [e for e in parsed if e is not None and not isinstance(e, exp.Semicolon)]
+    except (ParseError, RecursionError):
+        # The tokenizer and the stage scan are not recursive, so the keyword fallback still applies.
+        read_only = _is_read_only_tokens(statement)
+    else:
+        read_only = len(expressions) == 1 and _is_read_only_expression(expressions[0], statement)
+    if not read_only:
+        raise InvalidArgumentError(_NOT_READ_ONLY_MSG)
 
 
 async def _watch_for_http_disconnect(request: Request, poll_interval: float | None = None) -> None:
@@ -244,7 +479,9 @@ def add_sql_tools(mcp: FastMCP) -> None:
     mcp.add_tool(
         FunctionTool.from_function(
             query_data,
-            annotations=ToolAnnotations(readOnlyHint=True),
+            annotations=ToolAnnotations(
+                readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False
+            ),
             tags={SQL_TOOLS_TAG},
         )
     )
@@ -400,7 +637,15 @@ async def _apply_rls(sql_query: str, *, ctx: Context, workspace_manager: Workspa
 
 @tool_errors()
 async def query_data(
-    sql_query: Annotated[str, Field(description='SQL SELECT query to run.')],
+    sql_query: Annotated[
+        str,
+        Field(
+            description=(
+                'One read-only SQL statement to run: SELECT or WITH ... SELECT; on Snowflake also SHOW, DESCRIBE '
+                'or EXPLAIN.'
+            )
+        ),
+    ],
     query_name: Annotated[
         str,
         Field(
@@ -425,6 +670,9 @@ async def query_data(
 ) -> QueryDataOutput:
     """
     Executes an SQL SELECT query to get the data from the underlying database.
+    Only one read-only statement is accepted: SELECT or WITH ... SELECT, and on Snowflake also SHOW, DESCRIBE
+    or EXPLAIN (BigQuery has none of these; query INFORMATION_SCHEMA instead). Anything else, including
+    multiple statements, is rejected before it reaches the database.
 
     BEFORE QUERYING:
     * Always verify the table has a non-null fullyQualifiedName from get_tables tool.
@@ -484,6 +732,9 @@ async def query_data(
     * Ensure valid filtering by checking actual data values first
     """
     workspace_manager = WorkspaceManager.from_state(ctx.session.state)
+    sql_dialect = await workspace_manager.get_sql_dialect()
+    # The check is CPU-bound and linear in the query length; keep it off the event loop.
+    await asyncio.to_thread(validate_read_only_statement, sql_query, sql_dialect)
     # Row/column-level security is applied silently: the caller is not told that a policy shaped
     # the result (the applied tables only go to the server log, see `_log_rls_outcome`).
     sql_query, _ = await _apply_rls(sql_query, ctx=ctx, workspace_manager=workspace_manager)
@@ -512,7 +763,7 @@ async def query_data(
         if result.data:
             data = result.data
         else:
-            # non-SELECT query, this should not really happen, because this tool is for running SELECT queries
+            # A read-only statement that returned no result set; the backend's message is all there is.
             data = SqlSelectData(columns=['message'], rows=[{'message': result.message}])
 
         # Convert to CSV

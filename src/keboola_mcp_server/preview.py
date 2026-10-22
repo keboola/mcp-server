@@ -30,6 +30,19 @@ from keboola_mcp_server.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
 
+# The tools whose configuration change `/preview/configuration` can preview. All are on `mcp.DIRECTORY_TOOLS` (a test
+# checks it), which is why the route does not apply the directory tool profile.
+PREVIEW_TOOLS = frozenset(
+    {
+        'update_config',
+        'update_config_row',
+        'update_sql_transformation',
+        UPDATE_FLOW_TOOL_NAME,
+        MODIFY_FLOW_TOOL_NAME,
+        'modify_streamlit_data_app',
+    }
+)
+
 
 class PreviewConfigDiffRq(BaseModel):
     tool_name: str = Field(

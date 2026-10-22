@@ -9,7 +9,7 @@ import json
 import logging
 import re
 from collections import defaultdict
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from typing import Any, Literal
 
 import jsonpath_ng
@@ -206,9 +206,8 @@ class SearchSpec(BaseModel):
     _component_types: Sequence[str] = PrivateAttr(default_factory=tuple)
     _compiled_patterns: list[re.Pattern] = PrivateAttr(default_factory=list)
     _clean_patterns: list[str] = PrivateAttr(default_factory=list)
-    _all_nodes_expr: JSONPath | None = PrivateAttr(default=None)
-    # Tuple fields: (original_scope, parsed_scope_expr, parsed_descendants_expr)
-    _scope_exprs: list[tuple[str, JSONPath, JSONPath]] = PrivateAttr(default_factory=list)
+    # Tuple fields: (original_scope, parsed_scope_expr)
+    _scope_exprs: list[tuple[str, JSONPath]] = PrivateAttr(default_factory=list)
 
     @model_validator(mode='after')
     def _compile_patterns(self) -> 'SearchSpec':
@@ -246,13 +245,12 @@ class SearchSpec(BaseModel):
 
     @model_validator(mode='after')
     def _compile_jsonpath_exprs(self) -> 'SearchSpec':
-        # Compile commonly used expressions once per SearchSpec instance.
-        self._all_nodes_expr = jsonpath_ng.parse('$..*')
+        # Compile the scope expressions once per SearchSpec instance.
         self._scope_exprs = []
         for scope in self.search_scopes:
             normalized = _normalize_jsonpath(scope if scope.startswith('$') else f'$.{scope}')
             try:
-                self._scope_exprs.append((scope, jsonpath_ng.parse(normalized), jsonpath_ng.parse(f'{normalized}..*')))
+                self._scope_exprs.append((scope, jsonpath_ng.parse(normalized)))
             except Exception as e:
                 LOG.warning(f'Invalid JSONPath scope "{scope}": {e}')
         return self
@@ -286,23 +284,14 @@ class SearchSpec(BaseModel):
 
         return matches
 
-    def _find_matches_for_expr(
-        self, configuration: JsonDict, parsed_expr: JSONPath, scalar_only: bool = False
-    ) -> list[PatternMatch]:
-        """Find pattern matches on JSON nodes matched by a JSONPath expression. If scalar_only is True, only scalar
-        nodes are matched."""
+    def _find_matches_in_nodes(self, nodes: Iterable[tuple[str, Any]], scalar_only: bool = False) -> list[PatternMatch]:
+        """Find pattern matches on (path, value) JSON nodes. If scalar_only is True, only scalar nodes are matched."""
         matches: list[PatternMatch] = []
-        for jpath_match in parsed_expr.find(configuration):
-            value = jpath_match.value
+        for path, value in nodes:
             if scalar_only and isinstance(value, (dict, list)):
                 continue
             if matched := self.match_patterns(value):
-                matches.append(
-                    PatternMatch(
-                        scope=_clean_jsonpath_path_str(str(jpath_match.full_path)),
-                        patterns=matched,
-                    )
-                )
+                matches.append(PatternMatch(scope=path, patterns=matched))
                 if not self.return_all_matched_patterns:
                     return matches
         return matches
@@ -324,13 +313,19 @@ class SearchSpec(BaseModel):
             # Deduplicate hits when scopes overlap (e.g. "parameters" + "parameters.query")
             # or the same logical scope is provided multiple times.
             seen: set[str | None] = set()
-            for _scope, self_expr, desc_expr in self._scope_exprs:
+            for _scope, scope_expr in self._scope_exprs:
+                scope_nodes = [
+                    (_clean_jsonpath_path_str(str(jpath_match.full_path)), jpath_match.value)
+                    for jpath_match in scope_expr.find(configuration)
+                ]
                 # Search in self expression node for scalar matches first
-                self_matches = self._find_matches_for_expr(configuration, self_expr, scalar_only=True)
+                self_matches = self._find_matches_in_nodes(scope_nodes, scalar_only=True)
                 # If no scalar matches, search in descendants nodes
                 desc_matches: list[PatternMatch] = []
                 if not self_matches:
-                    desc_matches = self._find_matches_for_expr(configuration, desc_expr)
+                    desc_matches = self._find_matches_in_nodes(
+                        node for path, value in scope_nodes for node in _iter_descendants(value, path)
+                    )
                 for match in self_matches or desc_matches:
                     if match.scope in seen:
                         continue
@@ -341,7 +336,7 @@ class SearchSpec(BaseModel):
             return all_matches
         else:
             # No scope provided – search all descendants and return exact match paths.
-            return self._find_matches_for_expr(configuration, self._all_nodes_expr)
+            return self._find_matches_in_nodes(_iter_descendants(configuration, ''))
 
     def match_texts(self, texts: Iterable[str]) -> list[PatternMatch]:
         """
@@ -357,6 +352,23 @@ class SearchSpec(BaseModel):
                 if not self.return_all_matched_patterns:
                     break
         return matches
+
+
+def _iter_descendants(value: Any, path: str) -> Iterator[tuple[str, Any]]:
+    """Yields the (path, value) of every descendant of a JSON value, array elements included.
+
+    The order matches JSONPath `..*`: all direct children of a node first, then the descendants of each child.
+    It is implemented here because jsonpath_ng < 1.11 leaves array elements out of `..*`, while 1.11 includes them.
+    """
+    if isinstance(value, dict):
+        children = [(f'{path}.{key}' if path else str(key), child) for key, child in value.items()]
+    elif isinstance(value, list):
+        children = [(f'{path}[{index}]', child) for index, child in enumerate(value)]
+    else:
+        return
+    yield from children
+    for child_path, child in children:
+        yield from _iter_descendants(child, child_path)
 
 
 def _clean_jsonpath_path_str(path_str: str) -> str:

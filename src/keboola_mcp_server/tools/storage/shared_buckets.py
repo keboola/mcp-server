@@ -26,14 +26,18 @@ def add_shared_bucket_tools(mcp: KeboolaMcpServer) -> None:
     mcp.add_tool(
         ToonCompactFunctionTool.from_function(
             get_shared_buckets,
-            annotations=ToolAnnotations(readOnlyHint=True),
+            annotations=ToolAnnotations(
+                readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False
+            ),
             tags={STORAGE_TOOLS_TAG},
         )
     )
     mcp.add_tool(
         ToonCompactFunctionTool.from_function(
             link_shared_bucket,
-            annotations=ToolAnnotations(destructiveHint=False),
+            annotations=ToolAnnotations(
+                readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False
+            ),
             tags={STORAGE_TOOLS_TAG},
         )
     )

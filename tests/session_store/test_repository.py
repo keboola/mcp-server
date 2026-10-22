@@ -66,6 +66,22 @@ async def test_create_persists_oauth_projectless_false_for_flow_b(store) -> None
     assert fetched.oauth_projectless is False
 
 
+@pytest.mark.parametrize('resource', [None, 'https://mcp.keboola.com/mcp'])
+async def test_create_persists_the_resource(store, resource: str | None) -> None:
+    """DMD-2469: the RFC 8707 resource the tokens were issued for; None for a client that named none."""
+    access_token, refresh_token, session = await store.create(
+        client_id='chatgpt',
+        user_email=None,
+        kbc_access_token='kbc_at_r',
+        kbc_refresh_token='kbc_rt_r',
+        kbc_access_expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        resource=resource,
+    )
+    assert session.resource == resource
+    assert (await store.get_by_access_token(access_token)).resource == resource
+    assert (await store.get_by_refresh_token(refresh_token)).resource == resource
+
+
 async def test_get_by_refresh_token(store) -> None:
     _, refresh_token, session = await store.create(
         client_id='claude.ai',

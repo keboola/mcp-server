@@ -1516,7 +1516,8 @@ def test_match_texts(spec_kwargs: dict[str, Any], texts: list[str], expected: li
     ('spec_kwargs', 'configuration', 'expected'),
     [
         (
-            # Scopes provided; each scope has one matching leaf – returns the exact leaf path.
+            # Scopes provided; each scope has one matching leaf – returns the exact leaf path (and the array
+            # element containing it, as for any other parent node).
             {
                 'patterns': ['alpha', 'beta'],
                 'item_types': ('configuration',),
@@ -1529,6 +1530,7 @@ def test_match_texts(spec_kwargs: dict[str, Any], texts: list[str], expected: li
             },
             [
                 {'scope': 'parameters.query', 'patterns': ['alpha']},
+                {'scope': 'storage.input[0]', 'patterns': ['beta']},
                 {'scope': 'storage.input[0].source', 'patterns': ['beta']},
             ],
         ),
@@ -1546,6 +1548,8 @@ def test_match_texts(spec_kwargs: dict[str, Any], texts: list[str], expected: li
             },
             [
                 {'scope': 'parameters.query', 'patterns': ['alpha']},
+                {'scope': 'storage.input[0]', 'patterns': ['beta']},
+                {'scope': 'storage.input[1]', 'patterns': ['alpha']},
                 {'scope': 'storage.input[0].source', 'patterns': ['beta']},
                 {'scope': 'storage.input[1].source', 'patterns': ['alpha']},
             ],
@@ -1578,7 +1582,25 @@ def test_match_texts(spec_kwargs: dict[str, Any], texts: list[str], expected: li
             [
                 {'scope': 'storage', 'patterns': ['gamma']},
                 {'scope': 'storage.output', 'patterns': ['gamma']},
+                {'scope': 'storage.output[0]', 'patterns': ['gamma']},
                 {'scope': 'storage.output[0].destination', 'patterns': ['gamma']},
+            ],
+        ),
+        (
+            # Scalars directly inside arrays (e.g. SQL script lines) are matched at their own path.
+            {
+                'patterns': ['alpha'],
+                'item_types': ('configuration',),
+                'search_scopes': ('parameters.blocks',),
+                'return_all_matched_patterns': True,
+            },
+            {'parameters': {'blocks': [{'codes': [{'script': ['SELECT 1', 'SELECT alpha']}]}]}},
+            [
+                {'scope': 'parameters.blocks[0]', 'patterns': ['alpha']},
+                {'scope': 'parameters.blocks[0].codes', 'patterns': ['alpha']},
+                {'scope': 'parameters.blocks[0].codes[0]', 'patterns': ['alpha']},
+                {'scope': 'parameters.blocks[0].codes[0].script', 'patterns': ['alpha']},
+                {'scope': 'parameters.blocks[0].codes[0].script[1]', 'patterns': ['alpha']},
             ],
         ),
         (
@@ -1634,6 +1656,7 @@ def test_match_texts(spec_kwargs: dict[str, Any], texts: list[str], expected: li
         'two_patterns_in_one_scope',
         'no_patterns_in_scope',
         'all_patterns_no_scope',
+        'scalar_in_array_matches',
         'any_patterns_return_first_match',
         'overlapping_scopes_deduplicated',
         'scalar_scope_matches_self',

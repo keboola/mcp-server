@@ -6,7 +6,8 @@ import os
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from datetime import datetime, timedelta, timezone
-from typing import Literal
+from typing import Literal, cast
+from urllib.parse import urlparse
 
 from fastmcp import FastMCP
 from pydantic import AliasChoices, BaseModel, Field
@@ -25,7 +26,13 @@ from keboola_mcp_server.config import (
 )
 from keboola_mcp_server.elicitation import UrlElicitationMiddleware
 from keboola_mcp_server.errors import SanitizedLoggingMiddleware, ValidationErrorMiddleware
-from keboola_mcp_server.mcp import KeboolaMcpServer, ServerState, SessionStateMiddleware, ToolsFilteringMiddleware
+from keboola_mcp_server.mcp import (
+    DirectoryProfileMiddleware,
+    KeboolaMcpServer,
+    ServerState,
+    SessionStateMiddleware,
+    ToolsFilteringMiddleware,
+)
 from keboola_mcp_server.multiproject import MultiProjectMiddleware
 from keboola_mcp_server.oauth import SimpleOAuthProvider, UntrustedAuthorizeRedirectMiddleware
 from keboola_mcp_server.preview import preview_config_diff
@@ -164,9 +171,21 @@ class CustomRoutes:
         that it's no longer host-restricted, so that branch redirects here (this server's own
         origin) with `error`/`error_description` instead of `code`/`state`. The AI assistant that
         started this attempt gets no callback at all in that case and must time out and retry --
-        same shape as Connection's own "Deny gets no callback" behavior.
+        same shape as a Deny on Connection's approval screen. A Deny on its consent screen does reach
+        the client, see `SimpleOAuthProvider.access_denied_redirect`.
         """
         error = request.query_params.get('error')
+        # Connection denied the authorization: tell the client, when the state proves it is a pre-registered one.
+        if (
+            error == 'access_denied'
+            and self.oauth_provider
+            and (state := request.query_params.get('state'))
+            and (redirect_uri := self.oauth_provider.access_denied_redirect(state))
+        ):
+            LOG.info(
+                f'Relaying access_denied to a pre-registered client: {urlparse(redirect_uri)._replace(query="").geturl()}'
+            )
+            return RedirectResponse(status_code=302, url=redirect_uri)
         if error:
             # strip control/bidi chars so a crafted query param can't forge log lines
             safe_error = ''.join(ch for ch in error if ch.isprintable())[:200]
@@ -184,17 +203,27 @@ class CustomRoutes:
             # can link `/oauth/callback?error=x&error_description=<arbitrary text>` and have that
             # text shown under a "Keboola login temporarily unavailable" heading here -- content
             # spoofing, not XSS (HTML-escaping alone doesn't stop that) (Vojtěch Biberle + Devin
-            # review, AI-2883). `authorize()`'s own fail-closed branch only ever emits two fixed
+            # review, AI-2883). `authorize()`'s own error branches only ever emit fixed
             # error_description strings, so a single fixed message loses nothing legitimate.
             #
-            # A user clicking Deny on Connection's consent screen lands here too (error=access_denied);
-            # that is not an outage, so it gets its own fixed message. Still never anything derived
-            # from the query string.
+            # A Deny on Connection's consent screen that is not relayed to the client (see above) lands
+            # here too (error=access_denied); that is not an outage, so it gets its own fixed message.
+            # Still never anything derived from the query string.
             if error == 'access_denied':
                 title = message = 'Authorization was denied. You can close this window.'
             elif error == 'unregistered_client':
                 title = message = (
                     'This application is not registered with Keboola. Ask your Keboola administrator to register it.'
+                )
+            elif error == 'pre_registered_client_missing':
+                # No Keboola administrator can fix this one: the row comes from a Connection release.
+                title = message = (
+                    'This Keboola stack is not ready for this application yet. Please contact Keboola support.'
+                )
+            elif error == 'invalid_target':
+                title = message = (
+                    'The application asked for access to another server than this Keboola MCP server. '
+                    'Check the MCP server URL configured in the application.'
                 )
             elif error == 'approval_limit_reached':
                 # The shared counter uses fixed UTC-day windows (see PostgresRateLimitStore.claim), so the budget
@@ -269,6 +298,11 @@ class CustomRoutes:
             )
             if rate_limit := self.oauth_provider.authorize_rate_limit_middleware():
                 app.add_middleware(rate_limit.cls, **rate_limit.kwargs)
+
+
+def _resource_binding_mode(raw: str | None) -> Literal['log', 'enforce']:
+    """`KBC_OAUTH_RESOURCE_BINDING`: `log` when unset; the provider refuses anything but `log` or `enforce`."""
+    return cast(Literal['log', 'enforce'], (raw or 'log').strip().lower())
 
 
 def create_server(
@@ -353,6 +387,9 @@ def create_server(
             ),
             trusted_proxy_hops=_parse_positive_int('oauth_trusted_proxy_hops', config.oauth_trusted_proxy_hops) or 1,
             encryption_key=encryption_key,
+            resource_binding=_resource_binding_mode(config.oauth_resource_binding),
+            stack_key=config.stack_key,
+            router_url=config.router_url,
         )
     else:
         oauth_provider = None
@@ -395,6 +432,9 @@ def create_server(
         auth=oauth_provider,
         middleware=[
             SanitizedLoggingMiddleware(log_level=logging.DEBUG),
+            # Ahead of SessionStateMiddleware: a plugin session's call to an excluded tool is refused before any
+            # session state, token or project work. It reads only the request's authenticated user.
+            DirectoryProfileMiddleware(),
             SessionStateMiddleware(),
             ToolAuthorizationMiddleware(),
             ToolDeferralMiddleware(),

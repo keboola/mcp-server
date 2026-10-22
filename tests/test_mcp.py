@@ -1,16 +1,19 @@
 import asyncio
 import base64
 import dataclasses
+import functools
 import logging
 import time
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
 from fastmcp import Context
 from fastmcp.exceptions import ToolError
+from fastmcp.server.middleware import MiddlewareContext
 from fastmcp.tools import Tool
 from mcp.server.auth.middleware.bearer_auth import AuthenticatedUser
 from pydantic import BaseModel, Field
@@ -19,12 +22,16 @@ from starlette.requests import Request
 from keboola_mcp_server import auth_login
 from keboola_mcp_server.auth_login import TokenSet, save_tokens
 from keboola_mcp_server.clients.auth_bridge import StorageTokenResolver
+from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
 from keboola_mcp_server.mcp import (
     CONVERSATION_ID,
+    DIRECTORY_TOOLS,
+    LISTED_BRANCH_ID,
     STORAGE_API_URL,
     AggregateError,
+    DirectoryProfileMiddleware,
     ServerState,
     SessionStateMiddleware,
     ToolsFilteringMiddleware,
@@ -36,6 +43,8 @@ from keboola_mcp_server.mcp import (
     toon_serializer,
     unwrap_results,
 )
+from keboola_mcp_server.multiproject import MultiProjectMiddleware
+from keboola_mcp_server.oauth import ProxyAccessToken
 from keboola_mcp_server.scope import (
     SCOPE_KEY,
     SCOPE_TOKEN_ARG,
@@ -394,21 +403,48 @@ def test_unwrap_results_all_exceptions():
 class TestToolsFilteringMiddleware:
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ('branch_id', 'expect_filtered'),
+        ('bearer_token', 'listed_branch_id', 'branch_detail', 'expect_filtered'),
         [
-            ('1234', True),
-            (None, False),
+            (None, None, None, False),
+            (None, '999', {'isDefault': False}, True),
+            (None, '999', {'isDefault': True}, False),
+            (None, '999', {}, False),
+            (None, '999', [{'id': 999}], False),
+            (None, '999', httpx.HTTPStatusError('Not found', request=MagicMock(), response=MagicMock()), False),
+            (None, '999', httpx.ConnectError('connection refused'), False),
+            (None, '999', ValueError('Expecting value'), False),
+            ('kbc_at_abc', '999', {'isDefault': False}, True),
+        ],
+        ids=[
+            'no_listed_branch',
+            'listed_dev_branch',
+            'listed_default_branch',
+            'listed_branch_without_is_default',
+            'listed_branch_non_dict_detail',
+            'listed_missing_branch',
+            'listed_branch_lookup_error',
+            'listed_branch_non_json_detail',
+            'programmatic_listed_dev_branch',
         ],
     )
     async def test_list_tools_filters_data_apps_by_branch(
         self,
         mcp_context_client,
-        branch_id: str | None,
+        bearer_token: str | None,
+        listed_branch_id: str | None,
+        branch_detail: JsonDict | list[JsonDict] | Exception | None,
         expect_filtered: bool,
     ) -> None:
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-        keboola_client.branch_id = branch_id
+        keboola_client.bearer_token = bearer_token
+        keboola_client.project_id = '558' if bearer_token else None
         keboola_client.storage_client.verify_token = AsyncMock(return_value={'owner': {'features': []}, 'admin': {}})
+        keboola_client.storage_client.dev_branch_detail = AsyncMock(
+            side_effect=branch_detail if isinstance(branch_detail, Exception) else None,
+            return_value=branch_detail,
+        )
+        if listed_branch_id:
+            mcp_context_client.session.state[LISTED_BRANCH_ID] = listed_branch_id
 
         data_app_tools = [
             'modify_streamlit_data_app',
@@ -433,6 +469,10 @@ class TestToolsFilteringMiddleware:
             else:
                 assert name in result_names
         assert 'other_tool' in result_names
+        if listed_branch_id:
+            keboola_client.storage_client.dev_branch_detail.assert_awaited_once_with(listed_branch_id)
+        else:
+            keboola_client.storage_client.dev_branch_detail.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_list_tools_programmatic_pre_scope_skips_verify(self, mcp_context_client) -> None:
@@ -453,20 +493,19 @@ class TestToolsFilteringMiddleware:
         assert {t.name for t in result} == {'get_tables', 'create_flow', 'get_semantic_context'}
 
     @pytest.mark.asyncio
-    async def test_list_tools_skips_verify_for_a_resolved_project_scoped_session(self, mcp_context_client) -> None:
-        # Regression (PSGO-280): the guard must check client.bearer_token, not
-        # client.legacy_storage_token. On a deployed, project-scoped programmatic session,
-        # legacy_storage_token has already been swapped for a server-minted per-project legacy
-        # Storage token (no kbc_at_/kbc_pat_ prefix) by KeboolaClient.create, while bearer_token
-        # still carries the original programmatic token -- checking the wrong one would
-        # re-enable verify_token here and risk the exact tools/list 401-and-disconnect regression
-        # the surrounding comment says this guard exists to prevent.
+    async def test_list_tools_project_scoped_verify_failure_lists_all_tools(self, mcp_context_client) -> None:
+        # A verify_token failure at list time must never fail tools/list (#605 disconnect regression).
+        # The guard checks client.bearer_token, not client.legacy_storage_token (PSGO-280): on a deployed
+        # session the latter is already the exchanged per-project legacy token, which would route this
+        # session to the non-programmatic path where a verify failure propagates.
         client = KeboolaClient.from_state(mcp_context_client.session.state)
         client.bearer_token = 'kbc_at_abc'
         client.legacy_storage_token = 'legacy-storage-token-for-active-project'
-        client.storage_client.verify_token = AsyncMock(side_effect=AssertionError('verify must not run'))
+        client.project_id = '558'
+        client.storage_client.verify_token = AsyncMock(side_effect=RuntimeError('401 Unauthorized'))
+        client.metastore_client.list_objects = AsyncMock(return_value=[MagicMock()])
 
-        tools = [_tool('get_tables', read_only=True), _tool('create_flow')]
+        tools = [_tool('get_tables', read_only=True), _tool('create_flow'), _tool('create_conditional_flow')]
 
         async def call_next(_):
             return tools
@@ -474,21 +513,25 @@ class TestToolsFilteringMiddleware:
         context = SimpleNamespace(fastmcp_context=mcp_context_client)
         result = await ToolsFilteringMiddleware().on_list_tools(context, call_next)
 
-        assert {t.name for t in result} == {'get_tables', 'create_flow'}
+        assert {t.name for t in result} == {'get_tables', 'create_flow', 'create_conditional_flow'}
+        client.storage_client.verify_token.assert_awaited_once()
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ('token_role', 'bearer_token', 'hidden_tools', 'visible_tools'),
+        ('token_role', 'bearer_token', 'project_id', 'hidden_tools', 'visible_tools'),
         [
-            ('admin', None, {'update_flow'}, {'modify_flow', 'read_only_tool'}),
-            ('share', None, {'update_flow'}, {'modify_flow', 'read_only_tool'}),
-            ('', None, {'modify_flow'}, {'update_flow', 'read_only_tool'}),
-            ('readOnly', None, {'modify_flow', 'update_flow'}, {'read_only_tool'}),
-            ('guest', None, {'modify_flow'}, {'update_flow', 'read_only_tool'}),
+            ('admin', None, None, {'update_flow'}, {'modify_flow', 'read_only_tool'}),
+            ('share', None, None, {'update_flow'}, {'modify_flow', 'read_only_tool'}),
+            ('', None, None, {'modify_flow'}, {'update_flow', 'read_only_tool'}),
+            ('readOnly', None, None, {'modify_flow', 'update_flow'}, {'read_only_tool'}),
+            ('guest', None, None, {'modify_flow'}, {'update_flow', 'read_only_tool'}),
             # OAuth users: regular/guest users get modify_flow access (different from SAPI)
-            ('', 'oauth_token', {'update_flow'}, {'modify_flow', 'read_only_tool'}),
+            ('', 'oauth_token', None, {'update_flow'}, {'modify_flow', 'read_only_tool'}),
             # Empty bearer token behaves the same as no bearer token (SAPI regular)
-            ('', '', {'modify_flow'}, {'update_flow', 'read_only_tool'}),
+            ('', '', None, {'modify_flow'}, {'update_flow', 'read_only_tool'}),
+            # Project-scoped programmatic sessions are filtered like OAuth ones (AI-4075)
+            ('', 'kbc_at_abc', '558', {'update_flow'}, {'modify_flow', 'read_only_tool'}),
+            ('readOnly', 'kbc_at_abc', '558', {'modify_flow', 'update_flow'}, {'read_only_tool'}),
         ],
     )
     async def test_list_tools_filters_flow_tools_by_role(
@@ -497,10 +540,12 @@ class TestToolsFilteringMiddleware:
         keboola_client,
         token_role: str,
         bearer_token: str | None,
+        project_id: str | None,
         hidden_tools: set[str],
         visible_tools: set[str],
     ) -> None:
         keboola_client.bearer_token = bearer_token
+        keboola_client.project_id = project_id
         keboola_client.storage_client.verify_token = AsyncMock(
             return_value={'owner': {'features': []}, 'admin': {'role': token_role}}
         )
@@ -646,18 +691,24 @@ class TestToolsFilteringMiddleware:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ('has_semantic_models', 'tool_name', 'expect_filtered'),
+        ('has_semantic_models', 'tool_name', 'bearer_token', 'project_id', 'expect_filtered'),
         [
-            (False, 'search_semantic_context', True),
-            (False, 'get_semantic_schema', True),
-            (True, 'search_semantic_context', False),
-            (True, 'get_semantic_schema', False),
+            (False, 'search_semantic_context', None, None, True),
+            (False, 'get_semantic_schema', None, None, True),
+            (True, 'search_semantic_context', None, None, False),
+            (True, 'get_semantic_schema', None, None, False),
+            (False, 'validate_semantic_query', 'kbc_at_abc', '558', True),
+            (True, 'validate_semantic_query', 'kbc_at_abc', '558', False),
+            (False, 'validate_semantic_query', 'kbc_at_abc', None, False),
         ],
         ids=[
             'no_models_search',
             'no_models_schema',
             'with_models_search',
             'with_models_schema',
+            'programmatic_project_scoped_no_models',
+            'programmatic_project_scoped_with_models',
+            'programmatic_pre_scope_no_models',
         ],
     )
     async def test_list_tools_filters_semantic_tools_by_models(
@@ -665,9 +716,13 @@ class TestToolsFilteringMiddleware:
         mcp_context_client,
         has_semantic_models: bool,
         tool_name: str,
+        bearer_token: str | None,
+        project_id: str | None,
         expect_filtered: bool,
     ) -> None:
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+        keboola_client.bearer_token = bearer_token
+        keboola_client.project_id = project_id
         keboola_client.storage_client.verify_token = AsyncMock(return_value={'owner': {'features': []}, 'admin': {}})
         keboola_client.metastore_client.list_objects = AsyncMock(
             return_value=[MagicMock()] if has_semantic_models else []
@@ -694,6 +749,8 @@ class TestToolsFilteringMiddleware:
         else:
             assert tool_name in result_names
         assert 'other_tool' in result_names
+        if bearer_token and not project_id:
+            keboola_client.storage_client.verify_token.assert_not_called()
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -804,17 +861,19 @@ class TestSessionStateMiddleware:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ('method', 'expected_branch_id'),
+        ('method', 'expected_branch_id', 'expected_listed_branch_id'),
         [
-            ('tools/list', None),
-            ('resources/list', None),
-            ('prompts/list', None),
-            ('tools/call', '999'),
-            ('resources/read', '999'),
+            ('tools/list', None, '999'),
+            ('resources/list', None, None),
+            ('prompts/list', None, None),
+            ('tools/call', '999', None),
+            ('resources/read', '999', None),
         ],
         ids=['tools_list', 'resources_list', 'prompts_list', 'tools_call', 'resources_read'],
     )
-    async def test_on_request_branch_handling(self, method: str, expected_branch_id: str | None):
+    async def test_on_request_branch_handling(
+        self, method: str, expected_branch_id: str | None, expected_listed_branch_id: str | None
+    ):
         config = Config(
             storage_api_url='https://connection.test.keboola.com',
             storage_token='test-token',
@@ -859,6 +918,7 @@ class TestSessionStateMiddleware:
         assert result is expected_result
         assert len(captured_configs) == 1
         assert captured_configs[0].branch_id == expected_branch_id
+        assert session.state.get(LISTED_BRANCH_ID) == expected_listed_branch_id
         # The session's client is told which stack is the server's own one, so that it can decide
         # whether the Kubernetes step-up header may be sent.
         assert captured_own_stack_urls == ['https://connection.test.keboola.com']
@@ -2184,6 +2244,256 @@ class TestBootstrapSessionState:
         result = await ToolsFilteringMiddleware().on_list_tools(context, AsyncMock(return_value=tools))
 
         assert result == tools
+
+
+class TestDirectoryToolProfile:
+    """DMD-2482: a session created through the ChatGPT plugin (bound to the router's resource) gets only the reviewed
+    directory tools, on every tools/list path and for every call; every other session is unchanged."""
+
+    EXCLUDED = (
+        'run_sync_action',
+        'create_project',
+        'create_python_js_data_app_git_credential',
+        'modify_python_js_data_app',
+        'delete_python_js_data_app_draft',
+        'get_data_app_preview_link',
+    )
+
+    @staticmethod
+    def _request(directory_profile: bool | None) -> Request | None:
+        """The HTTP request of an OAuth session (None: no HTTP request, e.g. stdio)."""
+        if directory_profile is None:
+            return None
+        token = ProxyAccessToken(
+            token='eu-aws.opaque',
+            client_id='chatgpt-dcr-id',
+            scopes=['claudai', 'projectless'],
+            kbc_access_token='kbc_at_x',
+            directory_profile=directory_profile,
+        )
+        return Request({'type': 'http', 'headers': [], 'user': AuthenticatedUser(token)})
+
+    def test_the_allow_list_decides_every_registered_tool(self) -> None:
+        """Every tool is either on the allow-list or deliberately excluded, so a new tool is a visible decision."""
+        from keboola_mcp_server.server import create_server
+
+        mcp = create_server(Config(), runtime_info=ServerRuntimeInfo(transport='stdio'))
+        registered = {t.name for t in asyncio.run(mcp.list_tools(run_middleware=False))}
+
+        assert DIRECTORY_TOOLS == registered - set(self.EXCLUDED)
+
+    @pytest.mark.asyncio
+    async def test_the_preview_route_previews_only_directory_tools(self) -> None:
+        """`/preview/configuration` does not apply the profile (it never sees a router session); that is safe only while
+        every tool it previews is on the allow-list. `PREVIEW_TOOLS` is checked against the route's own dispatch."""
+        from keboola_mcp_server.preview import PREVIEW_TOOLS, _extract_coordinates
+        from keboola_mcp_server.server import create_server
+
+        mcp = create_server(Config(), runtime_info=ServerRuntimeInfo(transport='stdio'))
+        registered = {t.name for t in await mcp.list_tools(run_middleware=False)}
+        workspace_manager = MagicMock()
+        workspace_manager.get_data_app_sql_dialect = AsyncMock(return_value='Snowflake')
+
+        assert PREVIEW_TOOLS <= DIRECTORY_TOOLS
+        for name in PREVIEW_TOOLS:
+            await _extract_coordinates(name, {}, workspace_manager)
+        for name in registered - PREVIEW_TOOLS:
+            with pytest.raises(ValueError, match='Invalid tool name'):
+                await _extract_coordinates(name, {}, workspace_manager)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        'path',
+        [
+            'verified',
+            # token verification fails: tools/list falls back to the superset, which must still be the directory one
+            'verify_fails',
+            # no client in the session yet (bootstrap): the superset again
+            'bootstrap',
+        ],
+    )
+    @pytest.mark.parametrize(('directory_profile', 'expect_hidden'), [(True, True), (False, False), (None, False)])
+    async def test_list_tools(
+        self, mcp_context_client, path: str, directory_profile: bool | None, expect_hidden: bool
+    ) -> None:
+        client = KeboolaClient.from_state(mcp_context_client.session.state)
+        client.bearer_token = 'kbc_at_abc'
+        client.project_id = '558'
+        if path == 'verify_fails':
+            client.storage_client.verify_token = AsyncMock(side_effect=RuntimeError('401 Unauthorized'))
+        else:
+            client.storage_client.verify_token = AsyncMock(return_value={'owner': {'features': []}, 'admin': {}})
+        client.metastore_client.list_objects = AsyncMock(return_value=[MagicMock()])
+        if path == 'bootstrap':
+            del mcp_context_client.session.state[KeboolaClient.STATE_KEY]
+        allowed = ['get_tables', 'query_data', 'modify_flow']
+        tools = [_tool(name) for name in [*allowed, *self.EXCLUDED, 'a_tool_added_later']]
+
+        with patch('keboola_mcp_server.mcp.get_http_request_or_none', return_value=self._request(directory_profile)):
+            result = await ToolsFilteringMiddleware().on_list_tools(
+                SimpleNamespace(fastmcp_context=mcp_context_client), AsyncMock(return_value=tools)
+            )
+
+        names = {t.name for t in result}
+        assert set(allowed) <= names
+        for name in (*self.EXCLUDED, 'a_tool_added_later'):
+            assert (name not in names) is expect_hidden
+
+    @staticmethod
+    async def _call_through_chain(context: MiddlewareContext, call_next: AsyncMock) -> Any:
+        """Runs a tools/call through `DirectoryProfileMiddleware`, `MultiProjectMiddleware` and
+        `ToolsFilteringMiddleware` of the server's own middleware list, in the order `create_server` registers them.
+        The middlewares in between need a live session; the order check covers them."""
+        from keboola_mcp_server.server import create_server
+
+        middleware = create_server(Config(), runtime_info=ServerRuntimeInfo(transport='stdio')).middleware
+        kinds = [type(m) for m in middleware]
+        assert kinds.index(DirectoryProfileMiddleware) < kinds.index(SessionStateMiddleware)
+        assert kinds.index(DirectoryProfileMiddleware) < kinds.index(MultiProjectMiddleware)
+        chain_kinds = (DirectoryProfileMiddleware, MultiProjectMiddleware, ToolsFilteringMiddleware)
+        chain = [m for m in middleware if type(m) in chain_kinds]
+        assert [type(m) for m in chain] == list(chain_kinds)
+
+        handler = call_next
+        for mw in reversed(chain):
+            handler = functools.partial(mw, call_next=handler)
+        return await handler(context)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize('tool_name', [*EXCLUDED, 'a_tool_added_later'])
+    @pytest.mark.parametrize(('directory_profile', 'expect_denied'), [(True, True), (False, False)])
+    async def test_call_tool(
+        self, mcp_context_client, keboola_client, tool_name: str, directory_profile: bool, expect_denied: bool
+    ) -> None:
+        keboola_client.bearer_token = 'kbc_at_abc'
+        keboola_client.storage_client.verify_token = AsyncMock(
+            return_value={'owner': {'features': []}, 'admin': {'role': 'admin'}}
+        )
+        mcp_context_client.fastmcp = SimpleNamespace(get_tool=AsyncMock(return_value=_tool(tool_name)))
+        context = MiddlewareContext(
+            message=SimpleNamespace(name=tool_name, arguments={}),
+            fastmcp_context=mcp_context_client,
+            method='tools/call',
+        )
+        expected = MagicMock()
+
+        with patch('keboola_mcp_server.mcp.get_http_request_or_none', return_value=self._request(directory_profile)):
+            if expect_denied:
+                with pytest.raises(ToolError, match='not available in the Keboola plugin'):
+                    await self._call_through_chain(context, AsyncMock(return_value=expected))
+                keboola_client.storage_client.verify_token.assert_not_called()
+            else:
+                assert await self._call_through_chain(context, AsyncMock(return_value=expected)) is expected
+
+    @pytest.mark.asyncio
+    async def test_call_tool_checks_the_resolved_name(self, mcp_context_client) -> None:
+        """The allow-list is checked against the tool the server resolves the requested name to."""
+        mcp_context_client.fastmcp = SimpleNamespace(get_tool=AsyncMock(return_value=_tool('run_sync_action')))
+        context = MiddlewareContext(
+            message=SimpleNamespace(name='get_tables', arguments={}),
+            fastmcp_context=mcp_context_client,
+            method='tools/call',
+        )
+
+        with (
+            patch('keboola_mcp_server.mcp.get_http_request_or_none', return_value=self._request(True)),
+            pytest.raises(ToolError, match='"run_sync_action" is not available in the Keboola plugin'),
+        ):
+            await self._call_through_chain(context, AsyncMock())
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ('tool_name', 'expect_verified'),
+        [
+            # bootstrap tool: exempt from token verification
+            ('get_accessible_projects', False),
+            # gated tool: verified and checked against role, features and branch
+            ('run_job', True),
+        ],
+    )
+    async def test_call_allowed_tool(
+        self, mcp_context_client, keboola_client, tool_name: str, expect_verified: bool
+    ) -> None:
+        """A plugin session reaches the tools on the allow-list."""
+        keboola_client.bearer_token = 'kbc_at_abc'
+        keboola_client.storage_client.verify_token = AsyncMock(
+            return_value={'owner': {'features': []}, 'admin': {'role': 'admin'}}
+        )
+        mcp_context_client.fastmcp = SimpleNamespace(get_tool=AsyncMock(return_value=_tool(tool_name)))
+        context = MiddlewareContext(
+            message=SimpleNamespace(name=tool_name, arguments={}),
+            fastmcp_context=mcp_context_client,
+            method='tools/call',
+        )
+        expected = MagicMock()
+        call_next = AsyncMock(return_value=expected)
+
+        with patch('keboola_mcp_server.mcp.get_http_request_or_none', return_value=self._request(True)):
+            assert await self._call_through_chain(context, call_next) is expected
+
+        call_next.assert_awaited_once()
+        assert keboola_client.storage_client.verify_token.called is expect_verified
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize('tool_name', EXCLUDED)
+    async def test_call_tool_refused_before_the_project_scope(
+        self, mcp_context_client, keboola_client, tool_name: str
+    ) -> None:
+        """With a confirmed multi-project scope, an excluded tool gets the directory message, not a project swap, a
+        "Pass project_id" error or a per-project failure from `MultiProjectMiddleware`."""
+        mcp_context_client.session.state[SCOPE_KEY] = SessionScope(project_ids=[11, 22], confirmed=True)
+        # A read tool would fan out across both projects, a write tool asks which project to target.
+        tool = _tool(tool_name, read_only=tool_name == 'get_data_app_preview_link')
+        mcp_context_client.fastmcp = SimpleNamespace(get_tool=AsyncMock(return_value=tool))
+        context = MiddlewareContext(
+            message=SimpleNamespace(name=tool_name, arguments={}),
+            fastmcp_context=mcp_context_client,
+            method='tools/call',
+        )
+        call_next = AsyncMock()
+
+        with (
+            patch('keboola_mcp_server.mcp.get_http_request_or_none', return_value=self._request(True)),
+            patch.object(MultiProjectMiddleware, '_swap_project', AsyncMock()) as swap,
+            pytest.raises(ToolError, match='not available in the Keboola plugin'),
+        ):
+            await self._call_through_chain(context, call_next)
+
+        swap.assert_not_awaited()
+        call_next.assert_not_awaited()
+        keboola_client.storage_client.verify_token.assert_not_called()
+
+    @pytest.mark.parametrize('sql_dialect', ['', 'Snowflake', 'BigQuery'])
+    def test_the_directory_instructions_name_only_directory_tools(self, sql_dialect: str) -> None:
+        """What a plugin session reads (the server instructions and the project system prompt) never sends it to a tool
+        it does not have; the prompt of every other session still names them."""
+        from keboola_mcp_server.resources.prompts import _build_dialect_section, get_project_system_prompt, load_prompt
+        from keboola_mcp_server.server import create_server
+
+        mcp = create_server(Config(), runtime_info=ServerRuntimeInfo(transport='stdio'))
+        hidden = {t.name for t in asyncio.run(mcp.list_tools(run_middleware=False))} - DIRECTORY_TOOLS
+        directory_prompt = get_project_system_prompt(sql_dialect, directory=True)
+        regular_prompt = get_project_system_prompt(sql_dialect)
+
+        for text in (mcp.instructions, directory_prompt):
+            assert [name for name in hidden if name in text] == []
+        assert 'run_sync_action' in regular_prompt
+        assert '<!--' not in directory_prompt
+        assert '<!--' not in regular_prompt
+
+        # Every other session reads the prompt file byte for byte without the marker lines and the `only` blocks.
+        # Stripped line by line here, independently of the regular expressions in `prompts/__init__.py`.
+        expected, in_only_block = [], False
+        for line in load_prompt('project_system_prompt.md').splitlines(keepends=True):
+            if line == '<!-- directory:only -->\n':
+                in_only_block = True
+            elif line == '<!-- /directory:only -->\n':
+                in_only_block = False
+            elif line not in ('<!-- directory:omit -->\n', '<!-- /directory:omit -->\n') and not in_only_block:
+                expected.append(line)
+        assert len(expected) < len(load_prompt('project_system_prompt.md').splitlines())
+        prefix = _build_dialect_section(sql_dialect) + '\n\n---\n\n' if sql_dialect else ''
+        assert regular_prompt == prefix + ''.join(expected)
 
 
 class TestUnauthorizedDropsARevokedSession:

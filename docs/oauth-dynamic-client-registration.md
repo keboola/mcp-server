@@ -18,6 +18,11 @@ for the full design.
   `/oauth/authorize` carrying a `pending_mcp_client` payload. A logged-in Keboola user sees an
   approval screen (client name + redirect URI) and must click **Allow** once; the approval is registered against this server's own `/oauth/callback` (the client's real redirect target is shown in the name), and the browser then continues straight to the consent screen, so the client never receives a code from the approval itself (AI-3995, needs Connection's `return_to_client_after_approval`). After that, the same
   `(client_id, redirect_uri)` pair is Flow A on every subsequent connection.
+  A pre-registered redirect URI (`_WELL_KNOWN_CONNECTION_CLIENT_IDS`) never takes Flow B: when Connection does not know
+  its row (a stack whose Connection release does not register it yet, or a deactivated row), it is refused on
+  `/oauth/callback?error=pre_registered_client_missing` and logged at WARNING (`Pre-registered client not registered in
+  Connection`), whatever `OAUTH_DYNAMIC_CLIENT_APPROVAL` says. Approving the literal id would register it against this
+  server's callback, a row no login can use and that stops the Connection migration registering it.
 
 Every client — regardless of flow — must first call `/register` (RFC 7591) to obtain an MCP-side
 `client_id`; this server derives its own short, stable id for talking to Connection from the
@@ -34,6 +39,8 @@ Two deployment-level settings (environment or CLI only, never a request header):
 | `OAUTH_VALIDATE_FLEET_RATE_LIMIT` | Calls per minute, counted across every replica in the shared database, to Connection's `/oauth/clients/validate`. A positive integer. | 500 |
 | `OAUTH_AUTHORIZE_RATE_LIMIT_PER_IP` | `/authorize` requests per minute one caller address may send, across every replica; over it the answer is `429` with `Retry-After`. A positive integer. | no limit |
 | `OAUTH_TRUSTED_PROXY_HOPS` | How many proxies in front of the server append to `X-Forwarded-For`; the caller address is the entry that many places from the end (the ones before it are caller-written and never used). | 1 |
+| `OAUTH_RESOURCE_BINDING` | What a token bound to another RFC 8707 resource than this server does (`/authorize`, `/token`, `/mcp`): `log` logs each mismatch at WARNING (`[resource_binding] Resource mismatch`, with the received and expected values and a per-process count; a session bound to a foreign resource is logged once per process at `/mcp`, not per request) and lets the request through; `enforce` refuses it (`invalid_target`, 401 at `/mcp`). Switch a stack to `enforce` only after its mismatch log stays empty (14 days). Anything else stops startup. | `log` |
+| `STACK_KEY` and `ROUTER_URL` | This stack's key in the global MCP router's stack table (e.g. `eu-aws`) and the router's public URL (ChatGPT plugin, `feature_spec/chatgpt_plugin_router/RFC.md`). Both or neither; anything else stops startup. With them, an `/authorize` that carries `via=router` and the router's resource is answered with the router's issuer, and its code and tokens carry the stack key. Every authorization code also carries the stack key as a claim, and `/token` refuses a code of another key, so set it on all replicas of a stack at once: a login in flight during that rollout fails once and must be retried. | off |
 | `OAUTH_VALIDATE_RATE_LIMIT` | Calls per minute one server process may make to Connection's `/oauth/clients/validate`; applies only while the shared database counter cannot answer. A positive integer; anything else stops startup. | 100 |
 
 **Approval window.** Leave `OAUTH_DYNAMIC_CLIENT_APPROVAL` off in normal operation and onboard a known client by
@@ -78,8 +85,9 @@ ignored there.
 **Release gate.** The removed hardcoded list accepted ChatGPT, Make, Devin, Onyx, n8n, Azure API Management and
 some customer-specific hosts by domain. Connection matches a full redirect URI, so before releasing, list the
 callbacks in use on each stack (the INFO line `[authorize] Registered client proceeding to consent` of the previous
-release) and pre-register the ones that matter, or schedule an approval window. ChatGPT's callback is per
-connector and cannot be pre-registered as a constant.
+release) and pre-register the ones that matter, or schedule an approval window. ChatGPT uses the stable callback
+`https://chatgpt.com/connector_platform_oauth_redirect` for an authorization server that returns RFC 9207 `iss`
+(DMD-2468), pre-registered in Connection as `chatgpt` (DMD-2475).
 
 ## Endpoints (on the MCP server, `https://mcp.<stack-hostname>`)
 

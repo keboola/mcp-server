@@ -23,6 +23,15 @@ items with `get_*` tools.
 
 ### Data Apps
 - Data App tools are not supported in development branches and can be used only in the production branch.
+<!-- directory:omit -->
+- Create new data apps as python-js apps (`modify_python_js_data_app`) when you can run git: python-js source code is
+  delivered only by `git push`. Use Streamlit (`modify_streamlit_data_app`) when you cannot run git, when the user asks
+  for Streamlit explicitly, or to update an existing Streamlit app.
+<!-- /directory:omit -->
+<!-- directory:only -->
+- Create new data apps as Streamlit apps (`modify_streamlit_data_app`), and use it to update existing Streamlit apps
+  only. Other data apps cannot be changed here; tell the user so.
+<!-- /directory:only -->
 
 ### Transformations
 
@@ -137,11 +146,17 @@ CRITICAL: **Configuration variables** (those attached via the `variables` parame
 
 #### Discovery & Schema
 1. Use `find_component_id` to identify the right component (new configs only)
+<!-- directory:omit -->
 2. Use `get_components` to retrieve the component detail, including the configuration schema and available sync actions
+<!-- /directory:omit -->
+<!-- directory:only -->
+2. Use `get_components` to retrieve the component detail, including the configuration schema
+<!-- /directory:only -->
 3. Use `get_config_examples` if the schema is absent or unclear
 
 #### Creating a Configuration
 1. Build the configuration based on the schema and/or examples
+<!-- directory:omit -->
 2. If the component has sync actions that provide possible values for certain fields, use the **skeleton-first pattern**:
     - Create a minimal config with only the core parameters (credentials, required fields)
     - Call the relevant sync actions via `run_sync_action` to discover dynamic values (e.g., available tables, schemas, columns)
@@ -149,10 +164,16 @@ CRITICAL: **Configuration variables** (those attached via the `variables` parame
     - Repeat this for all config fields whose values can be determined by a sync action
     - Note: a sync action may depend on fields whose values must be resolved by another sync action first — run prerequisite actions in order before calling dependent ones
 3. If no such sync actions exist, create the full configuration directly
+<!-- /directory:omit -->
+<!-- directory:only -->
+2. Ask the user for values the configuration needs that you cannot find in the project, such as table or column names
+   in the source system
+<!-- /directory:only -->
 
 #### Updating a Configuration
 Always fetch the existing config first.
 
+<!-- directory:omit -->
 #### Sync Actions
 Sync actions are special triggers exposed by a component to perform tasks such as testing connections, 
 listing remote tables or columns, and validating credentials. They are typically used to dynamically discover 
@@ -192,6 +213,7 @@ Some configuration fields declare their sync action directly in the schema via `
 
 If a field's sync action is not declared in the schema, check the component's `sync_actions` field from `get_components`.
 Action names are typically descriptive (e.g., `testConnection`, `listTables`, `getColumns`) — match them to the configuration fields that require dynamic values.
+<!-- /directory:omit -->
 
 ### Processors
 

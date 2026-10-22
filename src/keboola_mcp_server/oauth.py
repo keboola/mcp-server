@@ -10,16 +10,18 @@ import math
 import os
 import secrets
 import time
-from collections import OrderedDict, deque
+from collections import Counter, OrderedDict, deque
 from collections.abc import Mapping
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from enum import Enum, auto
-from typing import Any, cast
-from urllib.parse import urljoin, urlparse, urlunparse
+from typing import Any, Literal, cast
+from urllib.parse import parse_qs, urljoin, urlparse, urlunparse
 
 import httpx
 import jwt
 from fastmcp.server.auth.auth import OAuthProvider
+from mcp.server.auth.middleware.client_auth import AuthenticationError, ClientAuthenticator
 from mcp.server.auth.provider import (
     AccessToken,
     AuthorizationCode,
@@ -28,14 +30,17 @@ from mcp.server.auth.provider import (
     TokenError,
     construct_redirect_uri,
 )
-from mcp.server.auth.settings import ClientRegistrationOptions
+from mcp.server.auth.settings import ClientRegistrationOptions, RevocationOptions
+from mcp.server.transport_security import DEFAULT_MAX_REQUEST_BODY_SIZE, RequestBodyLimitMiddleware
 from mcp.shared.auth import InvalidRedirectUriError, OAuthClientInformationFull, OAuthToken
 from pydantic import AnyHttpUrl, AnyUrl
 from starlette.datastructures import Headers
 from starlette.exceptions import HTTPException
 from starlette.middleware import Middleware
-from starlette.responses import JSONResponse
-from starlette.routing import Route, get_route_path
+from starlette.middleware.cors import CORSMiddleware
+from starlette.requests import Request
+from starlette.responses import JSONResponse, Response
+from starlette.routing import Route, get_route_path, request_response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from keboola_mcp_server.auth_login import (
@@ -49,6 +54,7 @@ from keboola_mcp_server.auth_login import (
 from keboola_mcp_server.clients.auth_bridge import OAuthSessionExchanger, OAuthTokenExchangeError
 from keboola_mcp_server.config import deployed_sa_token_path
 from keboola_mcp_server.jwt_utils import decode_jwt, encode_jwt
+from keboola_mcp_server.router.stacks import STACK_KEY_SEPARATOR, is_valid_stack_key, router_issuer, router_resource
 from keboola_mcp_server.session_store import DatabaseUnavailableError
 from keboola_mcp_server.session_store.rate_limit import RateLimitStore
 from keboola_mcp_server.session_store.repository import SessionStore
@@ -78,8 +84,15 @@ _ALLOWED_CURSOR_HOSTS = frozenset({'anysphere.cursor-retrieval', 'anysphere.curs
 # table (a migration on the Connection side).
 # Not a trust decision -- it only picks which Connection row to ask about; /oauth/clients/validate
 # is still the sole authority on whether the pair is actually registered and active.
+#
+# Each entry ships only to stacks whose Connection release already registers its row. Otherwise validate answers 404
+# and `_authorize` refuses the client (`error=pre_registered_client_missing`): approving the literal id in Flow B would
+# register it against this server's callback, a row no login can use (the check after approval asks about the
+# client's own URI, `_connection_redirect_uri`) and the Connection migration stops on (ChatGPT: DMD-2475).
 _WELL_KNOWN_CONNECTION_CLIENT_IDS: dict[str, str] = {
     'https://claude.ai/api/mcp/auth_callback': 'claude-ai',
+    # ChatGPT uses this stable callback only for an authorization server that returns RFC 9207 `iss` (DMD-2468).
+    'https://chatgpt.com/connector_platform_oauth_redirect': 'chatgpt',
 }
 
 # Cap on the in-process client_id -> client_name cache (see ConnectionClientRegistry.remember_client_name)
@@ -103,6 +116,10 @@ _REGISTERED_CACHE_TTL_SECONDS = 300  # 5 min: a registered+active client's statu
 # `OAUTH_VALIDATE_RATE_LIMIT` rather than rely on this default.
 _CONNECTION_VALIDATE_LIMIT_PER_WINDOW = 600
 _ASSUMED_MAX_REPLICAS = 5
+# Resource-binding mismatch log (`SimpleOAuthProvider._refuses_foreign_resource`): the caller-sent value is cut to this
+# length, and at most this many sessions are remembered as logged already.
+_MAX_LOGGED_RESOURCE_CHARS = 2048
+_MAX_LOGGED_MISMATCH_SESSIONS = 10_000
 # The window of `_ApprovalBudget`: a day.
 _APPROVAL_BUDGET_WINDOW_SECONDS = 24 * 60 * 60.0
 _APPROVAL_BUDGET_WINDOW_SECONDS_INT = int(_APPROVAL_BUDGET_WINDOW_SECONDS)
@@ -523,7 +540,7 @@ class ConnectionClientRegistry:
             self._http_client = None
 
     async def _check_registration_uncached(self, connection_client_id: str, redirect_uri: str) -> _ClientRegistration:
-        # A well-known pair (today: only claude.ai) is exempt from the local limiter -- a fixed,
+        # A well-known pair (today: claude.ai and ChatGPT) is exempt from the local limiter -- a fixed,
         # tiny handful of redirect_uris, so letting them always through Connection's own (much
         # higher, IP-shared) limit costs nothing. Without this, an attacker flooding /authorize with
         # distinct, never-cached redirect_uris exhausts the shared limiter budget, and once claude.ai's
@@ -714,6 +731,13 @@ class _ExtendedAuthorizationCode(AuthorizationCode):
     # Only a session persisted by an earlier build of AI-2883 can have False (a dynamically-approved
     # client that got 'claudai' alone, before RFC Decision §10); current write paths always set True.
     oauth_projectless: bool = True
+    # Issued for the global router (`via=router`, DMD-2481): `iss` is the router's issuer, and the code and tokens carry
+    # this stack's key as a prefix. Defaults to False for a code from before this field.
+    router: bool = False
+    # The stack key of the server that minted the code. Codes are stateless JWTs, so the prefix alone would not stop a
+    # code from being redeemed at another stack that shares the `jwt_secret`: `load_authorization_code` refuses a code
+    # whose claim is not its own stack key. None for a server without a stack key.
+    stack: str | None = None
 
 
 class ProxyAccessToken(AccessToken):
@@ -740,6 +764,10 @@ class ProxyAccessToken(AccessToken):
     scope_confirmed: bool = False
     scope_scoped_token: str | None = None
     scope_scoped_expires_at: datetime | None = None
+    # Bound to the global router's resource, i.e. created through the ChatGPT plugin: such a session gets the directory
+    # tool profile (`mcp.DIRECTORY_TOOLS`). Decided here, by URL comparison (`is_router_resource`), not by the spelling
+    # the client stored.
+    directory_profile: bool = False
 
 
 class ProxyRefreshToken(RefreshToken):
@@ -826,7 +854,8 @@ class UntrustedAuthorizeRedirectMiddleware:
     known origins: Connection's own `server_url` (`_oauth_server_auth_url` and `ConnectionClientRegistry`'s
     own `/oauth/authorize`) or this server's own `mcp_server_url` (`_mcp_callback_url`) -- it never
     redirects straight to the caller-supplied `redirect_uri` (that only happens later, from
-    `/oauth/callback`, after the real grant). So allowlisting the outgoing redirect's origin (scheme,
+    `/oauth/callback`, after the real grant or a denied one -- see `SimpleOAuthProvider.access_denied_redirect`).
+    So allowlisting the outgoing redirect's origin (scheme,
     host and effective port, not the hostname alone) to exactly those two closes the gap without
     touching the intentional "any https host" shape check. The same guard covers `/register`, `/token`,
     `/revoke` and the `/.well-known/*` discovery documents, and the trailing-slash form of each: Starlette's slash normalisation answers
@@ -887,7 +916,7 @@ class UntrustedAuthorizeRedirectMiddleware:
 _AUTHORIZE_RATE_LIMIT_WINDOW_SECONDS = 60
 
 
-def _caller_address(scope: Scope, trusted_hops: int) -> str | None:
+def caller_address(scope: Scope, trusted_hops: int) -> str | None:
     """The caller's address as the nearest proxy we trust saw it, or None when there is none to count.
 
     Behind `trusted_hops` proxies that each append the address they received the connection from, the caller is the entry
@@ -935,7 +964,7 @@ class AuthorizeRateLimitMiddleware:
             await self._app(scope, receive, send)
             return
 
-        address = _caller_address(scope, self._trusted_hops)
+        address = caller_address(scope, self._trusted_hops)
         if address is None:  # nothing to tell the caller apart by: not counted, rather than pooled with everybody else
             await self._app(scope, receive, send)
             return
@@ -963,15 +992,17 @@ class AuthorizeRateLimitMiddleware:
 _METADATA_PATH_PREFIXES = ('/.well-known/oauth-authorization-server', '/.well-known/openid-configuration')
 
 
-class _AdvertisePublicClients:
+class _PatchAuthServerMetadata:
     """Wraps an authorization-server metadata endpoint so that it also advertises `none` as a token endpoint
-    authentication method, first.
+    authentication method, first, and RFC 9207 issuer identification.
 
     The MCP SDK hardcodes `["client_secret_post", "client_secret_basic"]`, but this server's clients are public ones
     (PKCE, no secret) and its token endpoint accepts them: a client that picks its `token_endpoint_auth_method` from
-    this document (Open WebUI does) would otherwise register as a confidential client. The SDK bakes the metadata into
-    the handler when it builds the route, so the document is patched on its way out instead. An object, not a function:
-    Starlette would treat a function endpoint as a request handler rather than an ASGI app."""
+    this document (Open WebUI does) would otherwise register as a confidential client. The SDK has no way to set
+    `authorization_response_iss_parameter_supported` either, and ChatGPT uses its stable redirect URI only for an
+    authorization server that announces it. The SDK bakes the metadata into the handler when it builds the route, so
+    the document is patched on its way out instead. An object, not a function: Starlette would treat a function
+    endpoint as a request handler rather than an ASGI app."""
 
     def __init__(self, app: ASGIApp) -> None:
         self._app = app
@@ -998,9 +1029,16 @@ class _AdvertisePublicClients:
             assert start is not None
             try:
                 metadata = json.loads(body)
-                methods = metadata.get('token_endpoint_auth_methods_supported')
-                if start['status'] == 200 and isinstance(methods, list) and 'none' not in methods:
-                    metadata['token_endpoint_auth_methods_supported'] = ['none', *methods]
+                if start['status'] == 200 and isinstance(metadata, dict):
+                    methods = metadata.get('token_endpoint_auth_methods_supported')
+                    if isinstance(methods, list) and 'none' not in methods:
+                        metadata['token_endpoint_auth_methods_supported'] = ['none', *methods]
+                    # The same public clients revoke their tokens without a secret too (`SimpleOAuthProvider._revoke`).
+                    revocation = metadata.get('revocation_endpoint_auth_methods_supported')
+                    if isinstance(revocation, list) and 'none' not in revocation:
+                        metadata['revocation_endpoint_auth_methods_supported'] = ['none', *revocation]
+                    # Every authorization response to the client carries `iss`: see `SimpleOAuthProvider.issuer`.
+                    metadata['authorization_response_iss_parameter_supported'] = True
                     body = json.dumps(metadata).encode()
             except ValueError:
                 pass  # not JSON (an error page, a preflight answer): forwarded as it is
@@ -1010,6 +1048,86 @@ class _AdvertisePublicClients:
             await send({'type': 'http.response.body', 'body': body})
 
         await self._app(scope, receive, capture)
+
+
+# The RFC 8707 `resource` values of the /token request being handled, for `SimpleOAuthProvider`: the SDK's token handler
+# passes them to the provider for no grant but the jwt-bearer one.
+_TOKEN_REQUEST_RESOURCES: ContextVar[tuple[str, ...]] = ContextVar('token_request_resources', default=())
+# The `via` values of the /authorize request being handled: `via=router` marks a flow the global router sent here
+# (`SimpleOAuthProvider._is_router_flow`). The SDK's authorization request model drops unknown parameters.
+_AUTHORIZE_REQUEST_VIA: ContextVar[tuple[str, ...]] = ContextVar('authorize_request_via', default=())
+
+
+class _CaptureParameter:
+    """Wraps an OAuth endpoint so that `SimpleOAuthProvider` can read a parameter the SDK does not pass on: its values
+    (from the form body, and with `in_query` from the query string too) are put into `var` for the request, and the
+    body is replayed to the wrapped handler unchanged."""
+
+    def __init__(self, app: ASGIApp, *, name: str, var: ContextVar[tuple[str, ...]], in_query: bool = False) -> None:
+        # Inside the body limit, so that it never buffers more than the SDK's handler would accept.
+        app = _CaptureParameterWithinLimit(app, name=name, var=var, in_query=in_query)
+        self._app = RequestBodyLimitMiddleware(app, DEFAULT_MAX_REQUEST_BODY_SIZE)
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        await self._app(scope, receive, send)
+
+
+class _CaptureParameterWithinLimit:
+    """`_CaptureParameter` behind the body limit."""
+
+    def __init__(self, app: ASGIApp, *, name: str, var: ContextVar[tuple[str, ...]], in_query: bool) -> None:
+        self._app = app
+        self._name = name
+        self._var = var
+        self._in_query = in_query
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope['type'] != 'http':
+            await self._app(scope, receive, send)
+            return
+
+        messages = []
+        body = b''
+        while True:
+            message = await receive()
+            messages.append(message)
+            if message['type'] != 'http.request':
+                break
+            body += message.get('body', b'')
+            if not message.get('more_body'):
+                break
+
+        async def replay() -> dict:
+            return messages.pop(0) if messages else await receive()
+
+        values = parse_qs(body.decode('utf-8', 'replace')).get(self._name, [])
+        if self._in_query:
+            values = parse_qs(scope.get('query_string', b'').decode('utf-8', 'replace')).get(self._name, []) + values
+        token = self._var.set(tuple(values))
+        try:
+            await self._app(scope, replay, send)
+        finally:
+            self._var.reset(token)
+
+
+def _cross_origin(app: ASGIApp) -> ASGIApp:
+    """CORS for a POST endpoint browser-based clients call, as the SDK sets it, and outermost, so that an answer of
+    the body limit (413) still carries its headers."""
+    return CORSMiddleware(
+        app, allow_origins=['*'], allow_methods=['POST', 'OPTIONS'], allow_headers=['Mcp-Protocol-Version']
+    )
+
+
+def _resource_key(resource: str) -> tuple[str, str, int, str] | None:
+    """What two spellings of one resource URL share (origin, and the path without a trailing slash), or None for a value
+    that is not an absolute URL without query and fragment (RFC 8707 §2)."""
+    origin = _origin(resource)
+    if origin is None:
+        return None
+    parsed = urlparse(resource)  # cannot raise: `_origin` already parsed it
+    if parsed.query or parsed.fragment:
+        return None
+    return *origin, parsed.path.rstrip('/')
 
 
 class SimpleOAuthProvider(OAuthProvider):
@@ -1033,6 +1151,9 @@ class SimpleOAuthProvider(OAuthProvider):
         authorize_rate_limit_per_ip: int | None = None,
         trusted_proxy_hops: int = 1,
         encryption_key: bytes | None = None,
+        resource_binding: Literal['log', 'enforce'] = 'log',
+        stack_key: str | None = None,
+        router_url: str | None = None,
     ) -> None:
         """
         Creates OAuth provider implementation.
@@ -1063,10 +1184,33 @@ class SimpleOAuthProvider(OAuthProvider):
         :param encryption_key: The session encryption key; the Connection client ids are keyed with a key derived
             from it (see `_connection_client_id`), so every replica must get the same one. Without it a
             process-local key is used, which is fine for local runs and tests only.
+        :param resource_binding: What a resource that is not this server does (RFC 8707): `log` (the default) logs and
+            counts it and lets the request through, `enforce` refuses it. Clients that already send a resource would turn
+            from working into failing, so a stack switches to `enforce` only after its mismatch log stays empty.
+        :param stack_key: This stack's key in the global router's stack table (`eu-aws`); with `router_url`, it turns
+            on router flows (`_is_router_flow`). Both or neither.
+        :param router_url: The global router's URL; its issuer and resource are derived from it with the same functions
+            the router uses (`router.stacks`), so the two sides cannot disagree.
         """
         super().__init__(
             base_url=mcp_server_url,
             client_registration_options=ClientRegistrationOptions(enabled=True),
+            # /revoke: the router forwards a revocation of the tokens it routes here (RFC 7009).
+            revocation_options=RevocationOptions(enabled=True),
+        )
+        if (stack_key is None) != (router_url is None):
+            raise ValueError('Router flows need both the stack key and the router URL, or neither.')
+        if stack_key is not None and not is_valid_stack_key(stack_key):
+            raise ValueError(f'Invalid stack key {stack_key!r}: lowercase letters, digits and dashes only.')
+        self._stack_key = stack_key
+        self._router_issuer = router_issuer(router_url) if router_url else None
+        # The router's MCP endpoint (its PRM `resource`), and its origin, in any spelling (see `_resource_key`).
+        self._router_resource_keys = (
+            frozenset(
+                key for url in (router_resource(router_url), router_url) if (key := _resource_key(url)) is not None
+            )
+            if router_url
+            else frozenset()
         )
         self._session_store = session_store
 
@@ -1101,6 +1245,28 @@ class SimpleOAuthProvider(OAuthProvider):
         self.trusted_redirect_origins = frozenset(
             o for o in (_origin(mcp_server_url), _origin(server_url)) if o is not None
         )
+        # The RFC 8707 resources this server's tokens may be issued for: the PRM `resource` (the server's own URL) and
+        # the MCP endpoint a client was configured with (`/mcp`, or the legacy `/sse` that forwards to it).
+        own_path = urlparse(mcp_server_url).path.rstrip('/')
+        self._own_resources = [urljoin(mcp_server_url, own_path + path) for path in ('', '/mcp', '/sse')]
+        self._own_resource_keys = frozenset(key for url in self._own_resources if (key := _resource_key(url)))
+        if resource_binding not in ('log', 'enforce'):
+            raise ValueError(
+                f"The resource binding mode (KBC_OAUTH_RESOURCE_BINDING) must be 'log' or 'enforce', got {resource_binding!r}."
+            )
+        self._resource_binding = resource_binding
+        # Mismatches seen by this process, per place (`authorize`, `token`, `mcp`); the WARNING lines are the evidence
+        # for switching to enforce, this is their count.
+        self.resource_mismatches: Counter[str] = Counter()
+        self._logged_mismatch_sessions: OrderedDict[str, None] = OrderedDict()
+
+    @property
+    def issuer(self) -> str:
+        """The issuer identifier, exactly as the metadata `issuer` and the PRM `authorization_servers` serialize it.
+
+        RFC 9207: every authorization response this server sends to the client carries it as `iss`, and a client
+        compares that with the issuer it discovered by exact string, so it must come from the same value."""
+        return str(self.issuer_url)
 
     async def aclose(self) -> None:
         """Releases what the provider holds open (the pooled client of the client registry)."""
@@ -1121,13 +1287,148 @@ class SimpleOAuthProvider(OAuthProvider):
         )
 
     def get_routes(self, mcp_path: str | None = None) -> list[Route]:
-        """The SDK's routes, with the authorization-server metadata documents also advertising public clients."""
-        return [
-            Route(route.path, endpoint=_AdvertisePublicClients(route.endpoint), methods=route.methods)
-            if isinstance(route, Route) and route.path.startswith(_METADATA_PATH_PREFIXES)
-            else route
-            for route in super().get_routes(mcp_path)
-        ]
+        """The SDK's routes, with the authorization-server metadata documents patched by `_PatchAuthServerMetadata`, the
+        token and authorization endpoints wrapped by `_CaptureParameter` (`resource` and `via`), and `_revoke` as the
+        revocation endpoint."""
+        routes: list[Route] = []
+        for route in super().get_routes(mcp_path):
+            if isinstance(route, Route) and route.path.startswith(_METADATA_PATH_PREFIXES):
+                route = Route(route.path, endpoint=_PatchAuthServerMetadata(route.endpoint), methods=route.methods)
+            elif isinstance(route, Route) and route.path == '/token':
+                endpoint = _cross_origin(
+                    _CaptureParameter(route.endpoint, name='resource', var=_TOKEN_REQUEST_RESOURCES)
+                )
+                route = Route(route.path, endpoint=endpoint, methods=route.methods)
+            elif isinstance(route, Route) and route.path == '/revoke':
+                endpoint = _cross_origin(
+                    RequestBodyLimitMiddleware(request_response(self._revoke), DEFAULT_MAX_REQUEST_BODY_SIZE)
+                )
+                route = Route(route.path, endpoint=endpoint, methods=['POST', 'OPTIONS'])
+            elif isinstance(route, Route) and route.path == '/authorize':
+                endpoint = _CaptureParameter(route.endpoint, name='via', var=_AUTHORIZE_REQUEST_VIA, in_query=True)
+                route = Route(route.path, endpoint=endpoint, methods=route.methods)
+            routes.append(route)
+        return routes
+
+    async def _revoke(self, request: Request) -> Response:
+        """/revoke (RFC 7009). Not the SDK's handler: it refuses a request without `client_secret` (mcp 2.3.0 declares
+        the field without a default), and every client of this server is a public one that sends none. It also looks
+        the session up directly, without the Keboola refresh `load_access_token` may do."""
+        no_store = {'Cache-Control': 'no-store', 'Pragma': 'no-cache'}
+        try:
+            client = await ClientAuthenticator(self).authenticate_request(request)
+        except AuthenticationError as e:
+            return JSONResponse({'error': 'invalid_client', 'error_description': e.message}, 401, headers=no_store)
+        token = (await request.form()).get('token')
+        if not isinstance(token, str) or not token:
+            return JSONResponse(
+                {'error': 'invalid_request', 'error_description': 'The token parameter is missing.'},
+                400,
+                headers=no_store,
+            )
+        raw = self._unprefixed(token)
+        session = await self._session_store.get_by_access_token(raw) or await self._session_store.get_by_refresh_token(
+            raw
+        )
+        # Only the client the token was issued to may revoke it; an unknown token is answered 200 all the same.
+        if session is not None and session.client_id == client.client_id:
+            await self._session_store.revoke(session.id)
+        return Response(status_code=200, headers=no_store)
+
+    def is_own_resource(self, resource: str) -> bool:
+        """Whether `resource` names this server, in any spelling a client may use (see `_own_resource_keys`)."""
+        return _resource_key(resource) in self._own_resource_keys
+
+    def _refuses_foreign_resource(
+        self, where: str, received: str, client_id: str, *, session_id: str | None = None
+    ) -> bool:
+        """Logs and counts a resource that is not this server; whether to refuse the request (the `enforce` mode).
+
+        WARNING on purpose, with the received and expected values: in the `log` mode these lines are how a stack learns
+        whether its clients would break under `enforce`. A session bound to a foreign resource would log on every
+        request it makes, so it is logged once per process (`session_id`), and counted every time."""
+        self.resource_mismatches[where] += 1
+        if session_id is not None:
+            if session_id in self._logged_mismatch_sessions:
+                return self._resource_binding == 'enforce'
+            self._logged_mismatch_sessions[session_id] = None
+            if len(self._logged_mismatch_sessions) > _MAX_LOGGED_MISMATCH_SESSIONS:
+                self._logged_mismatch_sessions.popitem(last=False)
+        LOG.warning(
+            f'[resource_binding] Resource mismatch: where={where}, mode={self._resource_binding}, '
+            f'received={_sanitize_for_log(received)[:_MAX_LOGGED_RESOURCE_CHARS]!r}, expected={self._own_resources!r}, '
+            f'client_id={_sanitize_client_id_for_log(client_id)}, count={self.resource_mismatches[where]}'
+        )
+        return self._resource_binding == 'enforce'
+
+    def _same_resource(self, first: str, second: str) -> bool:
+        """Whether two resource values name the same thing: the same normalized URL, or both this server (the origin and
+        `/mcp` are two names of it). Malformed values compare as written."""
+        if (self.is_own_resource(first) and self.is_own_resource(second)) or (
+            self.is_router_resource(first) and self.is_router_resource(second)
+        ):
+            return True
+        first_key, second_key = _resource_key(first), _resource_key(second)
+        if first_key is None or second_key is None:
+            return first == second
+        return first_key == second_key
+
+    def is_router_resource(self, resource: str | None) -> bool:
+        """Whether `resource` names the global router, when this server takes router flows at all."""
+        return resource is not None and _resource_key(resource) in self._router_resource_keys
+
+    def _is_router_flow(self, params: AuthorizationParams) -> bool:
+        """An authorization request the global router sent here: `via=router` and the router's resource. `via=router`
+        without that resource is ignored; it grants nothing either way, since the result is exactly what the router
+        itself would produce (a code for this stack, `iss` = router issuer)."""
+        return _AUTHORIZE_REQUEST_VIA.get() == ('router',) and self.is_router_resource(params.resource)
+
+    def _prefixed(self, value: str) -> str:
+        """A code or token for the router: this stack's key in front, so that the router knows where to send it."""
+        if self._stack_key is None:
+            # A router flow begun on a replica that takes them and finished on one that does not (a rollout or a
+            # rollback within the lifetime of a state): refuse it rather than hand out a code nobody can route.
+            raise HTTPException(400, 'This server does not take router flows. Please try connecting again.')
+        return f'{self._stack_key}{STACK_KEY_SEPARATOR}{value}'
+
+    def _unprefixed(self, value: str) -> str:
+        """A code or token without this stack's key in front, if it has it. Another stack's key is left on: no such
+        value exists here, so the lookup fails."""
+        prefix = f'{self._stack_key}{STACK_KEY_SEPARATOR}'
+        return value[len(prefix) :] if self._stack_key and value.startswith(prefix) else value
+
+    def _token_resource(self, bound_resource: str | None, client_id: str, *, router: bool = False) -> str | None:
+        """The resource a /token request may issue tokens for, given the one the grant is already bound to (named at
+        /authorize, or stored on the session): the request may repeat it or leave it out, never name another one.
+
+        :param router: The grant belongs to a router flow: the resource is the router's instead of this server's.
+        :raises TokenError: `invalid_target` (RFC 8707 §2) for more than one resource or a different one, for a router
+            flow when it is not the router, and in the `enforce` mode when it is not this server.
+        """
+        requested = _TOKEN_REQUEST_RESOURCES.get()
+        resource = bound_resource or (requested[0] if requested else None)
+        if len(requested) > 1:
+            problem = 'Only one resource can be requested.'
+        elif requested and not self._same_resource(requested[0], cast(str, resource)):
+            problem = 'The resource differs from the one authorized.'
+        elif router and not self.is_router_resource(resource):
+            problem = 'The resource is not the MCP router.'
+        elif (
+            not router
+            and resource is not None
+            and not self.is_own_resource(resource)
+            and self._refuses_foreign_resource('token', resource, client_id)
+        ):
+            problem = 'The resource is not this MCP server.'
+        else:
+            return resource
+        # WARNING on purpose: a client that names this server in a spelling nobody foresaw cannot log in.
+        LOG.warning(
+            f'[token] Refused with invalid_target: {problem} client_id={_sanitize_client_id_for_log(client_id)}, '
+            f'bound={_sanitize_for_log(bound_resource or "")[:_MAX_LOGGED_RESOURCE_CHARS]!r}, '
+            f'requested={[_sanitize_for_log(r)[:_MAX_LOGGED_RESOURCE_CHARS] for r in requested]!r}'
+        )
+        raise TokenError(error='invalid_target', error_description=problem)
 
     def get_middleware(self) -> list[Middleware]:
         """Prepends `UntrustedAuthorizeRedirectMiddleware` and `DatabaseUnavailableMiddleware`
@@ -1254,6 +1555,8 @@ class SimpleOAuthProvider(OAuthProvider):
         redirect_uri_str = str(params.redirect_uri)
         connection_client_id = _connection_client_id(redirect_uri_str, self._client_id_key)
 
+        router_flow = self._is_router_flow(params)
+
         registration = await self._check_registration(connection_client_id, redirect_uri_str)
         if registration is _ClientRegistration.ERROR:
             LOG.warning(
@@ -1268,12 +1571,26 @@ class SimpleOAuthProvider(OAuthProvider):
             # would make this server 302 to an attacker-chosen host on demand (e.g. by exhausting
             # Connection's rate limit) -- an open redirect. Redirecting to our own callback endpoint
             # instead keeps the browser on this server's own origin; the caller gets no callback at
-            # all for this attempt (same shape as Connection's own Deny-gets-no-callback behavior)
-            # and must time out and retry, same as any other undeliverable authorize attempt.
+            # all for this attempt (same shape as a Deny on Connection's approval screen) and must
+            # time out and retry, same as any other undeliverable authorize attempt.
             return construct_redirect_uri(
                 self._mcp_callback_url,
                 error='temporarily_unavailable',
                 error_description='Could not verify OAuth client with Connection.',
+            )
+
+        if registration is _ClientRegistration.NOT_REGISTERED and redirect_uri_str in _WELL_KNOWN_CONNECTION_CLIENT_IDS:
+            # The pre-registered row is missing, deactivated or without this URI on this stack; never approve the
+            # literal id (see `_WELL_KNOWN_CONNECTION_CLIENT_IDS`). WARNING whatever the approval switch: the stack is
+            # misdeployed, not the client unknown.
+            LOG.warning(
+                f'[authorize] Pre-registered client not registered in Connection, refused: client_id={_sanitize_client_id_for_log(client.client_id)}, '
+                f'redirect_uri={_sanitize_for_log(redirect_uri_str)}'
+            )
+            return construct_redirect_uri(
+                self._mcp_callback_url,
+                error='pre_registered_client_missing',
+                error_description='The pre-registered OAuth client is not registered on this stack.',
             )
 
         if registration is _ClientRegistration.NOT_REGISTERED and not self._dynamic_client_approval:
@@ -1298,6 +1615,22 @@ class SimpleOAuthProvider(OAuthProvider):
                 error_description='The daily limit of new OAuth clients was reached.',
             )
 
+        # After the client checks, so that only a client Connection knows (or is about to approve) counts as a
+        # mismatch, and still before consent: in `enforce` the user does not consent to tokens /token would refuse.
+        if (
+            not router_flow
+            and params.resource is not None
+            and not self.is_own_resource(params.resource)
+            and self._refuses_foreign_resource('authorize', params.resource, client.client_id)
+        ):
+            # RFC 8707 §2 invalid_target, on this server's own page like every other error here (see the ERROR branch
+            # above for why).
+            return construct_redirect_uri(
+                self._mcp_callback_url,
+                error='invalid_target',
+                error_description='The requested resource is not this MCP server.',
+            )
+
         # Create and encode the authorization state.
         # We don't store the authentication states that we create here to avoid having to persist them.
         # Instead, we encode them to JWT and pass them back to the client.
@@ -1311,6 +1644,9 @@ class SimpleOAuthProvider(OAuthProvider):
             'code_challenge': params.code_challenge,
             'state': params.state,
             'client_id': client.client_id,
+            # RFC 8707: bound to the code, then to the session (see `exchange_authorization_code`)
+            'resource': params.resource,
+            'router': router_flow,
             'expires_at': time.time() + 5 * 60,  # 5 minutes from now
             # Carried through to exchange_authorization_code onto the session row. Always True
             # now: _CONNECTION_SCOPE below requests 'projectless' for every registered client.
@@ -1412,6 +1748,29 @@ class SimpleOAuthProvider(OAuthProvider):
         state['expires_at'] = time.time() + 5 * 60
         return self._connection_consent_url(state)
 
+    def _decode_consent_state(self, state: str, log_prefix: str) -> dict[str, Any] | None:
+        """The live consent state `authorize()` encoded, or None. The one definition of a valid consent state for
+        every path Connection sends it back on (the callback and the relayed denial).
+
+        Neither the JWT nor its claims are logged in full: the same secret signs the MCP authorization codes, which
+        carry the user's Connection tokens, and a JWS payload is readable without the key."""
+        try:
+            state_data = self._decode(state)
+        except jwt.InvalidTokenError:
+            LOG.debug(f'{log_prefix} Invalid state, length={len(state)}', exc_info=True)
+            return None
+        # Not a consent state: some other JWT signed with the same secret (an MCP authorization code).
+        if not state_data or 'state' not in state_data:
+            LOG.debug(f'{log_prefix} Invalid state, keys: {sorted(state_data or {})}')
+            return None
+        if state_data.get('expires_at', 0) < time.time():
+            LOG.debug(
+                f'{log_prefix} Expired state: redirect_uri={_sanitize_for_log(str(state_data.get("redirect_uri")))}, '
+                f'expires_at={state_data.get("expires_at")}'
+            )
+            return None
+        return state_data
+
     async def handle_oauth_callback(self, code: str | None, state: str) -> str:
         """
         Handles the callback from the OAuth server.
@@ -1423,18 +1782,8 @@ class SimpleOAuthProvider(OAuthProvider):
         :return: The URL that redirects back to the AI assistant OAuth client.
         """
         # Validate the state first to prevent calling OAuth server with invalid authorization code.
-        try:
-            state_data = self._decode(state)
-        except jwt.InvalidTokenError:
-            LOG.debug(f'[handle_oauth_callback] Invalid state: {state}', exc_info=True)
-            raise HTTPException(400, 'Invalid state parameter')
-
-        if not state_data:
-            LOG.debug(f'[handle_oauth_callback] Invalid state: {state_data}')
-            raise HTTPException(400, 'Invalid state parameter')
-
-        if state_data['expires_at'] < time.time():
-            LOG.debug(f'[handle_oauth_callback] Expired state: {state_data}')
+        state_data = self._decode_consent_state(state, '[handle_oauth_callback]')
+        if state_data is None:
             raise HTTPException(400, 'Invalid state parameter')
 
         if state_data.get('pending'):
@@ -1481,6 +1830,7 @@ class SimpleOAuthProvider(OAuthProvider):
 
         # Create MCP authorization code
         # This is deserialized into _ExtendedAuthorizationCode instance in load_authorization_code() function.
+        # Never add a 'state' key: a consent state and a code are told apart by it.
         auth_code = {
             'code': f'mcp_{secrets.token_hex(16)}',
             'client_id': state_data['client_id'],
@@ -1489,6 +1839,9 @@ class SimpleOAuthProvider(OAuthProvider):
             'expires_at': int(time.time() + 5 * 60),  # 5 minutes from now
             'scopes': scopes,
             'code_challenge': state_data['code_challenge'],
+            'resource': state_data.get('resource'),
+            'router': bool(state_data.get('router')),
+            'stack': self._stack_key,
             'oauth_access_token': access_token.model_dump(),
             'oauth_refresh_token': refresh_token.model_dump(),
             # Defaults to True (matching _ExtendedAuthorizationCode's own default) for a state JWT
@@ -1499,13 +1852,45 @@ class SimpleOAuthProvider(OAuthProvider):
 
         mcp_redirect_uri = construct_redirect_uri(
             redirect_uri_base=redirect_uri,
-            code=auth_code_jwt,
+            code=self._prefixed(auth_code_jwt) if auth_code['router'] else auth_code_jwt,
             state=state_data['state'],
             code_challenge=state_data['code_challenge'],
+            iss=self._response_issuer(state_data),
         )
-        LOG.debug(f'[handle_oauth_callback] mcp_redirect_uri={mcp_redirect_uri}')
+        # Only the base: the code carries the user's Connection tokens, readable without the key.
+        LOG.debug(f'[handle_oauth_callback] Redirecting to the client: redirect_uri={_sanitize_for_log(redirect_uri)}')
 
         return mcp_redirect_uri
+
+    def access_denied_redirect(self, state: str) -> str | None:
+        """The client's own redirect_uri with `error=access_denied` (RFC 6749 §4.1.2.1) and `iss` (RFC 9207), for an
+        authorization Connection denied (the user clicked Deny on the consent screen, or Connection refused the grant),
+        so the client learns of the denial instead of timing out.
+
+        Nothing proves that the error came from Connection, and a state can be replayed until it expires, so this is a
+        redirect anyone can trigger to the state's redirect_uri. It is given only for a redirect_uri Keboola
+        pre-registered itself (`_WELL_KNOWN_CONNECTION_CLIENT_IDS`): a dynamically approved one may have been approved
+        by the very user who wants the redirect, and a pending one by nobody.
+
+        :param state: The state Connection sent back with the error, the one `authorize()` put on the consent URL.
+        :return: The redirect, or None when the state is not a live consent flow of a pre-registered client.
+        """
+        state_data = self._decode_consent_state(state, '[access_denied_redirect]')
+        if state_data is None or state_data.get('pending'):
+            return None
+        redirect_uri = cast(str, state_data['redirect_uri'])
+        if redirect_uri not in _WELL_KNOWN_CONNECTION_CLIENT_IDS:
+            return None
+        return construct_redirect_uri(
+            redirect_uri, error='access_denied', state=state_data['state'], iss=self._response_issuer(state_data)
+        )
+
+    def _response_issuer(self, state_data: Mapping[str, Any]) -> str:
+        """The `iss` of an authorization response (RFC 9207): the router's for a router flow, whose client discovered
+        the router as its authorization server, else this server's own."""
+        if state_data.get('router') and self._router_issuer:
+            return self._router_issuer
+        return self.issuer
 
     async def load_authorization_code(
         self, client: OAuthClientInformationFull, authorization_code: str
@@ -1521,9 +1906,23 @@ class SimpleOAuthProvider(OAuthProvider):
         :return: An `_ExtendedAuthorizationCode` instance if the authorization code is valid, otherwise `None`.
         """
         try:
-            auth_code_raw = self._decode(authorization_code)
+            auth_code_raw = self._decode(self._unprefixed(authorization_code))
         except jwt.InvalidTokenError:
-            LOG.debug(f'[load_authorization_code] Invalid authorization_code: {authorization_code}', exc_info=True)
+            LOG.debug(
+                f'[load_authorization_code] Invalid authorization_code, length={len(authorization_code)}', exc_info=True
+            )
+            return None
+        # A consent state (the only JWT with a 'state' key) sent as the code is signed with the same secret but is no
+        # code: /token answers invalid_grant.
+        if 'state' in auth_code_raw:
+            LOG.debug(f'[load_authorization_code] Not an authorization code, keys: {sorted(auth_code_raw)}')
+            return None
+        if auth_code_raw.get('stack') != self._stack_key:
+            # Minted by another stack (or before this one had a stack key): the SDK answers invalid_grant.
+            LOG.warning(
+                f'[load_authorization_code] Code of another stack refused: '
+                f'stack={_sanitize_for_log(str(auth_code_raw.get("stack")))[:32]!r}, own={self._stack_key!r}'
+            )
             return None
 
         auth_code = _ExtendedAuthorizationCode.model_validate(
@@ -1564,6 +1963,8 @@ class SimpleOAuthProvider(OAuthProvider):
         )
         # Check that we get the instance loaded by load_authorization_code() function.
         assert isinstance(authorization_code, _ExtendedAuthorizationCode)
+        # Before the exchange: a refused resource must not cost a Keboola session.
+        resource = self._token_resource(authorization_code.resource, client.client_id, router=authorization_code.router)
 
         # Exchange the league OAuth access token for a whole-stack Keboola programmatic session.
         # The league token is used exactly once, here, and then never referenced again.
@@ -1586,9 +1987,16 @@ class SimpleOAuthProvider(OAuthProvider):
             kbc_refresh_token=token_set.refresh_token,
             kbc_access_expires_at=datetime.fromtimestamp(token_set.expires_at, tz=timezone.utc),
             oauth_projectless=authorization_code.oauth_projectless,
+            resource=resource,
+        )
+        LOG.info(
+            f'[exchange_authorization_code] OAuth session created: session_id={session.id}, '
+            f'client_id={_sanitize_client_id_for_log(client.client_id)}, resource={_sanitize_for_log(resource or "")!r}'
         )
         if introspection is not None:
             await self._auto_confirm_project_scope(session.id, token_set.access_token, introspection)
+        if authorization_code.router:
+            access_token, refresh_token = self._prefixed(access_token), self._prefixed(refresh_token)
         return self._oauth_token(access_token, refresh_token, authorization_code.scopes)
 
     async def _auto_confirm_project_scope(
@@ -1651,9 +2059,17 @@ class SimpleOAuthProvider(OAuthProvider):
             or `None` if the token doesn't exist, was revoked, or Connection refused to refresh the
             underlying Keboola session (the session is revoked, so the client has to log in again).
         """
-        session = await self._session_store.get_by_access_token(token)
+        session = await self._session_store.get_by_access_token(self._unprefixed(token))
         if session is None:
             _log_debug(f'[load_access_token] Unknown or revoked token: {token}')
+            return None
+        if (
+            session.resource is not None
+            and not self.is_own_resource(session.resource)
+            and not self.is_router_resource(session.resource)
+            and self._refuses_foreign_resource('mcp', session.resource, session.client_id, session_id=session.id)
+        ):
+            # RFC 8707: a token minted for another resource is not replayed here. No resource is accepted as before.
             return None
 
         if session.kbc_access_expires_at.timestamp() <= time.time() + 60:
@@ -1670,7 +2086,7 @@ class SimpleOAuthProvider(OAuthProvider):
                 if token_set is None:
                     # Refused for good: the session is revoked (reloading then finds nothing), unless a
                     # concurrent request rotated its credentials first -- then use what is stored now.
-                    reloaded = await self._session_store.get_by_access_token(token)
+                    reloaded = await self._session_store.get_by_access_token(self._unprefixed(token))
                     if reloaded is None:
                         return None
                     session = reloaded
@@ -1693,6 +2109,7 @@ class SimpleOAuthProvider(OAuthProvider):
             client_id=session.client_id,
             scopes=_scopes_for_session(session.oauth_projectless),
             expires_at=None,  # no client-visible expiry -- see load_access_token docstring
+            resource=session.resource,
             kbc_access_token=session.kbc_access_token,
             session_id=session.id,
             user_email=session.user_email,
@@ -1701,6 +2118,7 @@ class SimpleOAuthProvider(OAuthProvider):
             scope_confirmed=session.scope_confirmed,
             scope_scoped_token=session.scope_scoped_token,
             scope_scoped_expires_at=session.scope_scoped_expires_at,
+            directory_profile=self.is_router_resource(session.resource),
         )
         _log_debug(f'[load_access_token] token={token}, session_id={session.id}')
         return proxy_token
@@ -1713,7 +2131,7 @@ class SimpleOAuthProvider(OAuthProvider):
         :param refresh_token: The opaque refresh token to look up.
         :return: A `ProxyRefreshToken`, or `None` if the token doesn't exist or was revoked.
         """
-        session = await self._session_store.get_by_refresh_token(refresh_token)
+        session = await self._session_store.get_by_refresh_token(self._unprefixed(refresh_token))
         if session is None:
             _log_debug(f'[load_refresh_token] Unknown or revoked token: {refresh_token}')
             return None
@@ -1723,6 +2141,7 @@ class SimpleOAuthProvider(OAuthProvider):
             client_id=session.client_id,
             scopes=_scopes_for_session(session.oauth_projectless),
             expires_at=None,
+            resource=session.resource,
             kbc_refresh_token=session.kbc_refresh_token,
             session_id=session.id,
         )
@@ -1758,6 +2177,11 @@ class SimpleOAuthProvider(OAuthProvider):
 
         assert isinstance(refresh_token, ProxyRefreshToken), f'Expected ProxyRefreshToken, got {type(refresh_token)}'
         assert refresh_token.session_id is not None
+        # A session from before DMD-2469 has no resource and is not bound now: binding it would refuse a client that
+        # worked until this release, for a resource this server does not check on such a session anyway.
+        router = self.is_router_resource(refresh_token.resource)
+        if refresh_token.resource is not None:
+            self._token_resource(refresh_token.resource, client.client_id, router=router)
 
         # Raised as TokenError (not HTTPException): this method is invoked by the mcp SDK's own
         # /token endpoint handler, which only recognizes TokenError and formats it into a spec-
@@ -1784,11 +2208,13 @@ class SimpleOAuthProvider(OAuthProvider):
                 kbc_refresh_token=token_set.refresh_token,
                 kbc_access_expires_at=datetime.fromtimestamp(token_set.expires_at, tz=timezone.utc),
             )
-        elif await self._session_store.get_by_refresh_token(refresh_token.token) is None:
+        elif await self._session_store.get_by_refresh_token(self._unprefixed(refresh_token.token)) is None:
             raise TokenError(error='invalid_grant', error_description='Failed to refresh token: status=401')
         # else: a concurrent request rotated the Keboola credentials first; they are fresh, so only the
         # opaque pair is renewed below.
         new_access_token, new_refresh_token = await self._session_store.rotate_opaque_tokens(refresh_token.session_id)
+        if router:
+            new_access_token, new_refresh_token = self._prefixed(new_access_token), self._prefixed(new_refresh_token)
         return self._oauth_token(new_access_token, new_refresh_token, scopes or refresh_token.scopes)
 
     async def _refresh_kbc_tokens(self, session_id: str, kbc_refresh_token: str) -> TokenSet | None:
@@ -1828,13 +2254,16 @@ class SimpleOAuthProvider(OAuthProvider):
         Revokes a token by deleting its session from the Postgres store (soft-delete via
         `revoked_at`) -- both the access and refresh token immediately stop resolving.
 
+        The provider interface's revocation; the `/revoke` route itself is `_revoke`.
+
         :param token: The token to be revoked (access or refresh; `token_type_hint` is advisory).
         :param token_type_hint: An optional hint about the type of the token.
         """
         _log_debug(f'[revoke_token] token={token}, token_type_hint={token_type_hint}')
-        session = await self._session_store.get_by_access_token(
-            token
-        ) or await self._session_store.get_by_refresh_token(token)
+        raw = self._unprefixed(token)
+        session = await self._session_store.get_by_access_token(raw) or await self._session_store.get_by_refresh_token(
+            raw
+        )
         if session is not None:
             await self._session_store.revoke(session.id)
 
@@ -1844,7 +2273,11 @@ class SimpleOAuthProvider(OAuthProvider):
         """
         expires_in = int(data['expires_in'])  # seconds
         if expires_in <= 0:
-            LOG.exception(f'[_read_oauth_tokens] Received already expired token: data={data}')
+            # Only the keys by default: the response carries the Connection access and refresh tokens.
+            LOG.error(
+                f'[_read_oauth_tokens] Received already expired token: expires_in={expires_in}, keys={sorted(data)}'
+            )
+            _log_debug(f'[_read_oauth_tokens] Received already expired token: data={data}')
             raise HTTPException(400, 'The original OAuth access token has already expired.')
 
         current_time = int(time.time())

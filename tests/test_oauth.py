@@ -69,6 +69,7 @@ class FakeSessionStore:
         kbc_refresh_token,
         kbc_access_expires_at,
         oauth_projectless: bool = True,
+        resource: str | None = None,
     ) -> tuple[str, str, OAuthSession]:
         self._next_id += 1
         session_id = str(self._next_id)
@@ -85,6 +86,7 @@ class FakeSessionStore:
             scope_scoped_token=None,
             scope_scoped_expires_at=None,
             oauth_projectless=oauth_projectless,
+            resource=resource,
         )
         self._sessions[session_id] = session
         access_token, refresh_token = self._new_token_pair(session_id)
@@ -382,10 +384,18 @@ class TestConnectionClientIdentity:
     client bookkeeping and the identity Connection's oauth2_client registry actually understands
     (see AI-2883 RFC, Resolution Strategy §4)."""
 
-    def test_well_known_redirect_uri_maps_to_pre_registered_client_id(self):
+    @pytest.mark.parametrize(
+        ('redirect_uri', 'client_id'),
+        [
+            ('https://claude.ai/api/mcp/auth_callback', 'claude-ai'),
+            # DMD-2478: pre-registered by PreRegisterChatGptOAuthClientMigration (DMD-2475)
+            ('https://chatgpt.com/connector_platform_oauth_redirect', 'chatgpt'),
+        ],
+    )
+    def test_well_known_redirect_uri_maps_to_pre_registered_client_id(self, redirect_uri: str, client_id: str):
         from keboola_mcp_server.oauth import _connection_client_id
 
-        assert _connection_client_id('https://claude.ai/api/mcp/auth_callback', _KEY) == 'claude-ai'
+        assert _connection_client_id(redirect_uri, _KEY) == client_id
 
     def test_unknown_redirect_uri_derives_a_stable_short_id(self):
         from keboola_mcp_server.oauth import _connection_client_id
@@ -566,6 +576,27 @@ class TestSimpleOAuthProvider:
             dynamic_client_approval=True,  # off by default; these tests exercise the approval flow
         )
 
+    @pytest.fixture
+    def provider_with_binding(self):
+        """The `oauth_provider` fixture's provider, in a given resource-binding mode."""
+
+        def build(resource_binding: str) -> SimpleOAuthProvider:
+            return SimpleOAuthProvider(
+                storage_api_url='https://sapi',
+                mcp_server_url='https://mcp',
+                callback_endpoint='/callback',
+                client_id='mcp-server-id',
+                client_secret='mcp-server-secret',
+                server_url='https://oauth',
+                scope='scope',
+                jwt_secret=JWT_KEY,
+                session_store=FakeSessionStore(),
+                dynamic_client_approval=True,
+                resource_binding=resource_binding,
+            )
+
+        return build
+
     def test_dynamic_client_approval_is_off_unless_enabled(self) -> None:
         provider = SimpleOAuthProvider(
             storage_api_url='https://sapi',
@@ -582,14 +613,20 @@ class TestSimpleOAuthProvider:
 
     @staticmethod
     def authorization_code(
-        *, scopes: list[str] | None = None, expires_at: float | None = None, oauth_projectless: bool = True
+        *,
+        scopes: list[str] | None = None,
+        expires_at: float | None = None,
+        oauth_projectless: bool = True,
+        resource: str | None = None,
+        code_challenge: str = 'foo-code-challenge',
     ) -> Mapping[str, Any]:
         auth_code = _ExtendedAuthorizationCode(
             code='foo',
             scopes=scopes or [],
             expires_at=expires_at or time.time() + 5 * 60,  # 5 minutes from now
             client_id='foo-client-id',
-            code_challenge='foo-code-challenge',
+            code_challenge=code_challenge,
+            resource=resource,
             redirect_uri=AnyUrl('foo://bar'),
             redirect_uri_provided_explicitly=True,
             oauth_access_token=AccessToken(token='oauth-access-token', client_id='mcp-server', scopes=['foo']),
@@ -599,6 +636,20 @@ class TestSimpleOAuthProvider:
         auth_code_raw = auth_code.model_dump()
         auth_code_raw['redirect_uri'] = str(auth_code_raw['redirect_uri'])  # AnyUrl is not JSON serializable
         return auth_code_raw
+
+    @staticmethod
+    def consent_state() -> Mapping[str, Any]:
+        """The consent state `authorize()` encodes."""
+        return {
+            'redirect_uri': 'foo://bar',
+            'redirect_uri_provided_explicitly': 'True',
+            'scopes': [],
+            'code_challenge': 'foo-code-challenge',
+            'state': 'client-state',
+            'client_id': 'foo-client-id',
+            'expires_at': time.time() + 5 * 60,
+            'projectless': True,
+        }
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -616,6 +667,8 @@ class TestSimpleOAuthProvider:
             (code := authorization_code(expires_at=1), JWT_KEY, _ExtendedAuthorizationCode.model_validate(code)),
             # wrong encryption key
             (code := authorization_code(), '!@#$%^&', None),
+            # a consent state is signed with the same secret: an unknown code (invalid_grant), not a validation error
+            (consent_state(), JWT_KEY, None),
         ],
     )
     async def test_load_authorization_code(
@@ -624,11 +677,21 @@ class TestSimpleOAuthProvider:
         key: str,
         expected: _ExtendedAuthorizationCode,
         oauth_provider: SimpleOAuthProvider,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
     ):
+        from keboola_mcp_server import oauth as oauth_module
+
+        monkeypatch.setattr(oauth_module, '_OAUTH_LOG_ALL', False)  # the gated _log_debug may log the code
         client_info = OAuthClientInformationFull(client_id='foo-client-id', redirect_uris=[AnyUrl('foo://bar')])
         auth_code_str = oauth_provider._encode(auth_code, key=key)
-        loaded_auth_code = await oauth_provider.load_authorization_code(client_info, auth_code_str)
+        with caplog.at_level(logging.DEBUG, logger='keboola_mcp_server.oauth'):
+            loaded_auth_code = await oauth_provider.load_authorization_code(client_info, auth_code_str)
         assert loaded_auth_code == expected
+        # no row logs the JWT or its tokens: a JWS payload, even one with a broken signature, is readable without the key
+        assert auth_code_str not in caplog.text
+        assert 'oauth-access-token' not in caplog.text
+        assert 'oauth-refresh-token' not in caplog.text
 
     @pytest.mark.parametrize(
         ('raw_at', 'raw_rt', 'scopes', 'at_expires_in', 'rt_expires_in'),
@@ -660,6 +723,22 @@ class TestSimpleOAuthProvider:
         assert refresh_token.token == raw_rt
         assert refresh_token.scopes == scopes
         assert 0 <= rt_expires_in - (refresh_token.expires_at - time.time()) < 1
+
+    def test_an_expired_oauth_token_is_refused_without_logging_the_tokens(
+        self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ):
+        from keboola_mcp_server import oauth as oauth_module
+
+        monkeypatch.setattr(oauth_module, '_OAUTH_LOG_ALL', False)
+        data = {'access_token': 'league-at', 'refresh_token': 'league-rt', 'expires_in': 0}
+
+        with caplog.at_level(logging.DEBUG, logger='keboola_mcp_server.oauth'), pytest.raises(HTTPException) as exc:
+            oauth_provider._read_oauth_tokens(data=data, scopes=[])
+
+        assert exc.value.status_code == 400
+        assert 'Received already expired token' in caplog.text
+        assert 'league-at' not in caplog.text
+        assert 'league-rt' not in caplog.text
 
     @pytest.mark.parametrize(
         ('uri', 'valid'),
@@ -709,19 +788,25 @@ class TestSimpleOAuthProvider:
                 info.validate_redirect_uri(uri)
 
     @staticmethod
-    def _stub_client_registration(monkeypatch: pytest.MonkeyPatch, status) -> None:
+    def _stub_client_registration(monkeypatch: pytest.MonkeyPatch, status) -> list[tuple[str, str]]:
+        """Answers `status` for every pair; returns the (connection_client_id, redirect_uri) pairs asked about."""
         from keboola_mcp_server import oauth as oauth_module
 
+        checked: list[tuple[str, str]] = []
+
         async def _fake(self, connection_client_id: str, redirect_uri: str):
+            checked.append((connection_client_id, redirect_uri))
             return status
 
         monkeypatch.setattr(oauth_module.ConnectionClientRegistry, 'check_registration', _fake)
+        return checked
 
     @pytest.mark.parametrize(
         ('redirect_uri', 'pre_registered'),
         [
-            # pre-registered by Keboola in Connection (claude-ai)
+            # pre-registered by Keboola in Connection (claude-ai, chatgpt)
             ('https://claude.ai/api/mcp/auth_callback', True),
+            ('https://chatgpt.com/connector_platform_oauth_redirect', True),
             # became REGISTERED via the dynamic-approval screen (Flow B)
             ('https://my-self-service-tool.example/cb', False),
         ],
@@ -738,9 +823,9 @@ class TestSimpleOAuthProvider:
         """Every REGISTERED client -- pre-registered or dynamically approved -- gets the whole-stack
         'projectless' grant via /oauth/consent, and the request is logged at INFO with its callback
         and whether it was pre-registered (Connection keeps no registry listing to inspect later)."""
-        from keboola_mcp_server.oauth import _ClientRegistration
+        from keboola_mcp_server.oauth import _WELL_KNOWN_CONNECTION_CLIENT_IDS, _ClientRegistration
 
-        self._stub_client_registration(monkeypatch, _ClientRegistration.REGISTERED)
+        checked = self._stub_client_registration(monkeypatch, _ClientRegistration.REGISTERED)
         client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
         params = AuthorizationParams(
             redirect_uri=AnyUrl(redirect_uri),
@@ -756,6 +841,13 @@ class TestSimpleOAuthProvider:
         assert parsed.path == '/oauth/consent'
         query = parse_qs(parsed.query)
         assert query['scope'] == ['claudai projectless']
+
+        if pre_registered:
+            # one check, of the literal id against the client's own URI (the limiter exemption and the stale-REGISTERED
+            # fallback key on that pair)
+            assert checked == [(_WELL_KNOWN_CONNECTION_CLIENT_IDS[redirect_uri], redirect_uri)]
+        else:
+            assert checked[0][1] == oauth_provider._mcp_callback_url
 
         [record] = [r for r in caplog.records if 'Registered client proceeding to consent' in r.message]
         assert record.levelno == logging.INFO
@@ -1377,6 +1469,49 @@ class TestSimpleOAuthProvider:
             assert 'pending_mcp_client' not in query
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        'redirect_uri',
+        ['https://claude.ai/api/mcp/auth_callback', 'https://chatgpt.com/connector_platform_oauth_redirect'],
+    )
+    @pytest.mark.parametrize('approval_on', [True, False])
+    async def test_authorize_refuses_a_pre_registered_client_missing_in_connection_whatever_the_approval_switch(
+        self,
+        oauth_provider: SimpleOAuthProvider,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        redirect_uri: str,
+        approval_on: bool,
+    ):
+        """Deployed ahead of the Connection migration that registers the row: approving the literal id would leave a
+        row bound to this server's callback that no login can use and the migration stops on, so it fails closed, is
+        logged at WARNING, and uses none of the daily approval budget."""
+        from keboola_mcp_server.oauth import _ApprovalBudget, _ClientRegistration
+
+        self._stub_client_registration(monkeypatch, _ClientRegistration.NOT_REGISTERED)
+        monkeypatch.setattr(oauth_provider, '_dynamic_client_approval', approval_on)
+        monkeypatch.setattr(oauth_provider, '_approval_daily_limit', 1)
+        monkeypatch.setattr(oauth_provider, '_approval_budget', _ApprovalBudget(1))
+        client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
+        params = AuthorizationParams(
+            redirect_uri=AnyUrl(redirect_uri),
+            redirect_uri_provided_explicitly=True,
+            code_challenge='challenge',
+            state='client-state',
+            scopes=None,
+        )
+
+        with caplog.at_level(logging.INFO):
+            url = urlparse(await oauth_provider.authorize(client, params))
+        query = parse_qs(url.query)
+
+        assert url.netloc == urlparse(oauth_provider._mcp_callback_url).netloc
+        assert query['error'] == ['pre_registered_client_missing']
+        assert 'pending_mcp_client' not in query
+        assert oauth_provider._approval_budget._granted_at == {}
+        [record] = [r for r in caplog.records if 'Pre-registered client not registered in Connection' in r.message]
+        assert record.levelno == logging.WARNING
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize('approval_on', [True, False])
     @pytest.mark.parametrize('registration', ['REGISTERED', 'NOT_REGISTERED', 'ERROR'])
     async def test_authorize_never_logs_the_derived_connection_client_id(
@@ -1930,6 +2065,251 @@ class TestSimpleOAuthProvider:
         loaded = await oauth_provider.load_access_token(oauth_token.access_token)
         assert loaded is not None
         assert loaded.user_email == 'petr@example.com'
+
+    @pytest.mark.parametrize('mode', ['log', 'enforce'])
+    @pytest.mark.parametrize(
+        ('code_resource', 'request_resources', 'outcome'),
+        [
+            # every client from before RFC 8707: no binding, accepted as before
+            (None, [], 'ok'),
+            # named at /authorize (what ChatGPT does), repeated or left out at /token
+            ('https://mcp/mcp', [], 'ok'),
+            ('https://mcp/mcp', ['https://mcp/mcp/'], 'ok'),
+            # normalized: letter case, default port, trailing slash, the origin as well as /mcp
+            ('HTTPS://MCP:443/mcp/', [], 'ok'),
+            # named at /token only
+            (None, ['https://mcp/'], 'ok'),
+            # the origin at /authorize and /mcp at /token: two names of this server
+            ('https://mcp', ['https://mcp/mcp'], 'ok'),
+            # not this server: logged and let through in the `log` mode, invalid_target in `enforce`
+            ('https://other.example/mcp', [], 'foreign'),
+            (None, ['https://other.example/mcp'], 'foreign'),
+            (None, ['https://mcp/mcp?x=1'], 'foreign'),
+            (None, ['http://[::1'], 'foreign'),
+            # RFC 8707 §2 invalid_target in both modes: another resource than the authorized one, or two of them
+            ('https://mcp/mcp', ['https://other.example/mcp'], 'error'),
+            (None, ['https://mcp/mcp', 'https://mcp/'], 'error'),
+            # two different malformed values are not the same resource
+            ('http://[::1', ['http://[::2'], 'error'),
+        ],
+    )
+    def test_token_endpoint_binds_the_session_to_the_requested_resource(
+        self,
+        provider_with_binding,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        mode: str,
+        code_resource: str | None,
+        request_resources: list[str],
+        outcome: str,
+    ):
+        from starlette.applications import Starlette
+        from starlette.testclient import TestClient
+
+        from keboola_mcp_server import oauth as oauth_module
+
+        oauth_provider = provider_with_binding(mode)
+        monkeypatch.setattr(oauth_module, 'deployed_sa_token_path', lambda: '/tmp/sa-token')
+        captured: dict[str, Any] = {}
+        self._stub_exchanger(monkeypatch, captured)
+        monkeypatch.setattr(oauth_module, 'introspect_token', mock.AsyncMock(side_effect=httpx.ConnectError('down')))
+        verifier = secrets.token_urlsafe(32)
+        challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip('=')
+        code = oauth_provider._encode(self.authorization_code(resource=code_resource, code_challenge=challenge))
+        client = TestClient(Starlette(routes=oauth_provider.get_routes()))
+
+        with caplog.at_level(logging.WARNING):
+            response = client.post(
+                '/token',
+                data={
+                    'grant_type': 'authorization_code',
+                    'code': code,
+                    'client_id': 'foo-client-id',
+                    'redirect_uri': 'foo://bar',
+                    'code_verifier': verifier,
+                    'resource': request_resources,
+                },
+            )
+
+        mismatch_lines = [r.message for r in caplog.records if 'Resource mismatch' in r.message]
+        assert oauth_provider.resource_mismatches['token'] == len(mismatch_lines) == (outcome == 'foreign')
+        refused = outcome == 'error' or (outcome == 'foreign' and mode == 'enforce')
+        if refused:
+            assert response.status_code == 400, response.text
+            assert response.json()['error'] == 'invalid_target'
+            assert 'oauth_access_token' not in captured  # refused before the exchange
+            return
+        assert response.status_code == 200, response.text
+        if outcome == 'foreign':
+            [line] = mismatch_lines
+            assert f"mode={mode}" in line and 'received=' in line and "expected=['https://mcp'" in line
+        session = asyncio.run(oauth_provider._session_store.get_by_access_token(response.json()['access_token']))
+        assert session is not None
+        assert session.resource == (code_resource or (request_resources[0] if request_resources else None))
+
+    @pytest.mark.parametrize('mode', ['log', 'enforce'])
+    @pytest.mark.parametrize(
+        ('session_resource', 'request_resources', 'log_status', 'enforce_status'),
+        [
+            ('https://mcp/mcp', [], 200, 200),
+            ('https://mcp/mcp', ['https://mcp/mcp'], 200, 200),
+            # two names of this server
+            ('https://mcp/mcp', ['https://mcp'], 200, 200),
+            ('https://mcp/mcp', ['https://other.example/mcp'], 400, 400),
+            # a session bound to a foreign resource (stored in the `log` mode): refused once enforced
+            ('https://other.example/mcp', [], 200, 400),
+            # a session from before DMD-2469 is not bound now
+            (None, ['https://other.example/mcp'], 200, 200),
+        ],
+    )
+    def test_refresh_keeps_the_resource_of_the_session(
+        self,
+        provider_with_binding,
+        monkeypatch: pytest.MonkeyPatch,
+        mode: str,
+        session_resource: str | None,
+        request_resources: list[str],
+        log_status: int,
+        enforce_status: int,
+    ):
+        oauth_provider = provider_with_binding(mode)
+        expected_status = log_status if mode == 'log' else enforce_status
+        from starlette.applications import Starlette
+        from starlette.testclient import TestClient
+
+        from keboola_mcp_server import oauth as oauth_module
+        from keboola_mcp_server.auth_login import TokenSet
+
+        async def _fake_refresh_tokens(storage_api_url: str, *, refresh_token: str, transport=None):
+            return TokenSet(access_token='kbc_at_new', refresh_token='kbc_rt_new', expires_at=time.time() + 3600)
+
+        monkeypatch.setattr(oauth_module, 'refresh_tokens', _fake_refresh_tokens)
+        _at, opaque_refresh_token, _session = asyncio.run(
+            oauth_provider._session_store.create(
+                client_id='foo-client-id',
+                user_email=None,
+                kbc_access_token='kbc_at_old',
+                kbc_refresh_token='kbc_rt_old',
+                kbc_access_expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+                resource=session_resource,
+            )
+        )
+        client = TestClient(Starlette(routes=oauth_provider.get_routes()))
+
+        response = client.post(
+            '/token',
+            data={
+                'grant_type': 'refresh_token',
+                'refresh_token': opaque_refresh_token,
+                'client_id': 'foo-client-id',
+                'resource': request_resources,
+            },
+        )
+
+        assert response.status_code == expected_status, response.text
+        if expected_status != 200:
+            assert response.json()['error'] == 'invalid_target'
+            return
+        loaded = asyncio.run(oauth_provider.load_access_token(response.json()['access_token']))
+        assert loaded is not None
+        assert loaded.resource == session_resource
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ('resource', 'drop_from_state', 'expected_code_resource'),
+        [
+            ('https://mcp/mcp', False, 'https://mcp/mcp'),
+            (None, False, None),
+            # a state minted before this release has no `resource` key
+            ('https://mcp/mcp', True, None),
+        ],
+    )
+    async def test_the_authorized_resource_reaches_the_code(
+        self,
+        oauth_provider: SimpleOAuthProvider,
+        monkeypatch: pytest.MonkeyPatch,
+        resource: str | None,
+        drop_from_state: bool,
+        expected_code_resource: str | None,
+    ):
+        from keboola_mcp_server import oauth as oauth_module
+        from keboola_mcp_server.oauth import _ClientRegistration
+
+        self._stub_client_registration(monkeypatch, _ClientRegistration.REGISTERED)
+        client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
+        params = AuthorizationParams(
+            redirect_uri=AnyUrl('https://claude.ai/api/mcp/auth_callback'),
+            redirect_uri_provided_explicitly=True,
+            code_challenge='challenge',
+            state='client-state',
+            scopes=None,
+            resource=resource,
+        )
+        state = parse_qs(urlparse(await oauth_provider.authorize(client, params)).query)['state'][0]
+        if drop_from_state:
+            state_data = oauth_provider._decode(state)
+            del state_data['resource']
+            state = oauth_provider._encode(state_data)
+        token_response = {'access_token': 'league-at', 'refresh_token': 'league-rt', 'expires_in': 3600}
+        transport = httpx.MockTransport(lambda _rq: httpx.Response(200, json=token_response))
+        monkeypatch.setattr(oauth_module, '_create_http_client', lambda **_kw: httpx.AsyncClient(transport=transport))
+
+        redirect = await oauth_provider.handle_oauth_callback('connection-code', state)
+
+        code = parse_qs(urlparse(redirect).query)['code'][0]
+        loaded = await oauth_provider.load_authorization_code(client, code)
+        assert loaded is not None
+        assert loaded.resource == expected_code_resource
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize('mode', ['log', 'enforce'])
+    async def test_authorize_refuses_another_resource_before_consent_only_when_enforced(
+        self, provider_with_binding, monkeypatch: pytest.MonkeyPatch, mode: str
+    ):
+        oauth_provider = provider_with_binding(mode)
+        from keboola_mcp_server.oauth import _ClientRegistration
+
+        self._stub_client_registration(monkeypatch, _ClientRegistration.REGISTERED)
+        client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
+        params = AuthorizationParams(
+            redirect_uri=AnyUrl('https://claude.ai/api/mcp/auth_callback'),
+            redirect_uri_provided_explicitly=True,
+            code_challenge='challenge',
+            state='client-state',
+            scopes=None,
+            resource='https://mcp.eu-central-1.keboola.com/mcp',
+        )
+
+        url = await oauth_provider.authorize(client, params)
+
+        assert oauth_provider.resource_mismatches['authorize'] == 1
+        if mode == 'enforce':
+            assert url.startswith(oauth_provider._mcp_callback_url)
+            assert parse_qs(urlparse(url).query)['error'] == ['invalid_target']
+        else:
+            assert urlparse(url).path == '/oauth/consent'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize('mode', ['log', 'enforce'])
+    async def test_mcp_logs_a_foreign_session_once_and_counts_every_request(
+        self, provider_with_binding, caplog: pytest.LogCaptureFixture, mode: str
+    ):
+        oauth_provider = provider_with_binding(mode)
+        access_token, _rt, _session = await oauth_provider._session_store.create(
+            client_id='foo-client-id',
+            user_email=None,
+            kbc_access_token='kbc_at',
+            kbc_refresh_token='kbc_rt',
+            kbc_access_expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+            resource='https://other.example/mcp',
+        )
+
+        with caplog.at_level(logging.WARNING):
+            loaded = [await oauth_provider.load_access_token(access_token) for _ in range(3)]
+
+        assert [token is None for token in loaded] == [mode == 'enforce'] * 3
+        assert oauth_provider.resource_mismatches['mcp'] == 3
+        assert len([r for r in caplog.records if 'Resource mismatch' in r.message]) == 1
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -2650,13 +3030,13 @@ class TestSharedRateLimits:
     ],
 )
 def test_caller_address(forwarded_for: str, hops: int, client: tuple[str, int] | None, expected: str | None) -> None:
-    from keboola_mcp_server.oauth import _caller_address
+    from keboola_mcp_server.oauth import caller_address
 
     scope = {'type': 'http', 'headers': [(b'x-forwarded-for', forwarded_for.encode())] if forwarded_for else []}
     if client:
         scope['client'] = client
 
-    assert _caller_address(scope, hops) == expected
+    assert caller_address(scope, hops) == expected
 
 
 class TestAuthorizeRateLimitMiddleware:
@@ -2737,17 +3117,16 @@ class TestAuthorizeRateLimitMiddleware:
 
 class TestAuthorizationServerMetadata:
     """The metadata documents advertise `none` first as a token endpoint auth method (AI-3797): this server's clients are
-    public ones, and a client that picks its method from the document would otherwise register with a secret."""
+    public ones, and a client that picks its method from the document would otherwise register with a secret. They also
+    advertise RFC 9207 issuer identification, and every authorization response to the client carries the same issuer
+    (DMD-2468): ChatGPT uses its stable redirect URI only then, and compares the three values by exact string."""
 
     @pytest.fixture
-    def client(self):
-        from starlette.applications import Starlette
-        from starlette.testclient import TestClient
-
-        provider = SimpleOAuthProvider(
+    def provider(self) -> SimpleOAuthProvider:
+        return SimpleOAuthProvider(
             storage_api_url='https://sapi',
             mcp_server_url='https://mcp.example',
-            callback_endpoint='/callback',
+            callback_endpoint='/oauth/callback',
             client_id='mcp-server-id',
             client_secret='mcp-server-secret',
             server_url='https://oauth.example',
@@ -2755,6 +3134,12 @@ class TestAuthorizationServerMetadata:
             jwt_secret=JWT_KEY,
             session_store=FakeSessionStore(),
         )
+
+    @pytest.fixture
+    def client(self, provider: SimpleOAuthProvider):
+        from starlette.applications import Starlette
+        from starlette.testclient import TestClient
+
         return TestClient(Starlette(routes=provider.get_routes()))
 
     def test_public_clients_are_advertised_first(self, client) -> None:
@@ -2768,6 +3153,208 @@ class TestAuthorizationServerMetadata:
         )  # the patched body is what was announced
         assert body['code_challenge_methods_supported'] == ['S256']  # the rest of the document is untouched
         assert body['issuer'].rstrip('/') == 'https://mcp.example'
+        assert body['authorization_response_iss_parameter_supported'] is True
+
+    @staticmethod
+    async def _consent_state(
+        provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch, redirect_uri: str, registration: str
+    ) -> str:
+        """The state `authorize()` puts on the URL it sends the browser to (consent, or approval when not registered)."""
+        from keboola_mcp_server.oauth import _ClientRegistration
+
+        TestSimpleOAuthProvider._stub_client_registration(monkeypatch, _ClientRegistration[registration])
+        params = AuthorizationParams(
+            redirect_uri=AnyUrl(redirect_uri),
+            redirect_uri_provided_explicitly=True,
+            code_challenge='challenge',
+            state='client-state',
+            scopes=None,
+        )
+        client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='dcr-client-id')
+        return parse_qs(urlparse(await provider.authorize(client, params)).query)['state'][0]
+
+    @staticmethod
+    async def _callback(provider: SimpleOAuthProvider, query: str):
+        from starlette.requests import Request
+
+        from keboola_mcp_server.config import Config, ServerRuntimeInfo
+        from keboola_mcp_server.mcp import ServerState
+        from keboola_mcp_server.server import CustomRoutes
+
+        routes = CustomRoutes(
+            server_state=ServerState(config=Config(), runtime_info=ServerRuntimeInfo(transport='streamable-http')),
+            oauth_provider=provider,
+        )
+        return await routes.oauth_callback_handler(
+            Request({'type': 'http', 'headers': [], 'query_string': query.encode()})
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        'redirect_uri',
+        ['https://claude.ai/api/mcp/auth_callback', 'https://chatgpt.com/connector_platform_oauth_redirect'],
+    )
+    @pytest.mark.parametrize(
+        ('response_kind', 'expected_params'),
+        [
+            ('success', {'code', 'state', 'code_challenge', 'iss'}),
+            # the user clicked Deny on Connection's consent screen
+            ('access_denied', {'error', 'state', 'iss'}),
+        ],
+    )
+    async def test_every_authorization_response_carries_the_advertised_issuer(
+        self,
+        provider: SimpleOAuthProvider,
+        client,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        redirect_uri: str,
+        response_kind: str,
+        expected_params: set[str],
+    ) -> None:
+        from keboola_mcp_server import oauth as oauth_module
+
+        state = await self._consent_state(provider, monkeypatch, redirect_uri, 'REGISTERED')
+        if response_kind == 'success':
+            token_response = {'access_token': 'league-at', 'refresh_token': 'league-rt', 'expires_in': 3600}
+            transport = httpx.MockTransport(lambda _rq: httpx.Response(200, json=token_response))
+            monkeypatch.setattr(
+                oauth_module, '_create_http_client', lambda **_kw: httpx.AsyncClient(transport=transport)
+            )
+            query = f'code=connection-code&state={state}'
+        else:
+            query = f'error=access_denied&error_description=The+user+denied+the+request&state={state}'
+
+        monkeypatch.setattr(oauth_module, '_OAUTH_LOG_ALL', False)  # the gated _log_debug may log the tokens
+        with caplog.at_level(logging.DEBUG, logger='keboola_mcp_server.oauth'):
+            response = await self._callback(provider, query)
+
+        assert response.status_code == 302
+        location = urlparse(response.headers['location'])
+        assert f'{location.scheme}://{location.netloc}{location.path}' == redirect_uri
+        response_params = parse_qs(location.query)
+        assert set(response_params) == expected_params
+        assert response_params['state'] == ['client-state']
+        if response_kind == 'access_denied':
+            assert response_params['error'] == ['access_denied']
+        else:
+            # the code carries the Connection tokens, readable without the key
+            code = response_params['code'][0]
+            assert code not in caplog.text
+            assert 'league-at' not in caplog.text
+            assert 'league-rt' not in caplog.text
+            # /token must accept what the callback issues (it refuses a JWT with a 'state' key)
+            dcr_client = OAuthClientInformationFull(client_id='dcr-client-id', redirect_uris=[AnyUrl(redirect_uri)])
+            loaded = await provider.load_authorization_code(dcr_client, code)
+            assert loaded is not None
+            assert str(loaded.redirect_uri) == redirect_uri
+            assert loaded.code_challenge == 'challenge'
+
+        issuer = response_params['iss'][0]
+        assert issuer == provider.issuer
+        assert client.get('/.well-known/oauth-authorization-server').json()['issuer'] == issuer
+        assert client.get('/.well-known/oauth-protected-resource').json()['authorization_servers'] == [issuer]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ('redirect_uri', 'registration', 'state_change'),
+        [
+            # not approved by anyone yet: sending the browser there would be an open redirect (authorize no longer
+            # issues a pending state for this URI, but one signed earlier is still live)
+            ('https://claude.ai/api/mcp/auth_callback', 'REGISTERED', 'pending'),
+            # approved, but possibly by the very user who wants the redirect
+            ('https://attacker.example/cb', 'REGISTERED', None),
+            ('https://claude.ai/api/mcp/auth_callback', 'REGISTERED', 'expired'),
+            ('https://claude.ai/api/mcp/auth_callback', 'REGISTERED', 'forged'),
+            ('https://claude.ai/api/mcp/auth_callback', 'REGISTERED', 'garbage'),
+            # a JWT signed with the same secret that is not a state; it would crash on the missing 'state' key
+            ('https://claude.ai/api/mcp/auth_callback', 'REGISTERED', 'authorization_code'),
+        ],
+    )
+    async def test_a_denial_is_relayed_only_for_a_live_flow_of_a_pre_registered_client(
+        self,
+        provider: SimpleOAuthProvider,
+        monkeypatch: pytest.MonkeyPatch,
+        redirect_uri: str,
+        registration: str,
+        state_change: str | None,
+    ) -> None:
+        """Anyone can mint a state and send the denial themselves, so the relay is a redirect anyone can trigger: it must
+        stay limited to the redirect_uris Keboola vouches for. Every other denial keeps the generic page."""
+        provider._dynamic_client_approval = True
+        state = await self._consent_state(provider, monkeypatch, redirect_uri, registration)
+        state = self._change_state(provider, state, state_change, redirect_uri)
+
+        assert provider.access_denied_redirect(state) is None
+        response = await self._callback(provider, f'error=access_denied&state={state}')
+        assert response.status_code == 400
+        assert response.headers['content-type'].startswith('text/html')
+        assert 'location' not in response.headers
+
+    @staticmethod
+    def _authorization_code(provider: SimpleOAuthProvider, redirect_uri: str) -> str:
+        """An MCP authorization code as far as it matters here: signed with the state's secret, with a live `expires_at`,
+        the client's `redirect_uri` and the Connection tokens, but no `state`. The client sees it, so it can send it
+        back."""
+        return provider._encode(
+            {
+                'code': 'mcp_code',
+                'client_id': 'dcr-client-id',
+                'redirect_uri': redirect_uri,
+                'redirect_uri_provided_explicitly': True,
+                'expires_at': int(time.time() + 5 * 60),
+                'scopes': [],
+                'code_challenge': 'challenge',
+                'oauth_access_token': {'token': 'league-at'},
+                'oauth_refresh_token': {'token': 'league-rt'},
+            }
+        )
+
+    @classmethod
+    def _change_state(cls, provider: SimpleOAuthProvider, state: str, change: str | None, redirect_uri: str) -> str:
+        if change == 'pending':
+            return provider._encode({**provider._decode(state), 'pending': True})
+        if change == 'expired':
+            return provider._encode({**provider._decode(state), 'expires_at': time.time() - 1})
+        if change == 'forged':
+            return provider._encode(provider._decode(state), key='another-key')
+        if change == 'garbage':
+            return 'not-a-jwt'
+        if change == 'authorization_code':
+            return cls._authorization_code(provider, redirect_uri)
+        return state
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize('state_change', ['expired', 'forged', 'garbage', 'authorization_code'])
+    async def test_the_callback_refuses_what_is_not_a_live_consent_state_before_the_token_exchange(
+        self,
+        provider: SimpleOAuthProvider,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        state_change: str,
+    ) -> None:
+        """The callback half of the state check the denial shares: each of these is a 400, the Connection code is
+        never exchanged, and the refused JWT is not logged (a JWS payload, an authorization code's tokens included, is
+        readable without the key)."""
+        from keboola_mcp_server import oauth as oauth_module
+
+        redirect_uri = 'https://claude.ai/api/mcp/auth_callback'
+        state = await self._consent_state(provider, monkeypatch, redirect_uri, 'REGISTERED')
+        state = self._change_state(provider, state, state_change, redirect_uri)
+        exchanges = []
+        transport = httpx.MockTransport(lambda rq: exchanges.append(rq) or httpx.Response(500))
+        monkeypatch.setattr(oauth_module, '_create_http_client', lambda **_kw: httpx.AsyncClient(transport=transport))
+
+        monkeypatch.setattr(oauth_module, '_OAUTH_LOG_ALL', False)
+
+        with caplog.at_level(logging.DEBUG, logger='keboola_mcp_server.oauth'), pytest.raises(HTTPException) as excinfo:
+            await self._callback(provider, f'code=connection-code&state={state}')
+
+        assert excinfo.value.status_code == 400
+        assert exchanges == []
+        assert state not in caplog.text
+        assert 'league-at' not in caplog.text
+        assert 'league-rt' not in caplog.text
 
     def test_a_preflight_answer_is_left_alone(self, client) -> None:
         response = client.options(
@@ -2777,3 +3364,398 @@ class TestAuthorizationServerMetadata:
 
         assert response.status_code == 200
         assert response.headers['access-control-allow-origin'] == '*'
+
+
+class TestRouterFlows:
+    """DMD-2481: a flow the global router sends here (`via=router` and the router's resource) is the router's one logical
+    authorization server: `iss` is the router's issuer, and the code and tokens carry this stack's key, so the router
+    routes them back here. Every other flow is unchanged."""
+
+    ROUTER_URL = 'https://mcp-router.example.com'
+    OWN_URL = 'https://mcp.eu-central-1.keboola.com'
+
+    @pytest.fixture
+    def provider(self) -> SimpleOAuthProvider:
+        return self._provider(router=True)
+
+    def _provider(self, *, router: bool, resource_binding: str = 'log') -> SimpleOAuthProvider:
+        return SimpleOAuthProvider(
+            storage_api_url='https://connection.eu-central-1.keboola.com',
+            mcp_server_url=self.OWN_URL,
+            callback_endpoint='/oauth/callback',
+            client_id='mcp-server-id',
+            client_secret='mcp-server-secret',
+            server_url='https://connection.eu-central-1.keboola.com',
+            scope='scope',
+            jwt_secret=JWT_KEY,
+            session_store=FakeSessionStore(),
+            stack_key='eu-aws' if router else None,
+            router_url=self.ROUTER_URL if router else None,
+            resource_binding=resource_binding,
+        )
+
+    def _login(
+        self, provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch, authorize_query: dict[str, str]
+    ) -> tuple[Any, dict[str, list[str]]]:
+        """/authorize, the Connection callback and nothing more: returns the test client and the redirect to the AI
+        client's redirect_uri (or the error page), parsed."""
+        from starlette.applications import Starlette
+        from starlette.testclient import TestClient
+
+        from keboola_mcp_server import oauth as oauth_module
+        from keboola_mcp_server.oauth import _ClientRegistration
+
+        TestSimpleOAuthProvider._stub_client_registration(monkeypatch, _ClientRegistration.REGISTERED)
+        TestSimpleOAuthProvider._stub_exchanger(monkeypatch, {})
+        monkeypatch.setattr(oauth_module, 'deployed_sa_token_path', lambda: '/tmp/sa-token')
+        monkeypatch.setattr(oauth_module, 'introspect_token', mock.AsyncMock(side_effect=httpx.ConnectError('down')))
+        from keboola_mcp_server.auth_login import TokenSet
+
+        async def _refresh_tokens(storage_api_url: str, *, refresh_token: str, transport=None) -> TokenSet:
+            return TokenSet(access_token='kbc_at_2', refresh_token='kbc_rt_2', expires_at=time.time() + 3600)
+
+        monkeypatch.setattr(oauth_module, 'refresh_tokens', _refresh_tokens)
+        league = httpx.MockTransport(
+            lambda _rq: httpx.Response(200, json={'access_token': 'la', 'refresh_token': 'lr', 'expires_in': 3600})
+        )
+        monkeypatch.setattr(oauth_module, '_create_http_client', lambda **_kw: httpx.AsyncClient(transport=league))
+
+        client = TestClient(Starlette(routes=provider.get_routes()), base_url=self.OWN_URL, follow_redirects=False)
+        consent = client.get('/authorize', params=authorize_query)
+        assert consent.status_code == 302, consent.text
+        location = urlparse(consent.headers['location'])
+        query = parse_qs(location.query)
+        if 'error' in query:
+            return client, query
+        redirect = asyncio.run(provider.handle_oauth_callback('connection-code', query['state'][0]))
+        return client, parse_qs(urlparse(redirect).query)
+
+    @staticmethod
+    def _authorize_query(*, via: str | None, resource: str) -> dict[str, str]:
+        verifier = 'v' * 43
+        challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip('=')
+        query = {
+            'response_type': 'code',
+            'client_id': 'chatgpt-dcr-id',
+            'redirect_uri': 'https://chatgpt.com/connector_platform_oauth_redirect',
+            'code_challenge': challenge,
+            'code_challenge_method': 'S256',
+            'state': 'client-state',
+            'resource': resource,
+        }
+        return query | ({'via': via} if via else {})
+
+    @pytest.mark.parametrize(
+        ('via', 'resource', 'router_flow'),
+        [
+            ('router', 'https://mcp-router.example.com/mcp', True),
+            ('router', 'https://MCP-Router.example.com:443/mcp/', True),
+            # a direct connection, as every connector today
+            (None, 'https://mcp.eu-central-1.keboola.com/mcp', False),
+            # `via=router` without the router's resource is ignored
+            ('router', 'https://mcp.eu-central-1.keboola.com/mcp', False),
+            ('somebody-else', 'https://mcp.eu-central-1.keboola.com/', False),
+        ],
+    )
+    def test_both_branches_through_token_refresh_and_revoke(
+        self,
+        provider: SimpleOAuthProvider,
+        monkeypatch: pytest.MonkeyPatch,
+        via: str | None,
+        resource: str,
+        router_flow: bool,
+    ) -> None:
+        client, response = self._login(provider, monkeypatch, self._authorize_query(via=via, resource=resource))
+
+        assert response['state'] == ['client-state']
+        assert response['iss'] == ([provider._router_issuer] if router_flow else [provider.issuer])
+        code = response['code'][0]
+        assert code.startswith('eu-aws.') is router_flow
+
+        token = client.post(
+            '/token',
+            data={
+                'grant_type': 'authorization_code',
+                'code': code,
+                'client_id': 'chatgpt-dcr-id',
+                'redirect_uri': 'https://chatgpt.com/connector_platform_oauth_redirect',
+                'code_verifier': 'v' * 43,
+                'resource': resource,
+            },
+        )
+        assert token.status_code == 200, token.text
+        tokens = token.json()
+        for name in ('access_token', 'refresh_token'):
+            assert tokens[name].startswith('eu-aws.') is router_flow
+        loaded = asyncio.run(provider.load_access_token(tokens['access_token']))
+        assert loaded is not None
+        assert loaded.resource == resource
+        # DMD-2482: a router session gets the directory tool profile, whatever spelling of the router it stored
+        assert loaded.directory_profile is router_flow
+
+        refreshed = client.post(
+            '/token',
+            data={
+                'grant_type': 'refresh_token',
+                'refresh_token': tokens['refresh_token'],
+                'client_id': 'chatgpt-dcr-id',
+            },
+        )
+        assert refreshed.status_code == 200, refreshed.text
+        new_tokens = refreshed.json()
+        assert new_tokens['access_token'].startswith('eu-aws.') is router_flow
+        assert asyncio.run(provider.load_access_token(tokens['access_token'])) is None  # rotated
+
+        revoked = client.post('/revoke', data={'token': new_tokens['access_token'], 'client_id': 'chatgpt-dcr-id'})
+        assert revoked.status_code == 200
+        assert asyncio.run(provider.load_access_token(new_tokens['access_token'])) is None
+
+    @pytest.mark.parametrize(
+        ('router_configured', 'via'),
+        [
+            # the router's resource needs `via=router` ...
+            (True, None),
+            # ... and a server that takes router flows at all
+            (False, 'router'),
+        ],
+    )
+    @pytest.mark.parametrize('mode', ['log', 'enforce'])
+    def test_the_router_resource_outside_a_router_flow_is_a_foreign_resource(
+        self, monkeypatch: pytest.MonkeyPatch, router_configured: bool, via: str | None, mode: str
+    ) -> None:
+        """Outside a router flow the router's resource is just another resource than this server: refused when the
+        binding is enforced, logged and let through (as a normal, unprefixed flow) in the `log` mode."""
+        provider = self._provider(router=router_configured, resource_binding=mode)
+
+        _client, response = self._login(
+            provider, monkeypatch, self._authorize_query(via=via, resource='https://mcp-router.example.com/mcp')
+        )
+
+        assert provider.resource_mismatches['authorize'] == 1
+        if mode == 'enforce':
+            assert response['error'] == ['invalid_target']
+        else:
+            assert response['iss'] == [provider.issuer]
+            assert not response['code'][0].startswith('eu-aws.')
+
+    def test_router_tokens_work_at_mcp_only_while_the_router_is_configured(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        provider = self._provider(router=True, resource_binding='enforce')
+        _client, response = self._login(
+            provider, monkeypatch, self._authorize_query(via='router', resource='https://mcp-router.example.com/mcp')
+        )
+        code = asyncio.run(provider.load_authorization_code(mock.Mock(client_id='chatgpt-dcr-id'), response['code'][0]))
+        assert code is not None and code.router
+        tokens = asyncio.run(
+            provider.exchange_authorization_code(
+                _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='chatgpt-dcr-id'), code
+            )
+        )
+        unprefixed = tokens.access_token.removeprefix('eu-aws.')
+
+        # a router token also reaches its session directly at the regional URL: same session, nothing gained
+        assert asyncio.run(provider.load_access_token(unprefixed)) is not None
+        # another stack's prefix is not stripped: no such token exists here
+        assert asyncio.run(provider.load_access_token(f'us-aws.{unprefixed}')) is None
+        provider._router_resource_keys = frozenset()  # the router taken out of this stack's configuration
+        assert asyncio.run(provider.load_access_token(tokens.access_token)) is None
+
+    def test_router_and_regional_code_derive_the_same_issuer_from_one_url(self) -> None:
+        from starlette.testclient import TestClient
+
+        from keboola_mcp_server.router.app import create_router_app
+        from keboola_mcp_server.router.settings import RouterSettings
+        from keboola_mcp_server.router.stacks import parse_stacks
+
+        router_settings = RouterSettings(router_url=self.ROUTER_URL, stacks=parse_stacks(None))
+        with TestClient(create_router_app(router_settings), base_url=self.ROUTER_URL) as router:
+            metadata = router.get('/.well-known/oauth-authorization-server').json()
+            prm = router.get('/.well-known/oauth-protected-resource').json()
+
+        provider = self._provider(router=True)
+        assert provider._router_issuer == router_settings.issuer == metadata['issuer']
+        assert prm['authorization_servers'] == [provider._router_issuer]
+        assert provider.is_router_resource(prm['resource'])
+
+    @pytest.mark.parametrize(
+        ('stack_key', 'router_url'),
+        [('eu-aws', None), (None, 'https://mcp-router.example.com'), ('eu.aws', 'https://mcp-router.example.com')],
+    )
+    def test_router_settings_come_together(self, stack_key: str | None, router_url: str | None) -> None:
+        with pytest.raises(ValueError):
+            SimpleOAuthProvider(
+                storage_api_url='https://sapi',
+                mcp_server_url=self.OWN_URL,
+                callback_endpoint='/oauth/callback',
+                client_id='mcp-server-id',
+                client_secret='mcp-server-secret',
+                server_url='https://oauth',
+                scope='scope',
+                session_store=FakeSessionStore(),
+                stack_key=stack_key,
+                router_url=router_url,
+            )
+
+    def test_a_router_flow_keeps_its_issuer_and_prefix_through_denial_and_approval(
+        self, provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The other two ways a router flow comes back: a Deny relayed to the client, and the approval of a client
+        Connection did not know yet (Flow B), which continues into consent with the same state."""
+        from keboola_mcp_server import oauth as oauth_module
+        from keboola_mcp_server.oauth import _ClientRegistration
+
+        league = httpx.MockTransport(
+            lambda _rq: httpx.Response(200, json={'access_token': 'la', 'refresh_token': 'lr', 'expires_in': 3600})
+        )
+        monkeypatch.setattr(oauth_module, '_create_http_client', lambda **_kw: httpx.AsyncClient(transport=league))
+        query = self._authorize_query(via='router', resource='https://mcp-router.example.com/mcp')
+        _client, consent = self._login_until_connection(provider, monkeypatch, query, 'REGISTERED')
+        denial = urlparse(provider.access_denied_redirect(consent['state'][0]))
+        assert parse_qs(denial.query)['iss'] == [provider._router_issuer]
+
+        # Flow B needs a client Keboola did not pre-register: a missing pre-registered one is refused (DMD-2478)
+        provider._dynamic_client_approval = True
+        query = query | {'redirect_uri': 'https://my.tool/oauth/callback'}
+        _client, approval = self._login_until_connection(provider, monkeypatch, query, 'NOT_REGISTERED')
+        TestSimpleOAuthProvider._stub_client_registration(monkeypatch, _ClientRegistration.REGISTERED)
+        consent_url = asyncio.run(provider.handle_oauth_callback(None, approval['state'][0]))
+        redirect = asyncio.run(
+            provider.handle_oauth_callback('connection-code', parse_qs(urlparse(consent_url).query)['state'][0])
+        )
+        response = parse_qs(urlparse(redirect).query)
+        assert response['iss'] == [provider._router_issuer]
+        assert response['code'][0].startswith('eu-aws.')
+
+    def test_a_router_state_finished_without_router_settings_is_refused(
+        self, provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A rollout or rollback within the lifetime of a state: a replica without router settings must not hand out a
+        code that nobody can route."""
+        from keboola_mcp_server import oauth as oauth_module
+
+        league = httpx.MockTransport(
+            lambda _rq: httpx.Response(200, json={'access_token': 'la', 'refresh_token': 'lr', 'expires_in': 3600})
+        )
+        monkeypatch.setattr(oauth_module, '_create_http_client', lambda **_kw: httpx.AsyncClient(transport=league))
+        query = self._authorize_query(via='router', resource='https://mcp-router.example.com/mcp')
+        _client, consent = self._login_until_connection(provider, monkeypatch, query, 'REGISTERED')
+        other_replica = self._provider(router=False)
+
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(other_replica.handle_oauth_callback('connection-code', consent['state'][0]))
+        assert exc.value.status_code == 400
+
+    def test_via_router_in_a_form_body_counts_too(
+        self, provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        query = self._authorize_query(via='router', resource='https://mcp-router.example.com/mcp')
+        _client, consent = self._login_until_connection(provider, monkeypatch, query, 'REGISTERED', post=True)
+
+        assert provider._decode(consent['state'][0])['router'] is True
+
+    def _login_until_connection(
+        self,
+        provider: SimpleOAuthProvider,
+        monkeypatch: pytest.MonkeyPatch,
+        query: dict[str, str],
+        registration: str,
+        *,
+        post: bool = False,
+    ) -> tuple[Any, dict[str, list[str]]]:
+        from starlette.applications import Starlette
+        from starlette.testclient import TestClient
+
+        from keboola_mcp_server.oauth import _ClientRegistration
+
+        TestSimpleOAuthProvider._stub_client_registration(monkeypatch, _ClientRegistration[registration])
+        client = TestClient(Starlette(routes=provider.get_routes()), base_url=self.OWN_URL, follow_redirects=False)
+        answer = client.post('/authorize', data=query) if post else client.get('/authorize', params=query)
+        assert answer.status_code == 302, answer.text
+        return client, parse_qs(urlparse(answer.headers['location']).query)
+
+    @pytest.mark.parametrize(('client_id', 'revoked'), [('chatgpt-dcr-id', True), ('another-client', False)])
+    def test_revoke_takes_a_public_client_and_only_its_own_tokens(
+        self, monkeypatch: pytest.MonkeyPatch, client_id: str, revoked: bool
+    ) -> None:
+        """RFC 7009 from a public client: no `client_secret` at all, which the SDK's own handler refuses."""
+        provider = self._provider(router=True)
+        client, response = self._login(
+            provider, monkeypatch, self._authorize_query(via='router', resource='https://mcp-router.example.com/mcp')
+        )
+        tokens = client.post(
+            '/token',
+            data={
+                'grant_type': 'authorization_code',
+                'code': response['code'][0],
+                'client_id': 'chatgpt-dcr-id',
+                'redirect_uri': 'https://chatgpt.com/connector_platform_oauth_redirect',
+                'code_verifier': 'v' * 43,
+            },
+        ).json()
+
+        answer = client.post('/revoke', data={'token': tokens['refresh_token'], 'client_id': client_id})
+
+        assert answer.status_code == 200
+        assert (asyncio.run(provider.load_access_token(tokens['access_token'])) is None) is revoked
+
+    @pytest.mark.parametrize(
+        ('minting_stack', 'redeeming_stack', 'expected_status'),
+        [
+            ('eu-aws', 'eu-aws', 200),
+            # signed with the very same jwt_secret, still refused: the claim names another stack
+            ('eu-aws', 'us-aws', 401),
+            # a code minted before the stack had a key
+            (None, 'eu-aws', 401),
+            # a server without a stack key refuses a code that has a claim, and takes its own codes as before
+            ('eu-aws', None, 401),
+            (None, None, 200),
+        ],
+    )
+    def test_a_code_minted_by_another_stack_is_refused_at_token(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        minting_stack: str | None,
+        redeeming_stack: str | None,
+        expected_status: int,
+    ) -> None:
+        from starlette.applications import Starlette
+        from starlette.testclient import TestClient
+
+        def provider(stack_key: str | None) -> SimpleOAuthProvider:
+            return SimpleOAuthProvider(
+                storage_api_url='https://connection.eu-central-1.keboola.com',
+                mcp_server_url=self.OWN_URL,
+                callback_endpoint='/oauth/callback',
+                client_id='mcp-server-id',
+                client_secret='mcp-server-secret',
+                server_url='https://connection.eu-central-1.keboola.com',
+                scope='scope',
+                jwt_secret=JWT_KEY,  # the same secret on both
+                session_store=FakeSessionStore(),
+                stack_key=stack_key,
+                router_url=self.ROUTER_URL if stack_key else None,
+            )
+
+        minting = provider(minting_stack)
+        _client, response = self._login(
+            minting, monkeypatch, self._authorize_query(via='router' if minting_stack else None, resource=self.OWN_URL)
+        )
+        code = response['code'][0].removeprefix(f'{minting_stack}.')
+        redeeming = provider(redeeming_stack)
+        client = TestClient(Starlette(routes=redeeming.get_routes()), base_url=self.OWN_URL)
+
+        answer = client.post(
+            '/token',
+            data={
+                'grant_type': 'authorization_code',
+                'code': f'{redeeming_stack}.{code}' if redeeming_stack else code,
+                'client_id': 'chatgpt-dcr-id',
+                'redirect_uri': 'https://chatgpt.com/connector_platform_oauth_redirect',
+                'code_verifier': 'v' * 43,
+            },
+        )
+
+        assert answer.status_code == expected_status, answer.text
+        if expected_status != 200:
+            assert answer.json()['error'] == 'invalid_grant'

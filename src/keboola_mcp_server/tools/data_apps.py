@@ -52,49 +52,63 @@ def add_data_app_tools(mcp: FastMCP) -> None:
         FunctionTool.from_function(
             modify_streamlit_data_app,
             tags={DATA_APP_TOOLS_TAG, CONFIG_DIFF_PREVIEW_TAG},
-            annotations=ToolAnnotations(destructiveHint=True),
+            annotations=ToolAnnotations(
+                readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=False
+            ),
         )
     )
     mcp.add_tool(
         FunctionTool.from_function(
             modify_python_js_data_app,
             tags={DATA_APP_TOOLS_TAG},
-            annotations=ToolAnnotations(destructiveHint=True),
+            annotations=ToolAnnotations(
+                readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=False
+            ),
         )
     )
     mcp.add_tool(
         FunctionTool.from_function(
             create_python_js_data_app_git_credential,
             tags={DATA_APP_TOOLS_TAG},
-            annotations=ToolAnnotations(destructiveHint=False),
+            annotations=ToolAnnotations(
+                readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False
+            ),
         )
     )
     mcp.add_tool(
         ToonCompactFunctionTool.from_function(
             get_data_apps,
             tags={DATA_APP_TOOLS_TAG},
-            annotations=ToolAnnotations(readOnlyHint=True),
+            annotations=ToolAnnotations(
+                readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False
+            ),
         )
     )
     mcp.add_tool(
         FunctionTool.from_function(
             deploy_data_app,
             tags={DATA_APP_TOOLS_TAG},
-            annotations=ToolAnnotations(destructiveHint=True),
+            annotations=ToolAnnotations(
+                readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=False
+            ),
         )
     )
     mcp.add_tool(
         FunctionTool.from_function(
             delete_python_js_data_app_draft,
             tags={DATA_APP_TOOLS_TAG},
-            annotations=ToolAnnotations(destructiveHint=True),
+            annotations=ToolAnnotations(
+                readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=False
+            ),
         )
     )
     mcp.add_tool(
         FunctionTool.from_function(
             get_data_app_preview_link,
             tags={DATA_APP_TOOLS_TAG},
-            annotations=ToolAnnotations(readOnlyHint=True),
+            annotations=ToolAnnotations(
+                readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False
+            ),
         )
     )
     LOG.info('Data app tools initialized.')
@@ -191,8 +205,8 @@ class DataAppSummary(BaseModel):
     state: SafeState = Field(description='The state of the data app.')
     type: SafeType = Field(
         description=(
-            'The type of the data app. Currently, only "streamlit" is supported in the MCP. However, Keboola DSAPI '
-            'supports additional types, which can be retrieved from the API.'
+            'The type of the data app: "python-js" (the default for new apps) or "streamlit". Keboola DSAPI '
+            'may report other types as well.'
         )
     )
     deployment_url: str | None = Field(description='The URL of the running data app.', default=None)
@@ -376,8 +390,8 @@ class DataApp(BaseModel):
     state: SafeState = Field(description='The state of the data app.')
     type: SafeType = Field(
         description=(
-            'The type of the data app. Currently, only "streamlit" is supported in the MCP. However, Keboola DSAPI '
-            'supports additional types, which can be retrieved from the API.'
+            'The type of the data app: "python-js" (the default for new apps) or "streamlit". Keboola DSAPI '
+            'may report other types as well.'
         )
     )
     desired_state: str | None = Field(
@@ -677,11 +691,19 @@ async def modify_streamlit_data_app(
 ) -> ModifiedDataAppOutput:
     """Creates or updates a Streamlit data app.
 
+    Python-js is the default type for new data apps when you can run git: create them with
+    `modify_python_js_data_app` (python-js source code is delivered only by `git push`). Use this tool to create
+    a new app when you cannot run git or when the user asks for Streamlit explicitly, and to update existing
+    Streamlit apps.
+
     Considerations:
     - The `source_code` parameter must be a complete and runnable Streamlit app. It must include a placeholder
     `{QUERY_DATA_FUNCTION}` where a `query_data` function will be injected. This function queries the workspace to get
     data, it accepts a string of SQL query following current sql dialect and returns a pandas DataFrame with the results
     from the workspace.
+    - The placeholder is substituted only by this tool when it saves the configuration; it is not a platform
+    feature. A configuration written any other way (e.g. Storage API, CLI) must define `query_data` itself, otherwise
+    the literal placeholder breaks the app.
     - Write SQL queries so they are compatible with the current workspace backend, you can ensure this by using the
     `query_data` tool to inspect the data in the workspace before using it in the data app.
     - If you're updating an existing data app, provide the `configuration_id` parameter and the `change_description`
@@ -1184,6 +1206,10 @@ async def modify_python_js_data_app(
     project_id: ProjectIdArg = None,
 ) -> ModifiedPythonJsDataAppOutput:
     """Creates or updates a python-js data app.
+
+    Python-js is the default type for new data apps when you can run git: this tool only creates the
+    configuration and the repository, and you deliver the source code by `git push`. Use
+    `modify_streamlit_data_app` instead when you cannot run git or when the user asks for Streamlit explicitly.
 
     Two-app project model. Every python-js project has a persistent **prod app** that owns the
     only managed git repository for the project, and zero or more **drafts** parented to that
@@ -3001,7 +3027,7 @@ def _inject_query_to_source_code(source_code: str, sql_dialect: str) -> str:
         return ''
 
     query_function_code = _get_query_function_code(sql_dialect)
-    if query_function_code in source_code:
+    if query_function_code in source_code and '{QUERY_DATA_FUNCTION}' not in source_code:
         return source_code
 
     # remove existing injected code to keep the code in sync with the current SQL dialect

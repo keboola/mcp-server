@@ -73,7 +73,9 @@ def add_search_tools(mcp: FastMCP) -> None:
     mcp.add_tool(
         ToonCompactFunctionTool.from_function(
             find_component_id,
-            annotations=ToolAnnotations(readOnlyHint=True),
+            annotations=ToolAnnotations(
+                readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False
+            ),
             tags={SEARCH_TOOLS_TAG},
         )
     )
@@ -83,7 +85,9 @@ def add_search_tools(mcp: FastMCP) -> None:
         ToonCompactFunctionTool.from_function(
             search,
             name=SEARCH_TOOL_NAME,
-            annotations=ToolAnnotations(readOnlyHint=True),
+            annotations=ToolAnnotations(
+                readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False
+            ),
             tags={SEARCH_TOOLS_TAG},
         )
     )

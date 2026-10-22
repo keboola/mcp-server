@@ -95,6 +95,10 @@ from keboola_mcp_server.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
 CONVERSATION_ID = 'conversation_id'
+# The branch a tools/list request was configured for. Its session client is always built on the main
+# branch (see `SessionStateMiddleware.on_request`), so `ToolsFilteringMiddleware` reads this to apply
+# the branch-gated filters.
+LISTED_BRANCH_ID = 'listed_branch_id'
 # The stack URL this session resolved to (header, env or CLI). Kept in the session state because a
 # bootstrap session (no credential yet, see `create_session_state`) has no KeboolaClient to read it
 # from, and `ServerState.config` holds only the server-level value, not the request's.
@@ -146,6 +150,60 @@ DATA_APP_BRANCH_GATED_TOOLS = {
     'delete_python_js_data_app_draft',
     'get_data_app_preview_link',
 }
+
+# The tools a session created through the ChatGPT plugin (bound to the global router's resource) may see and call: an
+# explicit allow-list, so that a tool added later stays hidden there until it is reviewed for the plugin directory
+# (OpenAI scans the plugin's tool list and holds new tools until approved). Not listed: `run_sync_action` (an arbitrary
+# action on any component, a generic executor by OpenAI's rules), `create_project` (an unowned PAYG project, next to
+# the commerce rules), and the tools that hand out a secret, which OpenAI forbids in responses:
+# `create_python_js_data_app_git_credential` and `modify_python_js_data_app` (git URLs with an embedded secret),
+# `delete_python_js_data_app_draft` (part of that git workflow) and `get_data_app_preview_link` (a URL that carries a
+# secret and skips the app login).
+DIRECTORY_TOOLS = frozenset(
+    {
+        'add_config_row',
+        'create_conditional_flow',
+        'create_config',
+        'create_flow',
+        'create_oauth_url',
+        'create_sql_transformation',
+        'create_stream',
+        'deploy_data_app',
+        'docs_query',
+        'find_component_id',
+        'get_accessible_projects',
+        'get_buckets',
+        'get_components',
+        'get_config_examples',
+        'get_configs',
+        'get_data_apps',
+        'get_flow_examples',
+        'get_flow_schema',
+        'get_flows',
+        'get_jobs',
+        'get_project_info',
+        'get_semantic_context',
+        'get_semantic_schema',
+        'get_shared_buckets',
+        'get_streams',
+        'get_tables',
+        'link_shared_bucket',
+        'modify_flow',
+        'modify_streamlit_data_app',
+        'query_data',
+        'run_job',
+        'search',
+        'search_semantic_context',
+        'set_project_scope',
+        'update_config',
+        'update_config_row',
+        'update_descriptions',
+        'update_flow',
+        'update_project_description',
+        'update_sql_transformation',
+        'validate_semantic_query',
+    }
+)
 
 
 def _is_unauthorized(error: BaseException) -> bool:
@@ -370,6 +428,26 @@ def get_http_request_or_none() -> Request | None:
         return None
 
 
+def is_directory_session() -> bool:
+    """Whether the MCP call being handled comes from a session bound to the global router's resource
+    (`ProxyAccessToken.directory_profile`), which gets only the `DIRECTORY_TOOLS`. Read from the session row through
+    the bearer token, before and independently of any Keboola token verification, so no fallback path can widen it."""
+    http_rq = get_http_request_or_none()
+    user = http_rq.scope.get('user') if http_rq is not None else None
+    return (
+        isinstance(user, AuthenticatedUser)
+        and isinstance(user.access_token, ProxyAccessToken)
+        and user.access_token.directory_profile
+    )
+
+
+def directory_denial(tool_name: str) -> str:
+    return (
+        f'The tool "{tool_name}" is not available in the Keboola plugin. '
+        'Use Keboola through its own MCP server URL to reach every tool.'
+    )
+
+
 #: Exceptions this middleware raises whose message *is* the answer the caller needs, rather than a
 #: failure to be reported as one. They have to leave as `ToolError`, because anything else raised
 #: from a middleware is not a tool result: FastMCP masks it and the caller is handed "Internal
@@ -562,7 +640,8 @@ class SessionStateMiddleware(fmw.Middleware):
             # Skip branch validation for /list requests (tools/list, resources/list, prompts/list, etc.)
             # so that clients can discover available tools even when the configured branch ID doesn't
             # exist yet. For these requests the client is created without a branch ID. Otherwise, the branch is
-            # validated via a SAPI call.
+            # validated via a SAPI call. tools/list keeps the configured ID aside for its branch filters.
+            listed_branch_id = config.branch_id if context.method == 'tools/list' else None
             if is_list:
                 if config.branch_id:
                     LOG.info(f'Skipping branch validation for {context.method} request.')
@@ -588,6 +667,8 @@ class SessionStateMiddleware(fmw.Middleware):
                 state[OAUTH_SESSION_ID_KEY] = oauth_session_id
             if oauth_user_email := self._read_oauth_user_email(http_rq):
                 state[OAUTH_USER_EMAIL_KEY] = oauth_user_email
+            if listed_branch_id:
+                state[LISTED_BRANCH_ID] = listed_branch_id
             ctx.session.state = state
 
         try:
@@ -1245,6 +1326,24 @@ class SessionStateMiddleware(fmw.Middleware):
         return state
 
 
+class DirectoryProfileMiddleware(fmw.Middleware):
+    """Refuses a call to a tool outside `DIRECTORY_TOOLS` in a session of the ChatGPT plugin. Registered right after
+    the logging middleware (`server.py`), so an excluded tool never reaches `SessionStateMiddleware`, a project swap or
+    `ToolsFilteringMiddleware`'s bootstrap exemption and token verification."""
+
+    async def on_call_tool(
+        self,
+        context: MiddlewareContext[mt.CallToolRequestParams],
+        call_next: CallNext[mt.CallToolRequestParams, mt.CallToolResult],
+    ) -> mt.CallToolResult:
+        if is_directory_session():
+            # The resolved name, not the requested one, so that a renaming tool transform cannot slip past the list.
+            tool = await context.fastmcp_context.fastmcp.get_tool(context.message.name)
+            if tool.name not in DIRECTORY_TOOLS:
+                raise ToolError(directory_denial(tool.name))
+        return await call_next(context)
+
+
 class ToolsFilteringMiddleware(fmw.Middleware):
     """
     This middleware filters out tools that are not available in the current project. The filtering is based on the
@@ -1313,6 +1412,9 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         self, context: MiddlewareContext[mt.ListToolsRequest], call_next: CallNext[mt.ListToolsRequest, list[Tool]]
     ) -> list[Tool]:
         tools = await call_next(context)
+        if is_directory_session():
+            # First, so that every path below (the bootstrap superset, the verify_token fallback) starts from it.
+            tools = [t for t in tools if t.name in DIRECTORY_TOOLS]
 
         # A bootstrap session (no credential yet -- see `create_session_state`) has no client to
         # verify a token with, so there is nothing to filter on. Advertise the superset; the
@@ -1322,19 +1424,53 @@ class ToolsFilteringMiddleware(fmw.Middleware):
             return tools
 
         # Feature/role filtering needs verify_token (a Connection round-trip with a single project
-        # context). For a programmatic (kbc_*) session this doesn't work at list time: pre-scope there
-        # is no project (and the call would block connecting on a slow stack); post-scope the session
-        # holds a multi-project scoped token and verify without an X-KBC-ProjectId returns 401 — which
-        # made every tools/list fail and the client disconnect. So skip list-time filtering for ALL
-        # programmatic sessions and advertise the superset; the on_call_tool guards still enforce every
-        # feature/role/branch rule per project (with the right project_id) when a tool is invoked.
+        # context). A programmatic (kbc_*) session has that context only once its client is narrowed
+        # to a project via X-KBC-ProjectId: pre-scope there is no project (and the call would block
+        # connecting on a slow stack), so advertise the superset. Post-scope, filter like any other
+        # session so tools/list matches on_call_tool (AI-4075), but never let a verify_token failure
+        # fail tools/list -- that 401 disconnected clients before (#605); fall back to the superset
+        # minus the semantic tools, whose metastore check needs no verify_token (AI-4074).
         client = KeboolaClient.from_state(context.fastmcp_context.session.state)
         if is_programmatic_token(client.bearer_token):
-            return tools
+            if not client.project_id:
+                return tools
+            token_info = await self._get_token_info_or_none(context.fastmcp_context)
+            if token_info is None:
+                return await self._filter_semantic_tools(tools, client)
+        else:
+            token_info = await self.get_token_info(context.fastmcp_context)
 
-        token_info = await self.get_token_info(context.fastmcp_context)
-        features = self.get_project_features(token_info)
-        token_role = self.get_token_role(token_info).lower()
+        is_main_branch = await self._is_listed_branch_main(context.fastmcp_context)
+        tools = self._filter_by_token_info(tools, token_info, context.fastmcp_context, is_main_branch)
+        return await self._filter_semantic_tools(tools, client)
+
+    @staticmethod
+    async def _is_listed_branch_main(ctx: Context) -> bool:
+        branch_id = ctx.session.state.get(LISTED_BRANCH_ID)
+        if not branch_id:
+            return True
+        client = KeboolaClient.from_state(ctx.session.state)
+        try:
+            detail = await client.storage_client.dev_branch_detail(branch_id)
+        except Exception as e:
+            LOG.info(f'Cannot resolve branch "{branch_id}" for tools/list, listing as the main branch: {e}')
+            return True
+        return not isinstance(detail, dict) or detail.get('isDefault') is not False
+
+    @classmethod
+    async def _get_token_info_or_none(cls, ctx: Context) -> JsonDict | None:
+        try:
+            return await cls.get_token_info(ctx)
+        except Exception as e:
+            LOG.warning(f'Failed to verify token for tools/list, listing all tools: {e}')
+            return None
+
+    @classmethod
+    def _filter_by_token_info(
+        cls, tools: list[Tool], token_info: JsonDict, ctx: Context, is_main_branch: bool
+    ) -> list[Tool]:
+        features = cls.get_project_features(token_info)
+        token_role = cls.get_token_role(token_info).lower()
 
         if 'hide-conditional-flows' in features:
             tools = [t for t in tools if t.name != 'create_conditional_flow']
@@ -1343,13 +1479,13 @@ class ToolsFilteringMiddleware(fmw.Middleware):
 
         # Show modify_flow to: admin, share, OR OAuth users
         # Show update_flow to: everyone else (except readOnly, handled below)
-        is_oauth = self._is_oauth_authenticated(context.fastmcp_context)
+        is_oauth = cls._is_oauth_authenticated(ctx)
         if token_role in ('admin', 'share') or is_oauth:
             tools = [t for t in tools if t.name != UPDATE_FLOW_TOOL_NAME]
         else:
             tools = [t for t in tools if t.name != MODIFY_FLOW_TOOL_NAME]
 
-        if not self.is_client_using_main_branch(context.fastmcp_context):
+        if not is_main_branch:
             # Filter out data app tools when the client is not using the main/production branch
             tools = [t for t in tools if t.name not in DATA_APP_BRANCH_GATED_TOOLS]
 
@@ -1357,12 +1493,13 @@ class ToolsFilteringMiddleware(fmw.Middleware):
             tools = [t for t in tools if is_read_only_tool(t)]
             LOG.debug(f'Read-only access: filtered to {len(tools)} read-only tools for role={token_role}')
 
-        client = KeboolaClient.from_state(context.fastmcp_context.session.state)
-        has_semantic_models = await project_has_semantic_models(client)
-        if not has_semantic_models:
-            tools = [t for t in tools if not is_semantic_tool(t)]
-
         return tools
+
+    @staticmethod
+    async def _filter_semantic_tools(tools: list[Tool], client: KeboolaClient) -> list[Tool]:
+        if await project_has_semantic_models(client):
+            return tools
+        return [t for t in tools if not is_semantic_tool(t)]
 
     @staticmethod
     def authorize_tool_call(

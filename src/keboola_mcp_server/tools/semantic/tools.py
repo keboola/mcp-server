@@ -654,28 +654,36 @@ def add_semantic_tools(mcp: FastMCP) -> None:
     mcp.add_tool(
         FunctionTool.from_function(
             search_semantic_context,
-            annotations=ToolAnnotations(readOnlyHint=True),
+            annotations=ToolAnnotations(
+                readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False
+            ),
             tags={SEMANTIC_TOOLS_TAG},
         )
     )
     mcp.add_tool(
         FunctionTool.from_function(
             get_semantic_context,
-            annotations=ToolAnnotations(readOnlyHint=True),
+            annotations=ToolAnnotations(
+                readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False
+            ),
             tags={SEMANTIC_TOOLS_TAG},
         )
     )
     mcp.add_tool(
         FunctionTool.from_function(
             get_semantic_schema,
-            annotations=ToolAnnotations(readOnlyHint=True),
+            annotations=ToolAnnotations(
+                readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False
+            ),
             tags={SEMANTIC_TOOLS_TAG},
         )
     )
     mcp.add_tool(
         FunctionTool.from_function(
             validate_semantic_query,
-            annotations=ToolAnnotations(readOnlyHint=True),
+            annotations=ToolAnnotations(
+                readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False
+            ),
             tags={SEMANTIC_TOOLS_TAG},
         )
     )

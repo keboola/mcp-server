@@ -1314,7 +1314,7 @@ wheels = [
 
 [[package]]
 name = "keboola-mcp-server"
-version = "1.98.0"
+version = "1.107.0"
 source = { editable = "." }
 dependencies = [
     { name = "asyncpg" },
@@ -1362,7 +1362,7 @@ requires-dist = [
     { name = "httpx", specifier = "~=0.28" },
     { name = "httpx-retries", specifier = "~=0.5" },
     { name = "json-log-formatter", specifier = "~=1.1" },
-    { name = "jsonpath-ng", specifier = "~=1.8" },
+    { name = "jsonpath-ng", specifier = ">=1.8,<1.11" },
     { name = "jsonschema", specifier = "~=4.26" },
     { name = "kbcstorage", marker = "extra == 'integtests'", specifier = "~=0.9" },
     { name = "mcp", specifier = "==2.3.0" },

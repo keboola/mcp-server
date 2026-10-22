@@ -54,21 +54,27 @@ def add_storage_tools(mcp: KeboolaMcpServer) -> None:
     mcp.add_tool(
         ToonCompactFunctionTool.from_function(
             get_buckets,
-            annotations=ToolAnnotations(readOnlyHint=True),
+            annotations=ToolAnnotations(
+                readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False
+            ),
             tags={STORAGE_TOOLS_TAG},
         )
     )
     mcp.add_tool(
         ToonCompactFunctionTool.from_function(
             get_tables,
-            annotations=ToolAnnotations(readOnlyHint=True),
+            annotations=ToolAnnotations(
+                readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False
+            ),
             tags={STORAGE_TOOLS_TAG},
         )
     )
     mcp.add_tool(
         ToonFunctionTool.from_function(
             update_descriptions,
-            annotations=ToolAnnotations(destructiveHint=True),
+            annotations=ToolAnnotations(
+                readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=False
+            ),
             tags={STORAGE_TOOLS_TAG},
         )
     )
