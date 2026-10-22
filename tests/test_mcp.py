@@ -2356,6 +2356,39 @@ class TestDirectoryToolProfile:
                 assert await self._call_through_chain(context, AsyncMock(return_value=expected)) is expected
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ('tool_name', 'expect_verified'),
+        [
+            # bootstrap tool: exempt from token verification
+            ('get_accessible_projects', False),
+            # gated tool: verified and checked against role, features and branch
+            ('run_job', True),
+        ],
+    )
+    async def test_call_allowed_tool(
+        self, mcp_context_client, keboola_client, tool_name: str, expect_verified: bool
+    ) -> None:
+        """A plugin session reaches the tools on the allow-list."""
+        keboola_client.bearer_token = 'kbc_at_abc'
+        keboola_client.storage_client.verify_token = AsyncMock(
+            return_value={'owner': {'features': []}, 'admin': {'role': 'admin'}}
+        )
+        mcp_context_client.fastmcp = SimpleNamespace(get_tool=AsyncMock(return_value=_tool(tool_name)))
+        context = MiddlewareContext(
+            message=SimpleNamespace(name=tool_name, arguments={}),
+            fastmcp_context=mcp_context_client,
+            method='tools/call',
+        )
+        expected = MagicMock()
+        call_next = AsyncMock(return_value=expected)
+
+        with patch('keboola_mcp_server.mcp.get_http_request_or_none', return_value=self._request(True)):
+            assert await self._call_through_chain(context, call_next) is expected
+
+        call_next.assert_awaited_once()
+        assert keboola_client.storage_client.verify_token.called is expect_verified
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize('tool_name', EXCLUDED)
     async def test_call_tool_refused_before_the_project_scope(
         self, mcp_context_client, keboola_client, tool_name: str
