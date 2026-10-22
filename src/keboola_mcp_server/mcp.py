@@ -1505,7 +1505,6 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         features: set[str],
         is_oauth: bool,
         is_main_branch: bool,
-        directory_profile: bool,
     ) -> str | None:
         """
         Decide whether a call to ``tool_name`` is allowed given the project features, the token role,
@@ -1515,12 +1514,8 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         :meth:`on_call_tool` applies it to MCP tool calls; the raw ``/preview/configuration`` Starlette
         route reuses it (see ``preview.py``) so the preview path enforces exactly the same rules.
 
-        :param directory_profile: The session belongs to the ChatGPT plugin: only `DIRECTORY_TOOLS` may be called.
         :return: A denial message if the call is not allowed, or ``None`` if it is allowed.
         """
-        if directory_profile and tool_name not in DIRECTORY_TOOLS:
-            return directory_denial(tool_name)
-
         token_role = token_role.lower()
 
         if token_role == 'readonly' and not is_read_only:
@@ -1575,7 +1570,6 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         call_next: CallNext[mt.CallToolRequestParams, mt.CallToolResult],
     ) -> mt.CallToolResult:
         tool = await context.fastmcp_context.fastmcp.get_tool(context.message.name)
-        directory_profile = is_directory_session()
 
         # Bootstrap tools (get_accessible_projects/set_project_scope) must work before any project
         # is chosen -- that's their entire purpose. verify_token() needs a single-project context
@@ -1613,7 +1607,6 @@ class ToolsFilteringMiddleware(fmw.Middleware):
             features=self.get_project_features(token_info),
             is_oauth=self._is_oauth_authenticated(context.fastmcp_context),
             is_main_branch=self.is_client_using_main_branch(context.fastmcp_context),
-            directory_profile=directory_profile,
         )
         if denial:
             raise ToolError(denial)

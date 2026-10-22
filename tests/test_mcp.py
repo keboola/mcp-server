@@ -2411,25 +2411,6 @@ class TestDirectoryToolProfile:
         assert [block for block in blocks('only') if block in regular_prompt] == []
         assert [block for block in blocks('omit') if block not in regular_prompt] == []
 
-    def test_authorize_tool_call_applies_the_profile(self) -> None:
-        common = {
-            'is_read_only': False,
-            'is_semantic': False,
-            'has_semantic_models': False,
-            'token_role': 'admin',
-            'features': set(),
-            'is_oauth': True,
-            'is_main_branch': True,
-        }
-
-        assert ToolsFilteringMiddleware.authorize_tool_call(
-            tool_name='run_sync_action', directory_profile=True, **common
-        )
-        assert not ToolsFilteringMiddleware.authorize_tool_call(tool_name='run_job', directory_profile=True, **common)
-        assert not ToolsFilteringMiddleware.authorize_tool_call(
-            tool_name='run_sync_action', directory_profile=False, **common
-        )
-
 
 class TestUnauthorizedDropsARevokedSession:
     """A confirmed agent project revokes the session that created it, so its access token 401s
