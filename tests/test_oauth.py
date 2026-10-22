@@ -651,7 +651,7 @@ class TestSimpleOAuthProvider:
         with caplog.at_level(logging.DEBUG, logger='keboola_mcp_server.oauth'):
             loaded_auth_code = await oauth_provider.load_authorization_code(client_info, auth_code_str)
         assert loaded_auth_code == expected
-        # even a code with a broken signature carries the Connection tokens, readable without the key
+        # no row logs the JWT or its tokens: a JWS payload, even one with a broken signature, is readable without the key
         assert auth_code_str not in caplog.text
         assert 'oauth-access-token' not in caplog.text
         assert 'oauth-refresh-token' not in caplog.text

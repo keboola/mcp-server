@@ -1502,6 +1502,7 @@ class SimpleOAuthProvider(OAuthProvider):
 
         # Create MCP authorization code
         # This is deserialized into _ExtendedAuthorizationCode instance in load_authorization_code() function.
+        # Never add a 'state' key: a consent state and a code are told apart by it.
         auth_code = {
             'code': f'mcp_{secrets.token_hex(16)}',
             'client_id': state_data['client_id'],
