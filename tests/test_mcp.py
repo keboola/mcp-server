@@ -2443,7 +2443,7 @@ class TestDirectoryToolProfile:
     def test_the_directory_instructions_name_only_directory_tools(self, sql_dialect: str) -> None:
         """What a plugin session reads (the server instructions and the project system prompt) never sends it to a tool
         it does not have; the prompt of every other session still names them."""
-        from keboola_mcp_server.resources.prompts import get_project_system_prompt, load_prompt
+        from keboola_mcp_server.resources.prompts import _build_dialect_section, get_project_system_prompt, load_prompt
         from keboola_mcp_server.server import create_server
 
         mcp = create_server(Config(), runtime_info=ServerRuntimeInfo(transport='stdio'))
@@ -2468,10 +2468,8 @@ class TestDirectoryToolProfile:
             elif line not in ('<!-- directory:omit -->\n', '<!-- /directory:omit -->\n') and not in_only_block:
                 expected.append(line)
         assert len(expected) < len(load_prompt('project_system_prompt.md').splitlines())
-        if sql_dialect:
-            assert regular_prompt.endswith('\n\n---\n\n' + ''.join(expected))
-        else:
-            assert regular_prompt == ''.join(expected)
+        prefix = _build_dialect_section(sql_dialect) + '\n\n---\n\n' if sql_dialect else ''
+        assert regular_prompt == prefix + ''.join(expected)
 
 
 class TestUnauthorizedDropsARevokedSession:
