@@ -640,11 +640,21 @@ class TestSimpleOAuthProvider:
         key: str,
         expected: _ExtendedAuthorizationCode,
         oauth_provider: SimpleOAuthProvider,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
     ):
+        from keboola_mcp_server import oauth as oauth_module
+
+        monkeypatch.setattr(oauth_module, '_OAUTH_LOG_ALL', False)  # the gated _log_debug may log the code
         client_info = OAuthClientInformationFull(client_id='foo-client-id', redirect_uris=[AnyUrl('foo://bar')])
         auth_code_str = oauth_provider._encode(auth_code, key=key)
-        loaded_auth_code = await oauth_provider.load_authorization_code(client_info, auth_code_str)
+        with caplog.at_level(logging.DEBUG, logger='keboola_mcp_server.oauth'):
+            loaded_auth_code = await oauth_provider.load_authorization_code(client_info, auth_code_str)
         assert loaded_auth_code == expected
+        # even a code with a broken signature carries the Connection tokens, readable without the key
+        assert auth_code_str not in caplog.text
+        assert 'oauth-access-token' not in caplog.text
+        assert 'oauth-refresh-token' not in caplog.text
 
     @pytest.mark.parametrize(
         ('raw_at', 'raw_rt', 'scopes', 'at_expires_in', 'rt_expires_in'),
@@ -2906,9 +2916,9 @@ class TestAuthorizationServerMetadata:
 
     @staticmethod
     def _authorization_code(provider: SimpleOAuthProvider, redirect_uri: str) -> str:
-        """The claims of an MCP authorization code that matter here (the issued one also carries the Connection
-        tokens): signed with the state's secret, with a live `expires_at` and the client's `redirect_uri`, but no
-        `state`. The client sees it, so it can send it back."""
+        """An MCP authorization code as far as it matters here: signed with the state's secret, with a live `expires_at`,
+        the client's `redirect_uri` and the Connection tokens, but no `state`. The client sees it, so it can send it
+        back."""
         return provider._encode(
             {
                 'code': 'mcp_code',
@@ -2918,6 +2928,8 @@ class TestAuthorizationServerMetadata:
                 'expires_at': int(time.time() + 5 * 60),
                 'scopes': [],
                 'code_challenge': 'challenge',
+                'oauth_access_token': {'token': 'league-at'},
+                'oauth_refresh_token': {'token': 'league-rt'},
             }
         )
 
@@ -2936,10 +2948,15 @@ class TestAuthorizationServerMetadata:
     @pytest.mark.asyncio
     @pytest.mark.parametrize('state_change', ['expired', 'forged', 'garbage', 'authorization_code'])
     async def test_the_callback_refuses_what_is_not_a_live_consent_state_before_the_token_exchange(
-        self, provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch, state_change: str
+        self,
+        provider: SimpleOAuthProvider,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        state_change: str,
     ) -> None:
-        """The callback half of the state check the denial shares: each of these is a 400, and the Connection code is
-        never exchanged."""
+        """The callback half of the state check the denial shares: each of these is a 400, the Connection code is
+        never exchanged, and the refused JWT is not logged (a JWS payload, an authorization code's tokens included, is
+        readable without the key)."""
         from keboola_mcp_server import oauth as oauth_module
 
         redirect_uri = 'https://claude.ai/api/mcp/auth_callback'
@@ -2949,11 +2966,16 @@ class TestAuthorizationServerMetadata:
         transport = httpx.MockTransport(lambda rq: exchanges.append(rq) or httpx.Response(500))
         monkeypatch.setattr(oauth_module, '_create_http_client', lambda **_kw: httpx.AsyncClient(transport=transport))
 
-        with pytest.raises(HTTPException) as excinfo:
+        monkeypatch.setattr(oauth_module, '_OAUTH_LOG_ALL', False)
+
+        with caplog.at_level(logging.DEBUG, logger='keboola_mcp_server.oauth'), pytest.raises(HTTPException) as excinfo:
             await self._callback(provider, f'code=connection-code&state={state}')
 
         assert excinfo.value.status_code == 400
         assert exchanges == []
+        assert state not in caplog.text
+        assert 'league-at' not in caplog.text
+        assert 'league-rt' not in caplog.text
 
     def test_a_preflight_answer_is_left_alone(self, client) -> None:
         response = client.options(
