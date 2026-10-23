@@ -52,7 +52,7 @@ from keboola_mcp_server.clients.auth_bridge import (
     strip_bearer,
 )
 from keboola_mcp_server.clients.base import JsonDict
-from keboola_mcp_server.clients.client import KeboolaClient
+from keboola_mcp_server.clients.client import BranchNotFoundError, KeboolaClient
 from keboola_mcp_server.config import (
     Config,
     ServerRuntimeInfo,
@@ -102,6 +102,17 @@ CONVERSATION_ID = 'conversation_id'
 # branch (see `SessionStateMiddleware.on_request`), so `ToolsFilteringMiddleware` reads this to apply
 # the branch-gated filters.
 LISTED_BRANCH_ID = 'listed_branch_id'
+# The development branch this request was configured for although it no longer exists (deleted after its merge
+# request was merged). The session client is then built on the production branch so read-only tools keep working,
+# and `ToolsFilteringMiddleware.on_call_tool` refuses every write with the handoff below -- a Kai chat is pinned
+# to its branch for its whole life, so without this every call after a merge fails at the protocol level.
+DELETED_BRANCH_ID = 'deleted_branch_id'
+DELETED_BRANCH_WRITE_MESSAGE = (
+    "Branch {branch_id} no longer exists; it was deleted after its merge request was merged. This chat is pinned "
+    'to that branch: it can still answer questions about production (read-only tools) but cannot change anything. '
+    'Tell the user the changes are in production and that to continue working they should open Kai in production: '
+    '{project_url}'
+)
 # The stack URL this session resolved to (header, env or CLI). Kept in the session state because a
 # bootstrap session (no credential yet, see `create_session_state`) has no KeboolaClient to read it
 # from, and `ServerState.config` holds only the server-level value, not the request's.
@@ -1277,20 +1288,30 @@ class SessionStateMiddleware(fmw.Middleware):
             # a project is chosen. A legacy project-bound Storage token derives its project from
             # the token itself and must not get the header.
             project_id = config.project_id if is_programmatic_token(config.storage_token) else None
-            client = await KeboolaClient.create(
-                storage_api_url=config.storage_api_url,
-                storage_token=config.storage_token,
-                bearer_token=config.bearer_token,
-                branch_id=config.branch_id,
-                project_id=project_id,
-                token_resolver=token_resolver,
-                headers={
-                    **build_tracing_headers(runtime_info),
-                    **({'X-KBC-ProjectId': project_id} if project_id else {}),
-                },
-                readonly=readonly,
-                own_stack_storage_api_url=own_stack_storage_api_url,
-            )
+            try:
+                client = await KeboolaClient.create(
+                    storage_api_url=config.storage_api_url,
+                    storage_token=config.storage_token,
+                    bearer_token=config.bearer_token,
+                    branch_id=config.branch_id,
+                    project_id=project_id,
+                    token_resolver=token_resolver,
+                    headers={
+                        **build_tracing_headers(runtime_info),
+                        **({'X-KBC-ProjectId': project_id} if project_id else {}),
+                    },
+                    readonly=readonly,
+                    own_stack_storage_api_url=own_stack_storage_api_url,
+                )
+            except BranchNotFoundError as e:
+                if e.production_client is None:
+                    raise
+                # The configured branch is gone (deleted after its merge request was merged). Serve the session
+                # from production instead of failing every request; writes are refused in
+                # `ToolsFilteringMiddleware.on_call_tool` (see DELETED_BRANCH_ID).
+                LOG.warning(f'Branch "{e.branch_id}" not found; serving the session from the production branch.')
+                client = e.production_client
+                state[DELETED_BRANCH_ID] = e.branch_id
 
             state[KeboolaClient.STATE_KEY] = client
             LOG.info('Successfully initialized Storage API client.')
@@ -1596,6 +1617,16 @@ class ToolsFilteringMiddleware(fmw.Middleware):
 
         return None
 
+    @staticmethod
+    def _deleted_branch_write_message(ctx: Context, token_info: JsonDict, branch_id: str) -> str:
+        """The write refusal of a session whose branch is gone, with the production project's UI link."""
+        client = KeboolaClient.from_state(ctx.session.state)
+        owner = token_info.get('owner')
+        project_id = owner.get('id') if isinstance(owner, dict) else None
+        base_url = client.storage_api_url.rstrip('/')
+        project_url = f'{base_url}/admin/projects/{project_id}' if project_id is not None else base_url
+        return DELETED_BRANCH_WRITE_MESSAGE.format(branch_id=branch_id, project_url=project_url)
+
     async def on_call_tool(
         self,
         context: MiddlewareContext[mt.CallToolRequestParams],
@@ -1642,6 +1673,12 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         )
         if denial:
             raise ToolError(denial)
+
+        deleted_branch_id = context.fastmcp_context.session.state.get(DELETED_BRANCH_ID)
+        if deleted_branch_id and not is_read_only_tool(tool):
+            # The session's branch was deleted (merged) and the client was silently rebuilt on production for the
+            # reads; a write would land in production from a chat the user started in a branch, so it is refused.
+            raise ToolError(self._deleted_branch_write_message(context.fastmcp_context, token_info, deleted_branch_id))
 
         token = TOKEN_INFO_VAR.set(token_info)
         try:

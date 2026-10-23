@@ -11,7 +11,7 @@ from pytest_mock import MockerFixture
 
 from keboola_mcp_server.clients.auth_bridge import StorageTokenExchangeError, StorageTokenResolver
 from keboola_mcp_server.clients.base import RawKeboolaClient
-from keboola_mcp_server.clients.client import KeboolaClient, get_metadata_property
+from keboola_mcp_server.clients.client import BranchNotFoundError, KeboolaClient, get_metadata_property
 from keboola_mcp_server.clients.storage import AsyncStorageClient
 from keboola_mcp_server.config import ServerRuntimeInfo
 from keboola_mcp_server.mcp import build_tracing_headers
@@ -482,9 +482,13 @@ class TestKeboolaClient:
             )
             mock_client.get.return_value = response
 
-            with pytest.raises(httpx.HTTPStatusError, match=expected_match):
+            with pytest.raises(httpx.HTTPStatusError, match=expected_match) as exc_info:
                 await keboola_client.with_branch_id('non-existent-branch')
             mock_client.get.assert_called_once()
+            # a 404 is typed so `SessionStateMiddleware` can serve the session from production instead
+            assert isinstance(exc_info.value, BranchNotFoundError) is (status_code == 404)
+            if status_code == 404:
+                assert exc_info.value.branch_id == 'non-existent-branch'
 
     def test_metastore_client_url_derivation(self) -> None:
         client = KeboolaClient(
@@ -963,6 +967,25 @@ class TestKeboolaClientCreate:
 
         assert result == 'branched'
         KeboolaClient.with_branch_id.assert_awaited_once_with('123')
+
+    @pytest.mark.asyncio
+    async def test_missing_branch_error_carries_the_production_client(self, mocker) -> None:
+        """The credentials were already classified/exchanged; the fallback must not redo that work."""
+        request = httpx.Request('GET', 'https://connection.keboola.com/v2/storage/dev-branches/123')
+        error = BranchNotFoundError(
+            'Branch "123" not found', branch_id='123', request=request, response=httpx.Response(404, request=request)
+        )
+        mocker.patch.object(KeboolaClient, 'with_branch_id', AsyncMock(side_effect=error))
+
+        with pytest.raises(BranchNotFoundError) as exc_info:
+            await KeboolaClient.create(
+                storage_api_url='https://connection.keboola.com', storage_token='sapi_token_456', branch_id='123'
+            )
+
+        production = exc_info.value.production_client
+        assert isinstance(production, KeboolaClient)
+        assert production.branch_id is None
+        assert production.legacy_storage_token == 'sapi_token_456'
 
     @pytest.mark.asyncio
     async def test_raises_on_missing_storage_api_url(self) -> None:

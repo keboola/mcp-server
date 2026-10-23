@@ -82,6 +82,28 @@ def get_metadata_property(
     return value if value is not None else default
 
 
+class BranchNotFoundError(httpx.HTTPStatusError):
+    """
+    The configured development branch does not exist (any more). A development branch is deleted after its
+    merge request is merged, so a client pinned to it (a Kai chat sends the same `X-Branch-Id` for its whole life)
+    hits this on every call after the merge. `production_client` carries the same credentials without a branch,
+    so the caller can keep serving read-only requests from production instead of failing the whole request.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        branch_id: str,
+        request: httpx.Request,
+        response: httpx.Response,
+        production_client: 'KeboolaClient | None' = None,
+    ) -> None:
+        super().__init__(message, request=request, response=response)
+        self.branch_id = branch_id
+        self.production_client = production_client
+
+
 class KeboolaClient:
     """Class holding clients for Keboola APIs: Storage API, Job Queue API, and AI Service."""
 
@@ -176,7 +198,13 @@ class KeboolaClient:
             readonly=readonly,
             own_stack_storage_api_url=own_stack_storage_api_url,
         )
-        return await client.with_branch_id(branch_id)
+        try:
+            return await client.with_branch_id(branch_id)
+        except BranchNotFoundError as exc:
+            # `client` is the production-scoped client built from the same (already exchanged) credentials; the
+            # caller decides whether to fall back to it (see `SessionStateMiddleware.create_session_state`).
+            exc.production_client = client
+            raise
 
     async def with_branch_id(self, branch_id: str | None) -> 'KeboolaClient':
         """
@@ -207,7 +235,9 @@ class KeboolaClient:
                         'after its merge request is merged); start a new session on the production branch.'
                     )
                     LOG.error(f'{message}: {exc.response.text}')
-                    raise httpx.HTTPStatusError(message, request=exc.request, response=exc.response) from exc
+                    raise BranchNotFoundError(
+                        message, branch_id=branch_id, request=exc.request, response=exc.response
+                    ) from exc
                 else:
                     LOG.error(f'Failed to get details of "{branch_id}" branch: {exc.response.text}')
                     raise
