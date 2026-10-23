@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.10"
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'win32'",
@@ -1294,7 +1294,7 @@ wheels = [
 
 [[package]]
 name = "kbcstorage"
-version = "0.11.0"
+version = "0.12.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "azure-storage-blob" },
@@ -1305,11 +1305,10 @@ dependencies = [
     { name = "python-dotenv" },
     { name = "requests" },
     { name = "responses" },
-    { name = "urllib3" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/5e/3e/c9d89c0b18ab92e091f1d3a60fe830d2868e3b6c52a2628bf11cfea497e6/kbcstorage-0.11.0.tar.gz", hash = "sha256:e9deb8f99939d6e57c87a4665a09287fc24551fce85acd06cb67efbef7f70c73", size = 47047, upload-time = "2026-09-25T09:30:15.116Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/37/27/c083776e67bff41788f1bba58dd62df1cd5695006fdccb533ca25166d13e/kbcstorage-0.12.0.tar.gz", hash = "sha256:42150696fe546fd6c0c0992fc00b015414fc93a25bfa896722ba858457931f95", size = 47014, upload-time = "2026-10-08T13:58:08.677Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d5/43/2b278b0c4784dda7e3b0ee9a800e5c576a369816d06a302272982688f6e5/kbcstorage-0.11.0-py3-none-any.whl", hash = "sha256:79fc868bd0b0a7ddef73348bbd3511b4dc8512966abf79031f069651817f3a1b", size = 31100, upload-time = "2026-09-25T09:30:14.017Z" },
+    { url = "https://files.pythonhosted.org/packages/3f/7a/b898403ba6cadc17abd98770187758b8096a42474e26a357ff0e81903460/kbcstorage-0.12.0-py3-none-any.whl", hash = "sha256:63b106e52b06947c8f22038e559cc19d692771d1f777b48059b66e9fd8191f6f", size = 31089, upload-time = "2026-10-08T13:58:07.424Z" },
 ]
 
 [[package]]
