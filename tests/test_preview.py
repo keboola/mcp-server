@@ -494,6 +494,7 @@ class TestPreviewConfigDiff:
             'id': 'config-123',
             'name': 'Original Transformation',
             'description': 'Original transformation description',
+            'folder': 'Old Folder',
             'configuration': {
                 'parameters': {
                     'blocks': [
@@ -535,9 +536,6 @@ class TestPreviewConfigDiff:
             return copy.deepcopy(original_config_data)
 
         mock_client.storage_client.configuration_detail = mocker.AsyncMock(side_effect=mock_config_detail)
-        mock_client.storage_client.configuration_metadata_get = mocker.AsyncMock(
-            return_value=[{'key': 'KBC.configuration.folderName', 'value': 'Old Folder'}]
-        )
 
         mocker.patch('keboola_mcp_server.preview.KeboolaClient.from_state', return_value=mock_client)
 
@@ -585,6 +583,117 @@ class TestPreviewConfigDiff:
         # Check that folder diff is injected into originalConfig/updatedConfig
         assert result['originalConfig']['folder'] == 'Old Folder'
         assert result['updatedConfig']['folder'] == 'My Folder'
+
+    @pytest.mark.parametrize(
+        'tool_name', ['update_config', 'update_sql_transformation', 'modify_flow', 'modify_streamlit_data_app']
+    )
+    @pytest.mark.parametrize(
+        ('folder_field', 'requested_folder', 'expected_folders'),
+        [
+            pytest.param({'folder': 'Old'}, '  New  ', ('Old', 'New'), id='old_to_new'),
+            pytest.param({'folder': None}, 'New', ('', 'New'), id='none_to_new'),
+            pytest.param({'folder': 'Same'}, '  Same  ', None, id='unchanged_after_strip'),
+            pytest.param({}, 'New', None, id='stack_without_folder_field'),
+        ],
+    )
+    def test_preview_folder(
+        self,
+        test_client: TestClient,
+        mocker,
+        tool_name: str,
+        folder_field: dict,
+        requested_folder: str,
+        expected_folders: tuple[str, str] | None,
+    ):
+        """The folder change is previewed from the configuration `folder` field on every folder-aware tool."""
+        from keboola_mcp_server.clients.storage import ComponentAPIResponse
+        from keboola_mcp_server.tools.data_apps import DataApp
+
+        component_id = {
+            'update_config': 'keboola.ex-test',
+            'update_sql_transformation': 'keboola.snowflake-transformation',
+        }.get(tool_name, 'keboola.ex-test')
+        mocker.patch(
+            'keboola_mcp_server.tools.components.tools.fetch_component',
+            side_effect=lambda **_: ComponentAPIResponse.model_validate(
+                {'id': component_id, 'name': 'C', 'type': 'transformation', 'configurationSchema': {}}
+            ),
+        )
+        configuration = {
+            'update_config': {'parameters': {}},
+            'update_sql_transformation': {
+                'parameters': {'blocks': [{'name': 'B', 'codes': [{'name': 'C', 'script': ['SELECT 1;']}]}]},
+                'storage': {},
+            },
+            'modify_flow': {
+                'phases': [{'id': 'phase1', 'name': 'Phase 1', 'next': [{'id': 't1', 'name': 'End', 'goto': None}]}],
+                'tasks': [
+                    {
+                        'id': 'task1',
+                        'name': 'Task 1',
+                        'phase': 'phase1',
+                        'enabled': True,
+                        'task': {'type': 'job', 'componentId': 'keboola.ex-test', 'configId': 'cfg-1', 'mode': 'run'},
+                    }
+                ],
+            },
+        }.get(tool_name, {})
+        config_detail = {'id': 'cfg-1', 'name': 'C', 'description': 'D', 'configuration': configuration, **folder_field}
+
+        mock_client = mocker.AsyncMock(KeboolaClient)
+        _configure_preview_auth(mock_client, mocker)
+        mock_client.storage_client.configuration_detail = mocker.AsyncMock(
+            side_effect=lambda **_: copy.deepcopy(config_detail)
+        )
+        mock_client.storage_client.project_id = mocker.AsyncMock(return_value='project-1')
+        mock_client.encryption_client.encrypt = mocker.AsyncMock(side_effect=lambda config, **_: config)
+        mocker.patch('keboola_mcp_server.preview.KeboolaClient.from_state', return_value=mock_client)
+        mocker.patch(
+            'keboola_mcp_server.tools.flow.scheduler.list_schedules_for_config', new=mocker.AsyncMock(return_value=[])
+        )
+        mock_workspace_manager = mocker.AsyncMock()
+        mock_workspace_manager.get_data_app_workspace_id = mocker.AsyncMock(return_value=123)
+        mock_workspace_manager.get_data_app_branch_id = mocker.AsyncMock(return_value=456)
+        mock_workspace_manager.get_data_app_sql_dialect = mocker.AsyncMock(return_value='snowflake')
+        mocker.patch('keboola_mcp_server.preview.WorkspaceManager.from_state', return_value=mock_workspace_manager)
+        data_app = DataApp(
+            name='C',
+            component_id='keboola.data-apps',
+            configuration_id='cfg-1',
+            data_app_id='app-1',
+            project_id='project-1',
+            branch_id='456',
+            config_version='1',
+            state='stopped',
+            type='streamlit',
+            folder=folder_field.get('folder') or '',
+            configuration={'parameters': {'dataApp': {'slug': 'c', 'secrets': {}}}, 'authorization': {}},
+        )
+        data_app._has_folder_field = 'folder' in folder_field
+        mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', new=mocker.AsyncMock(return_value=data_app))
+
+        tool_params = {'configuration_id': 'cfg-1', 'change_description': 'Move', 'folder': requested_folder}
+        tool_params |= {
+            'update_config': {'component_id': component_id},
+            'modify_flow': {'flow_type': 'keboola.flow'},
+            'modify_streamlit_data_app': {
+                'name': 'C',
+                'description': 'D',
+                'source_code': 'print(1)',
+                'packages': [],
+                'authentication_type': 'default',
+            },
+        }.get(tool_name, {})
+
+        response = test_client.post('/preview/configuration', json={'toolName': tool_name, 'toolParams': tool_params})
+
+        assert response.status_code == 200
+        result = response.json()
+        assert result['isValid'] is True, result
+        if expected_folders is None:
+            assert result['updatedConfig'].get('folder') == result['originalConfig'].get('folder')
+        else:
+            assert (result['originalConfig']['folder'], result['updatedConfig']['folder']) == expected_folders
 
     def test_preview_update_flow_success(self, test_client: TestClient, mocker):
         """Test successful preview of update_flow tool."""

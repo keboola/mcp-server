@@ -465,9 +465,6 @@ class MetadataField:
     UPDATED_BY_CONFIGURATION_ID = 'KBC.lastUpdatedBy.configuration.id'
     UPDATED_BY_CONFIGURATION_ROW_ID = 'KBC.lastUpdatedBy.configurationRow.id'
 
-    # Folder name for organizing configurations in the UI
-    CONFIGURATION_FOLDER_NAME = 'KBC.configuration.folderName'
-
     # Data type metadata fields
     DATATYPE_TYPE = 'KBC.datatype.type'
     DATATYPE_NULLABLE = 'KBC.datatype.nullable'

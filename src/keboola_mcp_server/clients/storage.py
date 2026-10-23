@@ -139,6 +139,8 @@ class APIFlowResponse(BaseModel):
         serialization_alias='changeDescription',
     )
 
+    folder: str | None = Field(default=None, description='The UI folder of the flow configuration, None if none')
+
     # Metadata
     metadata: list[dict[str, Any]] = Field(
         default_factory=list,
@@ -266,6 +268,7 @@ class ConfigurationAPIResponse(BaseModel):
         description='The description of the latest changes',
         validation_alias=AliasChoices('changeDescription', 'change_description', 'change-description'),
     )
+    folder: str | None = Field(default=None, description='The UI folder of the configuration, None if none')
     metadata: list[dict[str, Any]] = Field(
         default_factory=list,
         description='Configuration metadata',
@@ -667,40 +670,6 @@ class AsyncStorageClient(KeboolaServiceClient):
 
         return cast(list[JsonDict], await self.get(endpoint=endpoint))
 
-    async def component_configurations_search(
-        self,
-        component_id: str | None = None,
-        metadata_keys: list[str] | None = None,
-    ) -> list[JsonDict]:
-        """
-        Searches component configurations by component and metadata keys.
-        All filters are applied server-side by the SAPI search endpoint.
-
-        The endpoint validates the query string against a fixed set of field names and rejects the
-        whole request with HTTP 400 if an unknown one is sent, so the param names below must match
-        the SAPI contract exactly: the component filter is `idComponent` (*not* `componentId`), and
-        `metadataKeys` must use the bracket-array form. `include=filteredMetadata` is required for
-        the response rows to carry their `metadata` at all — without it each row is only
-        `{'idComponent': ..., 'configurationId': ...}`.
-
-        :param component_id: Optional component ID to filter results.
-        :param metadata_keys: List of metadata keys to filter by — returns only configurations
-            that have at least one of the specified metadata keys set.
-        :return: List of matching configurations, one entry per configuration, each with
-            'idComponent', 'configurationId' and a 'metadata' list of {'id', 'key', 'value',
-            'timestamp'} entries holding only the metadata matching `metadata_keys`.
-        """
-        if not (component_id or metadata_keys):
-            return []
-        endpoint = f'branch/{self._branch_id}/search/component-configurations'
-        params: dict[str, Any] = {}
-        if component_id:
-            params['idComponent'] = component_id
-        for i, key in enumerate(metadata_keys or []):
-            params[f'metadataKeys[{i}]'] = key
-        params['include'] = 'filteredMetadata'
-        return cast(list[JsonDict], await self.get(endpoint=endpoint, params=params))
-
     async def configuration_metadata_get(self, component_id: str, configuration_id: str) -> list[JsonDict]:
         """
         Retrieves metadata for a given configuration.
@@ -781,6 +750,18 @@ class AsyncStorageClient(KeboolaServiceClient):
             payload['isDisabled'] = is_disabled
 
         return cast(JsonDict, await self.put(endpoint=endpoint, data=payload))
+
+    async def configuration_folder_update(self, component_id: str, configuration_id: str, folder: str) -> JsonDict:
+        """
+        Sets the UI folder of a configuration. Updating only the folder does not create a new configuration version.
+
+        :param component_id: The id of the component.
+        :param configuration_id: The id of the configuration.
+        :param folder: The folder name; an empty (or whitespace-only) string removes the configuration from its folder.
+        :return: The SAPI call response - updated configuration or raise an error.
+        """
+        endpoint = f'branch/{self._branch_id}/components/{component_id}/configs/{configuration_id}'
+        return cast(JsonDict, await self.put(endpoint=endpoint, data={'folder': folder}))
 
     async def configuration_row_create(
         self,

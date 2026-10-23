@@ -42,7 +42,7 @@ from keboola_mcp_server.tools.components.model import (
 from keboola_mcp_server.tools.components.sql_utils import split_sql_statements
 from keboola_mcp_server.tools.components.utils import (
     PYTHON_TRANSFORMATION_ID,
-    apply_folder_metadata,
+    apply_configuration_folder,
     clean_bucket_name,
     expand_component_types,
     get_sql_transformation_id_from_sql_dialect,
@@ -1056,16 +1056,15 @@ _FOLDER_HINT_MIN_CONFIGS = 20
 
 
 @pytest.mark.asyncio
-async def test_apply_folder_metadata_returns_hint_with_existing_folders(
+async def test_apply_configuration_folder_returns_hint_with_existing_folders(
     keboola_client: KeboolaClient, keboola_project: ProjectDef, unique_id: str
 ):
     """
     Tests that a real project with enough configurations yields a folder hint naming existing folders.
 
-    This is the end-to-end guard for the folder-hint feature. It was silently dead for every
-    component: the underlying search call sent a param name the Storage API rejects, and
-    `apply_folder_metadata` swallowed the resulting error, so the hint was simply never produced
-    and no test noticed.
+    This is the end-to-end guard for the folder-hint feature. It once was silently dead for every
+    component: the underlying folder lookup failed against the Storage API and the error was
+    swallowed, so the hint was simply never produced and no test noticed.
     """
     storage_client = keboola_client.storage_client
     folders = [f'Folder A {unique_id}', f'Folder B {unique_id}']
@@ -1083,17 +1082,13 @@ async def test_apply_folder_metadata_returns_hint_with_existing_folders(
         # Only some configurations get a folder, so the hint has to come from the full
         # configuration count rather than the (smaller) set of folder-bearing ones.
         for configuration_id, folder in zip(created_ids, folders):
-            await storage_client.configuration_metadata_update(
-                component_id=PYTHON_TRANSFORMATION_ID,
-                configuration_id=configuration_id,
-                metadata={MetadataField.CONFIGURATION_FOLDER_NAME: folder},
-            )
+            await storage_client.configuration_folder_update(PYTHON_TRANSFORMATION_ID, configuration_id, folder)
 
-        hint = await apply_folder_metadata(
+        hint = await apply_configuration_folder(
             keboola_client,
             PYTHON_TRANSFORMATION_ID,
             created_ids[-1],
-            None,  # no folder requested -> return a hint instead of writing metadata
+            None,  # no folder requested -> return a hint instead of setting the folder
             'configurations',
             'update_config',
         )
