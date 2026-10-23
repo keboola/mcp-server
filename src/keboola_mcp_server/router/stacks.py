@@ -14,7 +14,7 @@ _NETLOC_PATTERN = re.compile(r'^[A-Za-z0-9.-]+(:[0-9]{1,5})?$')
 @dataclasses.dataclass(frozen=True)
 class Stack:
     key: str
-    """The prefix of every code and token the stack's MCP server issues for the router (`eu-aws.<code>`)."""
+    """The prefix of every code and token the stack's MCP server issues for the router (`kbc-eu-central-1.<code>`)."""
     name: str
     """What the stack picker shows, by region and cloud."""
     upstream: str
@@ -24,17 +24,27 @@ class Stack:
 
 
 DEFAULT_STACKS: tuple[Stack, ...] = (
-    Stack('us-aws', 'US Virginia AWS', 'https://mcp.keboola.com', 'connection.keboola.com'),
-    Stack('us-gcp', 'US Virginia GCP', 'https://mcp.us-east4.gcp.keboola.com', 'connection.us-east4.gcp.keboola.com'),
-    Stack('eu-aws', 'EU Frankfurt AWS', 'https://mcp.eu-central-1.keboola.com', 'connection.eu-central-1.keboola.com'),
+    Stack('kbc-us-east-1', 'US Virginia AWS', 'https://mcp.keboola.com', 'connection.keboola.com'),
     Stack(
-        'eu-azure',
+        'com-keboola-gcp-us-east4',
+        'US Virginia GCP',
+        'https://mcp.us-east4.gcp.keboola.com',
+        'connection.us-east4.gcp.keboola.com',
+    ),
+    Stack(
+        'kbc-eu-central-1',
+        'EU Frankfurt AWS',
+        'https://mcp.eu-central-1.keboola.com',
+        'connection.eu-central-1.keboola.com',
+    ),
+    Stack(
+        'com-keboola-azure-north-europe',
         'EU Ireland Azure',
         'https://mcp.north-europe.azure.keboola.com',
         'connection.north-europe.azure.keboola.com',
     ),
     Stack(
-        'eu-gcp',
+        'com-keboola-gcp-europe-west3',
         'EU Frankfurt GCP',
         'https://mcp.europe-west3.gcp.keboola.com',
         'connection.europe-west3.gcp.keboola.com',
@@ -92,7 +102,7 @@ def is_valid_stack_key(key: str) -> bool:
 
 
 def stack_key_of(value: str | None) -> str | None:
-    """The stack key a router-issued code or token starts with (`eu-aws.<code>` -> `eu-aws`), or None without one."""
+    """The stack key a router-issued code or token starts with (`kbc-eu-central-1.<code>` -> `kbc-eu-central-1`), or None without one."""
     if not value or STACK_KEY_SEPARATOR not in value:
         return None
     return value.split(STACK_KEY_SEPARATOR, 1)[0]

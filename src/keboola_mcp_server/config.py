@@ -112,7 +112,7 @@ class Config:
     logs and counts the mismatch and lets the request through, `enforce` refuses it (`invalid_target` at `/authorize`
     and `/token`, 401 at `/mcp`). Deployment-level only."""
     stack_key: str | None = None
-    """This stack's key in the global MCP router's stack table (e.g. `eu-aws`, ChatGPT plugin). With `router_url` it
+    """This stack's key in the global MCP router's stack table (e.g. `kbc-eu-central-1`, ChatGPT plugin). With `router_url` it
     turns on the flows the router sends here: their codes and tokens carry this key as a prefix, so the router knows
     where to send them. Both or neither. Deployment-level only."""
     router_url: str | None = None

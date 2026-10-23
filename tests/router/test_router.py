@@ -90,7 +90,7 @@ class TestAuthorize:
             ('via', 'router'),
         ]
 
-    @pytest.mark.parametrize('stack', ['', 'evil', 'https://attacker.example', 'us-aws.', 'US-AWS'])
+    @pytest.mark.parametrize('stack', ['', 'evil', 'https://attacker.example', 'kbc-us-east-1.', 'US-AWS'])
     def test_any_other_stack_shows_the_picker(self, stack: str) -> None:
         with router_client() as client:
             response = client.get(f'/authorize?{self.QUERY}&stack={stack}')
@@ -148,21 +148,21 @@ class TestAuthorize:
 
     def test_choosing_a_stack_remembers_it_for_the_picker(self) -> None:
         with router_client() as client:
-            response = client.get(f'/authorize?{self.QUERY}&stack=eu-gcp')
-            client.cookies.set('keboola_mcp_stack', 'eu-gcp', path='/authorize')
+            response = client.get(f'/authorize?{self.QUERY}&stack=com-keboola-gcp-europe-west3')
+            client.cookies.set('keboola_mcp_stack', 'com-keboola-gcp-europe-west3', path='/authorize')
             picker = client.get(f'/authorize?{self.QUERY}')
 
         cookie = response.headers['set-cookie']
-        assert cookie.startswith('keboola_mcp_stack=eu-gcp;')
+        assert cookie.startswith('keboola_mcp_stack=com-keboola-gcp-europe-west3;')
         for attribute in ('Max-Age=7776000', 'Path=/authorize', 'Secure', 'HttpOnly', 'SameSite=lax'):
             assert attribute in cookie
         assert picker.text.count('class="stack last-used"') == 1
         assert '<a class="stack last-used" href="/authorize?' in picker.text
-        assert 'stack=eu-gcp"' in picker.text.split('last-used')[1].split('>')[0]
+        assert 'stack=com-keboola-gcp-europe-west3"' in picker.text.split('last-used')[1].split('>')[0]
 
     def test_a_post_is_not_served(self) -> None:
         with router_client() as client:
-            response = client.post(f'/authorize?{self.QUERY}', data={'stack': 'eu-gcp'})
+            response = client.post(f'/authorize?{self.QUERY}', data={'stack': 'com-keboola-gcp-europe-west3'})
 
         assert response.status_code == 405
         assert 'location' not in response.headers
@@ -174,7 +174,7 @@ class TestAuthorize:
             ('redirect_uri', "' onmouseover='alert(1)"),
             ('"><b>', '<b>&"d"'),
             # an encoded `&stack=` must stay inside its value, never become a parameter of its own
-            ('state', 'x&stack=us-gcp'),
+            ('state', 'x&stack=com-keboola-gcp-us-east4'),
             ('stack', 'evil-stack'),
         ],
     )
@@ -192,7 +192,7 @@ class TestAuthorize:
             assert stack.login_host in page
 
     def test_a_hostile_query_string_through_the_route(self) -> None:
-        hostile = 'state=%22%3E%3Cscript%3Ealert(1)%3C%2Fscript%3E&redirect_uri=x%26stack%3Dus-gcp'
+        hostile = 'state=%22%3E%3Cscript%3Ealert(1)%3C%2Fscript%3E&redirect_uri=x%26stack%3Dcom-keboola-gcp-us-east4'
         with router_client() as client:
             page = client.get(f'/authorize?{hostile}')
             followed = client.get(self._links(page.text)['EU Frankfurt AWS'])
@@ -202,7 +202,7 @@ class TestAuthorize:
         assert f'{location.scheme}://{location.netloc}' == 'https://mcp.eu-central-1.keboola.com'
         assert parse_qsl(location.query) == [
             ('state', '"><script>alert(1)</script>'),
-            ('redirect_uri', 'x&stack=us-gcp'),
+            ('redirect_uri', 'x&stack=com-keboola-gcp-us-east4'),
             ('via', 'router'),
         ]
 
@@ -220,8 +220,11 @@ class TestTokenAndRevoke:
     @pytest.mark.parametrize(
         ('form', 'upstream_host'),
         [
-            ({'grant_type': 'authorization_code', 'code': 'eu-aws.code.jwt', 'code_verifier': 'v'}, 'eu-central-1'),
-            ({'grant_type': 'refresh_token', 'refresh_token': 'us-gcp.opaque'}, 'us-east4.gcp'),
+            (
+                {'grant_type': 'authorization_code', 'code': 'kbc-eu-central-1.code.jwt', 'code_verifier': 'v'},
+                'eu-central-1',
+            ),
+            ({'grant_type': 'refresh_token', 'refresh_token': 'com-keboola-gcp-us-east4.opaque'}, 'us-east4.gcp'),
         ],
     )
     def test_token_is_forwarded_verbatim_to_the_stack_of_the_prefix(self, form: dict, upstream_host: str) -> None:
@@ -233,7 +236,7 @@ class TestTokenAndRevoke:
                 headers={
                     'Authorization': 'Basic YWJjOnNlY3JldA==',
                     'X-Forwarded-For': '203.0.113.9',
-                    'Cookie': 'keboola_mcp_stack=us-aws',
+                    'Cookie': 'keboola_mcp_stack=kbc-us-east-1',
                 },
             )
 
@@ -255,7 +258,7 @@ class TestTokenAndRevoke:
             headers={'Set-Cookie': 'upstream=1', 'Location': 'https://elsewhere.example', 'WWW-Authenticate': 'Basic'},
         )
         with router_client(Upstream(answer)) as client:
-            response = client.post('/token', data={'grant_type': 'refresh_token', 'refresh_token': 'us-aws.rt'})
+            response = client.post('/token', data={'grant_type': 'refresh_token', 'refresh_token': 'kbc-us-east-1.rt'})
 
         assert response.status_code == 400
         assert response.json() == {'error': 'invalid_grant'}
@@ -270,9 +273,13 @@ class TestTokenAndRevoke:
             ({'grant_type': 'authorization_code', 'code': 'xx-unknown.code'}, 400, 'invalid_grant'),
             ({'grant_type': 'refresh_token'}, 400, 'invalid_request'),
             # RFC 6749 §3.1: routed by one value while the stack would read the other
-            ({'grant_type': 'authorization_code', 'code': ['eu-aws.a', 'us-aws.b']}, 400, 'invalid_request'),
-            ({'grant_type': 'client_credentials', 'code': 'eu-aws.code'}, 400, 'unsupported_grant_type'),
-            ({'code': 'eu-aws.code'}, 400, 'unsupported_grant_type'),
+            (
+                {'grant_type': 'authorization_code', 'code': ['kbc-eu-central-1.a', 'kbc-us-east-1.b']},
+                400,
+                'invalid_request',
+            ),
+            ({'grant_type': 'client_credentials', 'code': 'kbc-eu-central-1.code'}, 400, 'unsupported_grant_type'),
+            ({'code': 'kbc-eu-central-1.code'}, 400, 'unsupported_grant_type'),
         ],
     )
     def test_token_without_a_known_prefix_is_answered_without_an_upstream_call(
@@ -289,7 +296,7 @@ class TestTokenAndRevoke:
     @pytest.mark.parametrize(
         ('token', 'expected_status', 'expected_upstream'),
         [
-            ('eu-azure.opaque', 200, 'https://mcp.north-europe.azure.keboola.com/revoke'),
+            ('com-keboola-azure-north-europe.opaque', 200, 'https://mcp.north-europe.azure.keboola.com/revoke'),
             # RFC 7009 §2.2: an unknown token is not an error
             ('unknown.opaque', 200, None),
             ('no-prefix', 200, None),
@@ -313,20 +320,20 @@ class TestTokenAndRevoke:
     )
     def test_an_upstream_failure_is_a_gateway_error(self, failure: Exception, expected_status: int) -> None:
         with router_client(Upstream(failure)) as client:
-            response = client.post('/token', data={'grant_type': 'refresh_token', 'refresh_token': 'us-aws.rt'})
+            response = client.post('/token', data={'grant_type': 'refresh_token', 'refresh_token': 'kbc-us-east-1.rt'})
 
         assert response.status_code == expected_status
         assert response.json()['error'] == 'temporarily_unavailable'
 
     def test_logs_carry_metadata_only(self, caplog: pytest.LogCaptureFixture) -> None:
-        secrets = ['Basic c2VjcmV0LWNsaWVudDpzM2NyM3Q=', 'eu-aws.the-authorization-code', 'the-code-verifier']
+        secrets = ['Basic c2VjcmV0LWNsaWVudDpzM2NyM3Q=', 'kbc-eu-central-1.the-authorization-code', 'the-code-verifier']
         with caplog.at_level(logging.DEBUG), router_client() as client:
             client.post(
                 '/token',
                 data={'grant_type': 'authorization_code', 'code': secrets[1], 'code_verifier': secrets[2]},
                 headers={'Authorization': secrets[0]},
             )
-            client.get('/authorize?state=the-client-state&code_challenge=the-challenge&stack=us-aws')
+            client.get('/authorize?state=the-client-state&code_challenge=the-challenge&stack=kbc-us-east-1')
 
         # the test client's own request lines (to the router URL) are not the router's logs
         logged = '\n'.join(
@@ -336,8 +343,8 @@ class TestTokenAndRevoke:
         )
         for value in (*secrets, 'c2VjcmV0', 'the-client-state', 'the-challenge'):
             assert value not in logged
-        assert '[router] POST /token status=200 stack_key=eu-aws' in logged
-        assert '[router] GET /authorize status=302 stack_key=us-aws' in logged
+        assert '[router] POST /token status=200 stack_key=kbc-eu-central-1' in logged
+        assert '[router] GET /authorize status=302 stack_key=kbc-us-east-1' in logged
 
     def test_a_path_the_router_does_not_serve_is_not_logged(self, caplog: pytest.LogCaptureFixture) -> None:
         with caplog.at_level(logging.INFO), router_client() as client:
@@ -368,12 +375,12 @@ class TestTokenAndRevoke:
                 '/register', json={'redirect_uris': ['https://a.example/cb'], 'client_name': 'x' * 70_000}
             )
             token = client.post(
-                '/token', data={'grant_type': 'refresh_token', 'refresh_token': 'us-aws.' + 'x' * 70_000}
+                '/token', data={'grant_type': 'refresh_token', 'refresh_token': 'kbc-us-east-1.' + 'x' * 70_000}
             )
 
             # /mcp takes what the SDK takes (4 MiB): a large tool call passes the 64 KiB cap of the OAuth endpoints
             tool_call = {'jsonrpc': '2.0', 'id': 2, 'method': 'tools/call', 'params': {'sql': 'x' * 100_000}}
-            mcp = client.post('/mcp', json=tool_call, headers={'Authorization': 'Bearer us-aws.opaque'})
+            mcp = client.post('/mcp', json=tool_call, headers={'Authorization': 'Bearer kbc-us-east-1.opaque'})
 
         assert register.status_code == token.status_code == 413
         assert mcp.status_code == 200
@@ -419,10 +426,10 @@ class TestRateLimits:
             statuses = [
                 client.post(path, data=form(credential), headers={'X-Forwarded-For': address}).status_code
                 for credential, address in [
-                    ('us-aws.first', '198.51.100.1'),
-                    ('us-aws.first', '198.51.100.2'),
-                    ('us-aws.first', '198.51.100.3'),
-                    ('us-aws.second', '198.51.100.1'),
+                    ('kbc-us-east-1.first', '198.51.100.1'),
+                    ('kbc-us-east-1.first', '198.51.100.2'),
+                    ('kbc-us-east-1.first', '198.51.100.3'),
+                    ('kbc-us-east-1.second', '198.51.100.1'),
                 ]
             ]
 
@@ -434,10 +441,10 @@ class TestRateLimits:
         the optional per-address ceiling is for /register only; a value without a known stack is not counted."""
         upstream = Upstream(httpx.Response(200, json={}))
         headers = {'X-Forwarded-For': '198.51.100.9'}
-        refresh = {'grant_type': 'refresh_token', 'refresh_token': 'us-aws.rt'}
+        refresh = {'grant_type': 'refresh_token', 'refresh_token': 'kbc-us-east-1.rt'}
         with router_client(upstream, token_rate_limit_per_credential=1, api_rate_limit_per_ip=1) as client:
             token = [client.post('/token', data=refresh, headers=headers).status_code for _ in range(2)]
-            revoke = client.post('/revoke', data={'token': 'us-aws.rt'}, headers=headers).status_code
+            revoke = client.post('/revoke', data={'token': 'kbc-us-east-1.rt'}, headers=headers).status_code
             unknown = [
                 client.post('/token', data={**refresh, 'refresh_token': 'xx.rt'}, headers=headers).status_code
                 for _ in range(3)
@@ -450,7 +457,7 @@ class TestRateLimits:
     def test_no_credential_reaches_the_logs(self, caplog: pytest.LogCaptureFixture) -> None:
         from keboola_mcp_server.router.app import create_router_app as build
 
-        credential = 'us-aws.the-refresh-token'
+        credential = 'kbc-us-east-1.the-refresh-token'
         app = build(
             RouterSettings(router_url=ROUTER_URL, stacks=parse_stacks(None), token_rate_limit_per_credential=1),
             upstream_transport=httpx.MockTransport(Upstream()),
@@ -481,7 +488,7 @@ class TestRateLimits:
         assert preflight.headers['access-control-allow-origin'] == '*'
 
     def test_retry_after_is_the_rest_of_the_window(self) -> None:
-        refresh = {'grant_type': 'refresh_token', 'refresh_token': 'us-aws.rt'}
+        refresh = {'grant_type': 'refresh_token', 'refresh_token': 'kbc-us-east-1.rt'}
         with router_client(now=125.0, authorize_rate_limit_per_ip=1, token_rate_limit_per_credential=1) as client:
             authorize = [client.get('/authorize', headers={'X-Forwarded-For': '203.0.113.1'}) for _ in range(2)][-1]
             token = [client.post('/token', data=refresh) for _ in range(2)][-1]
@@ -502,7 +509,7 @@ class TestRateLimits:
                 for address in ('203.0.113.1', '203.0.113.1', '203.0.113.2', '203.0.113.2')
             ]
             credentials = [
-                client.post('/revoke', data={'token': f'us-aws.{credential}'}).status_code
+                client.post('/revoke', data={'token': f'kbc-us-east-1.{credential}'}).status_code
                 for credential in ('known', 'new-1', 'new-2', 'new-3', 'known', 'known')
             ]
 
@@ -555,7 +562,7 @@ class TestSettings:
             {'KBC_ROUTER_URL': 'mcp-router.example.com'},
             {'KBC_ROUTER_URL': ROUTER_URL, 'KBC_ROUTER_API_RATE_LIMIT_PER_IP': '0'},
             {'KBC_ROUTER_URL': ROUTER_URL, 'KBC_ROUTER_STACKS': '[]'},
-            {'KBC_ROUTER_URL': ROUTER_URL, 'KBC_ROUTER_STACKS': '[{"key": "eu-aws"}]'},
+            {'KBC_ROUTER_URL': ROUTER_URL, 'KBC_ROUTER_STACKS': '[{"key": "kbc-eu-central-1"}]'},
             {'KBC_ROUTER_URL': 'http://mcp-router.example.com'},
             {'KBC_ROUTER_URL': 'https://user@mcp-router.example.com'},
         ],
@@ -568,10 +575,15 @@ class TestSettings:
         'entry',
         [
             {'key': 'eu.aws', 'name': 'x', 'upstream': 'https://mcp.example', 'login_host': 'x'},
-            {'key': 'eu-aws', 'name': 'x', 'upstream': 'http://mcp.example', 'login_host': 'x'},
-            {'key': 'eu-aws', 'name': 'x', 'upstream': 'https://mcp.example/mcp', 'login_host': 'x'},
-            {'key': 'eu-aws', 'name': 'x', 'upstream': 'https://user@mcp.example', 'login_host': 'x'},
-            {'key': 'eu-aws', 'name': 'x', 'upstream': "https://mcp.example;script-src 'none'", 'login_host': 'x'},
+            {'key': 'kbc-eu-central-1', 'name': 'x', 'upstream': 'http://mcp.example', 'login_host': 'x'},
+            {'key': 'kbc-eu-central-1', 'name': 'x', 'upstream': 'https://mcp.example/mcp', 'login_host': 'x'},
+            {'key': 'kbc-eu-central-1', 'name': 'x', 'upstream': 'https://user@mcp.example', 'login_host': 'x'},
+            {
+                'key': 'kbc-eu-central-1',
+                'name': 'x',
+                'upstream': "https://mcp.example;script-src 'none'",
+                'login_host': 'x',
+            },
         ],
     )
     def test_the_stack_table_is_validated(self, entry: dict[str, str]) -> None:
@@ -579,7 +591,7 @@ class TestSettings:
             parse_stacks(json.dumps([entry]))
 
     def test_duplicate_stack_keys_are_refused(self) -> None:
-        entry = {'key': 'eu-aws', 'name': 'x', 'upstream': 'https://mcp.example', 'login_host': 'x'}
+        entry = {'key': 'kbc-eu-central-1', 'name': 'x', 'upstream': 'https://mcp.example', 'login_host': 'x'}
         with pytest.raises(ValueError):
             parse_stacks(json.dumps([entry, entry]))
 

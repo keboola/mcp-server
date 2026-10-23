@@ -1181,7 +1181,7 @@ class SimpleOAuthProvider(OAuthProvider):
         :param resource_binding: What a resource that is not this server does (RFC 8707): `log` (the default) logs and
             counts it and lets the request through, `enforce` refuses it. Clients that already send a resource would turn
             from working into failing, so a stack switches to `enforce` only after its mismatch log stays empty.
-        :param stack_key: This stack's key in the global router's stack table (`eu-aws`); with `router_url`, it turns
+        :param stack_key: This stack's key in the global router's stack table (`kbc-eu-central-1`); with `router_url`, it turns
             on router flows (`_is_router_flow`). Both or neither.
         :param router_url: The global router's URL; its issuer and resource are derived from it with the same functions
             the router uses (`router.stacks`), so the two sides cannot disagree.

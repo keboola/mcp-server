@@ -20,7 +20,7 @@ A new run mode of the same image, `--mode=router`, serves the plugin's URL and s
 | `/.well-known/oauth-authorization-server` | Router issuer and endpoints, `S256`, `authorization_response_iss_parameter_supported: true` |
 | `/register` | Answered locally, like the regional server: a fresh `client_id`, nothing stored |
 | `/authorize` | The stack picker (one link per stack); with `stack=<key>`, 302 to the chosen stack's `/authorize` with every original parameter, `stack` dropped and `via=router` added. `stack=<key>` from the table skips the picker |
-| `/token`, `/revoke` | Route by the stack key prefix of `code`, `refresh_token` or `token` (`eu-aws.<value>`), body forwarded unchanged. Unknown prefix: `/token` answers `invalid_grant`, `/revoke` answers 200 (RFC 7009), no upstream call |
+| `/token`, `/revoke` | Route by the stack key prefix of `code`, `refresh_token` or `token` (`kbc-eu-central-1.<value>`), body forwarded unchanged. Unknown prefix: `/token` answers `invalid_grant`, `/revoke` answers 200 (RFC 7009), no upstream call |
 | `/mcp` (3.2) | Reverse proxy by the prefix of the bearer token, streamed; 401 with `resource_metadata` without a known prefix |
 | `/.well-known/openai-apps-challenge` | `OPENAI_APPS_CHALLENGE` as text, 404 when unset |
 

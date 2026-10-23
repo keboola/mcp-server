@@ -15,7 +15,7 @@ class Upstream:
 
     def __init__(self, response: httpx.Response | Exception | None = None) -> None:
         self.requests: list[httpx.Request] = []
-        self._response = response or httpx.Response(200, json={'access_token': 'eu-aws.at'})
+        self._response = response or httpx.Response(200, json={'access_token': 'kbc-eu-central-1.at'})
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
