@@ -248,8 +248,15 @@ async def test_happy_path_create_then_merge(
 
 
 @pytest.mark.asyncio
-async def test_conflict_is_reported_and_resolved(mocker, mr_project: MergeRequestProject) -> None:
-    """Change the same configuration on the branch and in production → conflict → take ours → merge succeeds."""
+@pytest.mark.parametrize('resolve_from', ['branch', 'production'])
+async def test_conflict_is_reported_and_resolved(mocker, mr_project: MergeRequestProject, resolve_from: str) -> None:
+    """
+    Change the same configuration on the branch and in production → conflict → take ours → merge succeeds.
+
+    The refused merge is always issued from the branch (it leaves the MR `approved`, which makes the branch
+    read-only in kbc-ui and switches Kai off there); the conflict → resolve → merge steps then run either from the
+    same branch session or from a production session with an explicit `merge_request_id` (the Kai route).
+    """
     url, token = mr_project.storage_api_url, mr_project.storage_api_token
     # A conflict needs the configuration on both sides, so it must exist in production BEFORE the branch is
     # created (a development branch is a copy of production at creation time).
@@ -269,8 +276,15 @@ async def test_conflict_is_reported_and_resolved(mocker, mr_project: MergeReques
         assert refused.merged is False
         assert refused.refusal == 'conflicts'
         assert refused.conflicts is not None and {c.configuration_id for c in refused.conflicts} == {config_id}
+        assert 'read-only in the Keboola UI' in refused.next_step
 
-        conflicts = await get_merge_request_conflicts(ctx)
+        if resolve_from == 'production':
+            ctx = await _build_context(mocker, mr_project, branch_id=None)
+            mr_kwargs: dict[str, Any] = {'merge_request_id': created.id}
+        else:
+            mr_kwargs = {}
+
+        conflicts = await get_merge_request_conflicts(ctx, **mr_kwargs)
         assert [c.configuration_id for c in conflicts.conflicts] == [config_id]
         conflict = conflicts.conflicts[0]
         assert conflict.conflicting_paths == ['/configuration/parameters/query']
@@ -278,13 +292,15 @@ async def test_conflict_is_reported_and_resolved(mocker, mr_project: MergeReques
         assert conflict.suggested_take is None
 
         resolved = await resolve_merge_request_conflict(
-            ctx, component_id=COMPONENT_ID, configuration_id=config_id, take='ours'
+            ctx, component_id=COMPONENT_ID, configuration_id=config_id, take='ours', **mr_kwargs
         )
         assert resolved.resolved is True and resolved.mode == 'ours'
         assert resolved.remaining_conflicts == []
         assert 'merge_merge_request' in resolved.status.next_step
+        if resolve_from == 'production':
+            assert f'merge_merge_request(merge_request_id={created.id})' in resolved.status.next_step
 
-        merged = await merge_merge_request(ctx)
+        merged = await merge_merge_request(ctx, **mr_kwargs)
         assert merged.merged is True, merged
         production = _api_request('GET', _config_path(url, None, config_id), token)
         assert production['configuration'] == {'parameters': {'query': 'SELECT 2'}}

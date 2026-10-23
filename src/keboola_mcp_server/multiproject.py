@@ -20,7 +20,7 @@ from keboola_mcp_server.config import build_tracing_headers, deployed_sa_token_p
 from keboola_mcp_server.errors import sanitized_failure
 from keboola_mcp_server.mcp import ServerState, is_read_only_tool
 from keboola_mcp_server.scope import PROJECT_ID_ARG, SCOPE_KEY, SessionScope
-from keboola_mcp_server.tools.constants import BOOTSTRAP_TOOLS, MERGE_REQUEST_BRANCH_ONLY_TOOLS
+from keboola_mcp_server.tools.constants import BOOTSTRAP_TOOLS, MERGE_REQUEST_SESSION_BOUND_TOOLS
 from keboola_mcp_server.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
@@ -247,9 +247,9 @@ class MultiProjectMiddleware(fmw.Middleware):
         """
         args = getattr(context.message, 'arguments', None)
         project_id = args.get(PROJECT_ID_ARG) if isinstance(args, dict) else None
-        if project_id is None and context.message.name in MERGE_REQUEST_BRANCH_ONLY_TOOLS:
-            # Bound to the session branch, which only the active project's client carries: no project_id to pass
-            # (the tools do not declare one), never ambiguous, never fanned out.
+        if project_id is None and context.message.name in MERGE_REQUEST_SESSION_BOUND_TOOLS:
+            # Bound to the session's branch context, which only the active project's client carries: no project_id
+            # to pass (the tools do not declare one), never ambiguous, never fanned out.
             target = scope.active_project_id
         else:
             target = self._resolve_single_target(scope, project_id)

@@ -170,7 +170,7 @@ class TestMultiProjectMiddleware:
 
     @pytest.mark.asyncio
     async def test_branch_only_merge_request_tool_targets_active_project_without_project_id(self) -> None:
-        """The five branch-only MR tools declare no project_id: in a 2+ project scope they must still run
+        """The five session-bound MR tools declare no project_id: in a 2+ project scope they must still run
         (against the active project's session branch) instead of failing as ambiguous."""
         scope = SessionScope(project_ids=[11, 22], confirmed=True)
         context, state = self._ctx(scope, 'merge_merge_request', read_only=False, arguments={})

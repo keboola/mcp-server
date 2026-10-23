@@ -174,10 +174,15 @@ def request_changes_reason(mr: Mapping[str, Any]) -> str | None:
 
 @dataclass(frozen=True)
 class SessionContext:
-    """Session facts `next_step` needs: is this a session on the MR's source branch, and may the caller write."""
+    """
+    Session facts `next_step` needs: is this a session on the MR's source branch, is it a production session (the
+    merge / conflicts / resolve tools work there with an explicit `merge_request_id`), and may the caller write.
+    Neither branch flag set means a session on another development branch, which can only hand the user off.
+    """
 
     on_mr_branch: bool
     can_write: bool
+    on_production: bool = False
 
 
 LastRefusal = Literal['conflicts', 'not_ready']
@@ -198,9 +203,37 @@ def build_next_step(
     last_refusal: LastRefusal | None = None,
     refusal_message: str | None = None,
     rejection_reason: str | None = None,
+    merge_request_id: int | None = None,
+    branch_url: str | None = None,
+    project_url: str | None = None,
 ) -> str:
-    """The 15-row decision table (RFC "next_step — the deterministic guide"); the first matching row wins."""
+    """
+    The 15-row decision table (RFC "next_step — the deterministic guide"); the first matching row wins.
+
+    Handoff rows (1, 5, 13) are written for Kai, where a chat is pinned to one branch and kbc-ui blocks the chat
+    in a branch whose merge request is `in_review` / `approved`: from a production session they say "do it from
+    here with merge_request_id=N"; from another branch they name the MR's branch with its UI link and offer the
+    production route. The URLs are in the text on purpose (kai-agent's prompt otherwise hides branch details).
+    """
     branch = f"branch '{branch_from_name}'" if branch_from_name else "the merge request's source branch"
+    link = f' ({branch_url})' if branch_url else ''
+    mr_arg = f'merge_request_id={merge_request_id}' if merge_request_id is not None else 'the merge request id'
+
+    def ui_read_only_note() -> str:
+        """Item K1: a reviewed/approved MR makes its branch read-only in kbc-ui, which switches Kai off there."""
+        if not session.on_mr_branch or merge_request_id is None:
+            return ''
+        if last_refusal == 'conflicts':
+            why = 'the refused merge left the merge request approved'
+        elif state in ('in_review', 'approved'):
+            why = f'the merge request is {state}'
+        else:
+            return ''
+        return (
+            f' Note: {why}, which makes this branch read-only in the Keboola UI; if Kai becomes unavailable on it, '
+            f'continue from a production chat with {mr_arg} (get_merge_request_conflicts, '
+            'resolve_merge_request_conflict, merge_merge_request work there).'
+        )
 
     if derived_state == 'unknown':  # 0: an unrecognized raw state; never recommend an action on it
         return (
@@ -208,10 +241,14 @@ def build_next_step(
             'here, check it in the Keboola UI.'
         )
     if derived_state == 'merged':  # 1
-        return (
-            'Done: the changes are in production and the source branch is being deleted. '
-            'Open a session on the production branch to continue.'
-        )
+        if session.on_mr_branch:
+            where = f' ({project_url})' if project_url else ''
+            return (
+                f'Done: the changes are in production and {branch} is being deleted. This chat is pinned to that '
+                'branch: it can still answer questions about production but cannot make changes. Tell the user to '
+                f'continue in production{where}; include the link.'
+            )
+        return f'Done: the changes are in production and {branch} is being deleted; nothing more to do on it.'
     if derived_state == 'closed':  # 2
         return 'Nothing to do: the merge request is closed.'
     if derived_state == 'in_merge':  # 3
@@ -222,26 +259,27 @@ def build_next_step(
     if remaining_conflicts:  # 4
         first = remaining_conflicts[0]
         return f'Resolve the next conflict: {first.label} ({len(remaining_conflicts)} left).'
-    if last_refusal == 'conflicts' and 'conflicts' not in merge_blockers:  # 5/6 without a usable conflict list
-        if not session.on_mr_branch:
-            return f'Conflicts must be resolved from a session on {branch}; open one and call get_merge_request_conflicts there.'
-        return (
-            'The merge was refused because of conflicts; call get_merge_request_conflicts to see them and resolve them '
-            'one by one with resolve_merge_request_conflict.'
-        )
-    if 'conflicts' in merge_blockers:
-        if not session.on_mr_branch:  # 5
-            return f'Conflicts must be resolved from a session on {branch}; open one and call get_merge_request_conflicts there.'
-        if conflicts is None:  # 6, count unknown (the blocker came from the backend, the list was not fetched)
+    if 'conflicts' in merge_blockers or last_refusal == 'conflicts':  # 5/6
+        if 'conflicts' not in merge_blockers:  # a conflict refusal without a usable conflict list
+            lead = 'The merge was refused because of conflicts'
+        elif conflicts is None:  # count unknown (the blocker came from the backend, the list was not fetched)
+            lead = 'Conflicts block the merge'
+        else:
+            n = len(conflicts)
+            lead = f'{n} {"conflict" if n == 1 else "conflicts"} block the merge'
+        if session.on_mr_branch:  # 6
             return (
-                'Conflicts block the merge; call get_merge_request_conflicts and resolve them one by one '
-                'with resolve_merge_request_conflict.'
+                f'{lead}; call get_merge_request_conflicts and resolve them one by one with '
+                f'resolve_merge_request_conflict.{ui_read_only_note()}'
             )
-        n = len(conflicts)
-        noun = 'conflict' if n == 1 else 'conflicts'
-        return (  # 6
-            f'{n} {noun} block the merge; call get_merge_request_conflicts and resolve them one by one '
-            'with resolve_merge_request_conflict.'
+        if session.on_production:  # 5, from production: the tools act on the MR's branch by id
+            return (
+                f'{lead}; call get_merge_request_conflicts({mr_arg}) and resolve them one by one with '
+                f'resolve_merge_request_conflict (the resolutions are written to {branch}).'
+            )
+        return (  # 5, from another branch: hand off
+            f'{lead}; they must be handled from a chat on {branch}{link} or from a production chat, calling '
+            f'get_merge_request_conflicts({mr_arg}) there. Tell the user, including the link.'
         )
     if 'approvals' in merge_blockers:
         names = ', '.join(pending) if pending else 'the requested reviewers'
@@ -267,10 +305,23 @@ def build_next_step(
         reason = f' ({rejection_reason})' if rejection_reason else ''
         return f'Changes were requested{reason}; address them on the branch, then merge again.'
     if 'merge' in allowed_actions:
-        if not session.on_mr_branch:  # 13
-            return f'Ready to merge; open a session on {branch} and call merge_merge_request there.'
-        if session.can_write:  # 14
-            return 'Ready: merge it with merge_merge_request (irreversible; the source branch is deleted afterwards).'
+        if session.on_mr_branch:
+            if session.can_write:  # 14
+                return (
+                    'Ready: merge it with merge_merge_request (irreversible; the source branch is deleted '
+                    f'afterwards).{ui_read_only_note()}'
+                )
+        elif session.on_production:  # 13, from production: merge by id
+            if session.can_write:
+                return (
+                    f'Ready to merge; merge it from here with merge_merge_request({mr_arg}) (irreversible; {branch} '
+                    'is deleted afterwards).'
+                )
+        else:  # 13, from another branch: hand off
+            return (
+                f'Ready to merge; tell the user to open Kai on {branch}{link} or in production and merge it there '
+                f'with merge_merge_request({mr_arg}). Include the link.'
+            )
     return 'Show the merge request (read-only).'  # 15
 
 
@@ -284,6 +335,8 @@ def build_status(
     remaining_conflicts: Sequence[ConflictRef] | None = None,
     last_refusal: LastRefusal | None = None,
     refusal_message: str | None = None,
+    branch_url: str | None = None,
+    project_url: str | None = None,
 ) -> DerivedStatus:
     """Assembles the derived status of a raw MR payload plus the (optionally fetched) live conflicts."""
     state = mr.get('state') or 'development'
@@ -323,5 +376,8 @@ def build_status(
             last_refusal=last_refusal,
             refusal_message=refusal_message,
             rejection_reason=request_changes_reason(mr),
+            merge_request_id=int(mr['id']) if mr.get('id') is not None else None,
+            branch_url=branch_url,
+            project_url=project_url,
         ),
     )
