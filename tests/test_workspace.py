@@ -7,7 +7,14 @@ from httpx import HTTPStatusError, Request, Response
 
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.clients.query import QueryServiceClient
-from keboola_mcp_server.workspace import JobSubmittedInfo, WorkspaceManager, _SnowflakeWorkspace, _WspInfo
+from keboola_mcp_server.workspace import (
+    GOVERNED_LOGIN_TYPE,
+    RLS_FEATURE,
+    JobSubmittedInfo,
+    WorkspaceManager,
+    _SnowflakeWorkspace,
+    _WspInfo,
+)
 
 
 @pytest.mark.parametrize(
@@ -954,13 +961,12 @@ async def test_execute_query_cancellation_propagates_to_backend(
         mock_qs.cancel_job.assert_called_once_with('job-abc-123', reason='Client cancelled the request')
 
 
-def _wsp(ws_id: int, readonly: bool) -> dict:
+def _wsp(ws_id: int, readonly: bool, *, backend: str = 'snowflake', login_type: str | None = None) -> dict:
     """Minimal SAPI workspace item (shape per the config-scoped workspaces payload)."""
-    return {
-        'id': ws_id,
-        'connection': {'backend': 'snowflake', 'schema': f'WORKSPACE_{ws_id}'},
-        'readOnlyStorageAccess': readonly,
-    }
+    connection = {'backend': backend, 'schema': f'WORKSPACE_{ws_id}'}
+    if login_type:
+        connection['loginType'] = login_type
+    return {'id': ws_id, 'connection': connection, 'readOnlyStorageAccess': readonly}
 
 
 @pytest.mark.asyncio
@@ -968,6 +974,7 @@ async def test_find_ws_in_branch_matches_mcp_component_readonly():
     """_find_ws_in_branch returns the read-only workspace found under the MCP component's
     configs, skipping non-read-only workspaces — no project-wide list, no branch-metadata read."""
     mock_client = Mock(spec=KeboolaClient)
+    mock_client.has_feature = AsyncMock(return_value=False)
     mock_storage_client = AsyncMock()
     mock_client.storage_client = mock_storage_client
     mock_storage_client.configuration_list.return_value = [{'id': 'cfg-1'}, {'id': 'cfg-2'}]
@@ -995,6 +1002,7 @@ async def test_find_ws_in_branch_matches_mcp_component_readonly():
 @pytest.mark.asyncio
 async def test_find_ws_in_branch_returns_none_when_no_mcp_workspace():
     mock_client = Mock(spec=KeboolaClient)
+    mock_client.has_feature = AsyncMock(return_value=False)
     mock_storage_client = AsyncMock()
     mock_client.storage_client = mock_storage_client
     mock_storage_client.configuration_list.return_value = [{'id': 'cfg-1'}]
@@ -1002,3 +1010,96 @@ async def test_find_ws_in_branch_returns_none_when_no_mcp_workspace():
 
     manager = WorkspaceManager(mock_client)
     assert await manager._find_ws_in_branch() is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('backend', 'rls_feature', 'expected_login_type'),
+    [
+        ('snowflake', False, 'snowflake-person-sso'),
+        # A project with the RLS feature gets a governed workspace on Snowflake, so Query Service enforces the policies.
+        ('snowflake', True, GOVERNED_LOGIN_TYPE),
+        # BigQuery is not governed yet: the login type is unchanged with or without the feature.
+        ('bigquery', False, 'default'),
+        ('bigquery', True, 'default'),
+    ],
+    ids=['snowflake', 'snowflake_rls', 'bigquery', 'bigquery_rls'],
+)
+async def test_create_ws_login_type_follows_the_rls_feature(backend: str, rls_feature: bool, expected_login_type: str):
+    mock_client = Mock(spec=KeboolaClient)
+    mock_client.branch_id = None
+    mock_client.has_feature = AsyncMock(return_value=rls_feature)
+    mock_storage_client = AsyncMock()
+    mock_client.storage_client = mock_storage_client
+    mock_client.writable_storage_client = mock_storage_client
+    mock_storage_client.verify_token.return_value = {'owner': {'defaultBackend': backend}}
+    mock_storage_client.configuration_create.return_value = {'id': 'cfg-1', 'name': 'test'}
+    mock_storage_client.workspace_create_for_config.return_value = {'id': 999}
+    mock_storage_client.job_detail.return_value = {'status': 'error'}  # stop right after the create call
+
+    await WorkspaceManager(mock_client)._create_ws()
+
+    if backend == 'snowflake':
+        mock_client.has_feature.assert_awaited_with(RLS_FEATURE)
+    assert mock_storage_client.workspace_create_for_config.await_args.kwargs['login_type'] == expected_login_type
+
+
+@pytest.mark.asyncio
+async def test_create_ws_refused_governed_login_type_is_not_retried_as_an_ordinary_workspace():
+    """A stack whose Connection refuses the governed login type fails the create: there is no fallback."""
+    mock_client = Mock(spec=KeboolaClient)
+    mock_client.branch_id = None
+    mock_client.has_feature = AsyncMock(return_value=True)
+    mock_storage_client = AsyncMock()
+    mock_client.storage_client = mock_storage_client
+    mock_client.writable_storage_client = mock_storage_client
+    mock_storage_client.verify_token.return_value = {'owner': {'defaultBackend': 'snowflake'}}
+    mock_storage_client.configuration_create.return_value = {'id': 'cfg-1', 'name': 'test'}
+    mock_storage_client.workspace_create_for_config.side_effect = RuntimeError('loginType: not a valid choice')
+
+    with pytest.raises(RuntimeError, match='loginType'):
+        await WorkspaceManager(mock_client)._create_ws()
+
+    mock_storage_client.workspace_create_for_config.assert_awaited_once()
+    assert mock_storage_client.workspace_create_for_config.await_args.kwargs['login_type'] == GOVERNED_LOGIN_TYPE
+    mock_storage_client.configuration_delete.assert_awaited_once()  # the config of the failed create is removed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('rls_feature', 'existing', 'expected_id'),
+    [
+        # no feature: any read-only workspace of the MCP component is reused, as before
+        (False, [_wsp(2, True)], 2),
+        (False, [_wsp(2, True, login_type=GOVERNED_LOGIN_TYPE)], 2),
+        # the feature is on: an old ordinary Snowflake workspace is skipped so that a governed one is created ...
+        (True, [_wsp(2, True), _wsp(3, True, login_type='snowflake-person-sso')], None),
+        # ... a governed one is reused, wherever it is in the list
+        (True, [_wsp(2, True), _wsp(3, True, login_type=GOVERNED_LOGIN_TYPE)], 3),
+        # a governed workspace that is not read-only is not an MCP workspace
+        (True, [_wsp(2, False, login_type=GOVERNED_LOGIN_TYPE)], None),
+        # BigQuery has no governed type yet, so an ordinary one stays usable
+        (True, [_wsp(2, True, backend='bigquery', login_type='default')], 2),
+    ],
+    ids=[
+        'no_feature',
+        'no_feature_governed',
+        'feature_ordinary',
+        'feature_governed',
+        'feature_not_readonly',
+        'bigquery',
+    ],
+)
+async def test_find_ws_in_branch_requires_a_governed_workspace_with_the_rls_feature(
+    rls_feature: bool, existing: list[dict], expected_id: int | None
+):
+    mock_client = Mock(spec=KeboolaClient)
+    mock_client.has_feature = AsyncMock(return_value=rls_feature)
+    mock_storage_client = AsyncMock()
+    mock_client.storage_client = mock_storage_client
+    mock_storage_client.configuration_list.return_value = [{'id': 'cfg-1'}]
+    mock_storage_client.workspace_list_for_config.return_value = existing
+
+    info = await WorkspaceManager(mock_client)._find_ws_in_branch()
+
+    assert (info.id if info else None) == expected_id

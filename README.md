@@ -127,6 +127,42 @@ Claude Code / Claude Agent SDK clients that register the server with `alwaysLoad
 
 For detailed documentation, see [developers.keboola.com/integrate/mcp/#tool-authorization-and-access-control](https://developers.keboola.com/integrate/mcp/#tool-authorization-and-access-control).
 
+### Row-Level and Column-Level Security
+
+Row- and column-level policies are Keboola Metastore objects (`rls-policy`, `cls-policy`), authored with
+`kbagent rls` / `kbagent cls`. This server neither reads nor applies them. In a project that has the
+`row-level-security` feature it creates its workspace (the `mcp-workspace-<hex>` configuration of the
+`keboola.mcp-server-tool` component) with the Connection login type `governed`. A governed workspace has no
+credentials: only the Query Service can read it, and the Query Service filters every `query_data` result by the
+policies of the project. There is no rewriting in this server and no fallback: what the Query Service refuses,
+`query_data` returns as an error.
+
+- **What turns it on.** The project feature is checked by this server only; Connection needs no feature or role to
+  create a governed workspace (Snowflake, no public key). The stack's Connection must accept the login type
+  `governed`: a stack that does not refuses the create, and then every tool that needs the workspace fails (there is
+  no fallback to an ordinary workspace). BigQuery projects keep an ordinary, unfiltered workspace. An older ordinary
+  MCP workspace is not deleted: it is skipped as soon as the feature is on, and `workspace_schema` or an
+  `X-Workspace-Id` pin can still select it.
+- **Deny by default.** The Query Service refuses a table of a governed workspace that no `rls-policy` applies to (a
+  `"*"` rule opens a table to every identified reader); a `cls-policy` alone grants no rows. A statement that reads
+  no table (`SELECT 1`) runs. A refusal reaches the agent as `Row-level security does not allow this query`.
+- **Who is the reader.** The Query Service resolves the user from the programmatic token this server forwards
+  (`kbc_at_` / `kbc_pat_`, sent with `X-KBC-ProjectId`). A session that has only a legacy Storage token, or that
+  this server cannot map to a user (for example Kai), has no verified identity and reads nothing from a governed
+  table. Group rules never match (an OAuth login carries no groups).
+- **Bindings.** Without a binding a workspace gets every policy of the project, and this server never creates one.
+  To give a workspace only some policies, bind them to its KID: `KID:<stack id>:project-<project id>:workspace-<workspace id>`
+  (a workspace of the default branch; a branch workspace also has `branch-<branch id>` before `project`). The stack
+  id is the one the Query Service is configured with (`QUERY_RLS_STACK_ID`, for example `dev-keboola-aws-eu-west-1`),
+  the workspace id is in the `get_project_info` output, and
+  `kbagent rls bind --project P --workspace-id WS --rls-policy ID --stack-id S` writes the binding. A binding only
+  narrows, applies to the next query, and does not follow the session to another workspace: a branch session, or a
+  workspace that is recreated, has a new KID and starts again with every policy.
+- **Limits.** The workspace id of the server's workspace is also what a data app gets as `WORKSPACE_ID` when no
+  separate workspace is provisioned for it; the app queries with its own token, has no verified identity, and reads
+  nothing from governed tables. The metadata tools (`get_tables`, `get_buckets`, `search`) are not filtered by the
+  policies: they can list tables that a governed workspace refuses to read.
+
 ---
 
 ## Local MCP Server Setup (Custom or Dev Way)
