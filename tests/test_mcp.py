@@ -826,7 +826,8 @@ class TestToolsFilteringMiddleware:
                 True,
                 'read-only operations',
             ),
-            # branch axis: branch-only tools deny on main with the branch-agnostic message, any-session tools pass
+            # branch axis: only create_merge_request is branch-only (denied on main with the branch-agnostic
+            # message); merge / request-review / conflicts / resolve run from production with an explicit id
             (
                 'create_merge_request',
                 False,

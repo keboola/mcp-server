@@ -32,8 +32,13 @@ def _conflict(cid: str = 'cfg-1') -> ConflictRef:
 
 ON_BRANCH_WRITER = SessionContext(on_mr_branch=True, can_write=True)
 ON_BRANCH_READER = SessionContext(on_mr_branch=True, can_write=False)
-PRODUCTION_WRITER = SessionContext(on_mr_branch=False, can_write=True)
+PRODUCTION_WRITER = SessionContext(on_mr_branch=False, can_write=True, on_production=True)
+PRODUCTION_READER = SessionContext(on_mr_branch=False, can_write=False, on_production=True)
+OTHER_BRANCH_WRITER = SessionContext(on_mr_branch=False, can_write=True)  # a chat on a different dev branch
 UNKNOWN_VIEWER = Viewer(is_creator=None, has_approved=None)
+BRANCH_URL = 'https://connection.test/admin/projects/1/branch/55/development-overview'
+PROJECT_URL = 'https://connection.test/admin/projects/1/'
+NAVIGATION = {'merge_request_id': 42, 'branch_url': BRANCH_URL, 'project_url': PROJECT_URL}
 
 
 @pytest.mark.parametrize(
@@ -156,8 +161,22 @@ def test_derive_viewer(mr: dict[str, Any], admin_id: Any, expected: Viewer) -> N
         pytest.param(
             1,
             {'state': 'published', 'derived_state': 'merged', 'allowed_actions': [], 'merge_blockers': ['state']},
-            'source branch is being deleted',
-            id='1_merged',
+            "branch 'reporting' is being deleted. This chat is pinned to that branch: it can still answer questions "
+            f'about production but cannot make changes. Tell the user to continue in production ({PROJECT_URL}); '
+            'include the link.',
+            id='1_merged_from_the_branch_chat',
+        ),
+        pytest.param(
+            1,
+            {
+                'state': 'published',
+                'derived_state': 'merged',
+                'allowed_actions': [],
+                'merge_blockers': ['state'],
+                'session': PRODUCTION_WRITER,
+            },
+            "branch 'reporting' is being deleted; nothing more to do on it.",
+            id='1b_merged_seen_from_production',
         ),
         pytest.param(
             2, {'state': 'canceled', 'derived_state': 'closed', 'merge_blockers': ['state']}, 'closed', id='2_closed'
@@ -186,8 +205,25 @@ def test_derive_viewer(mr: dict[str, Any], admin_id: Any, expected: Viewer) -> N
         pytest.param(
             5,
             {'merge_blockers': ['conflicts'], 'conflicts': [_conflict()], 'session': PRODUCTION_WRITER},
-            "session on branch 'reporting'",
-            id='5_conflicts_handoff_from_production',
+            '1 conflict block the merge; call get_merge_request_conflicts(merge_request_id=42) and resolve them one '
+            "by one with resolve_merge_request_conflict (the resolutions are written to branch 'reporting').",
+            id='5_conflicts_from_production_act_by_id',
+        ),
+        pytest.param(
+            5,
+            {'merge_blockers': ['conflicts'], 'conflicts': [_conflict()], 'session': OTHER_BRANCH_WRITER},
+            f"1 conflict block the merge; they must be handled from a chat on branch 'reporting' ({BRANCH_URL}) or "
+            'from a production chat, calling get_merge_request_conflicts(merge_request_id=42) there. Tell the user, '
+            'including the link.',
+            id='5c_conflicts_from_another_branch_hand_off_with_link',
+        ),
+        pytest.param(
+            6,
+            {'merge_blockers': ['conflicts'], 'conflicts': [_conflict()], 'last_refusal': 'conflicts'},
+            'with resolve_merge_request_conflict. Note: the refused merge left the merge request approved, which '
+            'makes this branch read-only in the Keboola UI; if Kai becomes unavailable on it, continue from a '
+            'production chat with merge_request_id=42',
+            id='6d_refused_merge_on_branch_warns_about_the_ui_read_only_branch',
         ),
         pytest.param(
             6,
@@ -268,8 +304,8 @@ def test_derive_viewer(mr: dict[str, Any], admin_id: Any, expected: Viewer) -> N
         pytest.param(
             5,
             {'last_refusal': 'conflicts', 'session': PRODUCTION_WRITER},
-            "session on branch 'reporting'",
-            id='5b_conflict_refusal_without_a_list_hands_off',
+            'The merge was refused because of conflicts; call get_merge_request_conflicts(merge_request_id=42)',
+            id='5b_conflict_refusal_without_a_list_from_production',
         ),
         pytest.param(
             12,
@@ -280,10 +316,31 @@ def test_derive_viewer(mr: dict[str, Any], admin_id: Any, expected: Viewer) -> N
         pytest.param(
             13,
             {'session': PRODUCTION_WRITER},
-            "open a session on branch 'reporting' and call merge_merge_request",
-            id='13_merge_handoff_from_production',
+            'Ready to merge; merge it from here with merge_merge_request(merge_request_id=42) (irreversible; branch '
+            "'reporting' is deleted afterwards).",
+            id='13_merge_from_production_by_id',
         ),
+        pytest.param(
+            13,
+            {'session': OTHER_BRANCH_WRITER},
+            f"Ready to merge; tell the user to open Kai on branch 'reporting' ({BRANCH_URL}) or in production and "
+            'merge it there with merge_merge_request(merge_request_id=42). Include the link.',
+            id='13b_merge_from_another_branch_hands_off_with_link',
+        ),
+        pytest.param(13, {'session': PRODUCTION_READER}, 'read-only', id='13c_production_reader_gets_no_merge'),
         pytest.param(14, {}, 'merge it with merge_merge_request (irreversible', id='14_merge_from_development'),
+        pytest.param(
+            14,
+            {
+                'state': 'approved',
+                'derived_state': 'approved',
+                'allowed_actions': ['request_changes', 'merge', 'update', 'resolve_conflicts'],
+            },
+            'the source branch is deleted afterwards). Note: the merge request is approved, which makes this branch '
+            'read-only in the Keboola UI; if Kai becomes unavailable on it, continue from a production chat with '
+            'merge_request_id=42',
+            id='14b_approved_on_branch_warns_about_the_ui_read_only_branch',
+        ),
         pytest.param(15, {'session': ON_BRANCH_READER}, 'read-only', id='15_reader_fallback'),
     ],
 )
@@ -298,6 +355,7 @@ def test_next_step_rows(row: int, kwargs: dict[str, Any], expected_fragment: str
         'pending': [],
         'session': ON_BRANCH_WRITER,
         'branch_from_name': 'reporting',
+        **NAVIGATION,
     }
     assert expected_fragment in build_next_step(**{**defaults, **kwargs})
 
@@ -386,6 +444,7 @@ def test_next_step_rules(kwargs: dict[str, Any], expected_fragment: str, reason:
         'pending': [],
         'session': ON_BRANCH_WRITER,
         'branch_from_name': 'reporting',
+        **NAVIGATION,
     }
     assert expected_fragment in build_next_step(**{**defaults, **kwargs}), reason
 

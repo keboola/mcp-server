@@ -41,14 +41,14 @@ name or description.
 ### Merge Request Tools
 - [approve_merge_request](#approve_merge_request): Approves a merge request as a reviewer.
 - [create_merge_request](#create_merge_request): Creates a merge request for the CURRENT development branch into production.
-- [get_merge_request_conflicts](#get_merge_request_conflicts): Shows what blocks the current branch's merge request from merging: each conflicting configuration with its
-three-way diff and a per-path classification.
+- [get_merge_request_conflicts](#get_merge_request_conflicts): Shows what blocks a merge request from merging: each conflicting configuration with its three-way diff and a
+per-path classification.
 - [get_merge_requests](#get_merge_requests): Lists the project's merge requests, or returns the full detail of the given ones.
-- [merge_merge_request](#merge_merge_request): Merges the current branch's merge request into production and waits for the merge to finish.
+- [merge_merge_request](#merge_merge_request): Merges a merge request into production and waits for the merge to finish.
 - [request_merge_request_changes](#request_merge_request_changes): Sends a merge request back to its author for changes (a reviewer's "reject").
-- [request_merge_request_review](#request_merge_request_review): Sends the current branch's merge request for review (author action).
-- [resolve_merge_request_conflict](#resolve_merge_request_conflict): Resolves ONE conflicting configuration of the current branch's merge request by re-anchoring the branch
-configuration onto the current production version with the chosen content.
+- [request_merge_request_review](#request_merge_request_review): Sends a merge request for review (author action).
+- [resolve_merge_request_conflict](#resolve_merge_request_conflict): Resolves ONE conflicting configuration of a merge request by re-anchoring the branch configuration onto the
+current production version with the chosen content.
 - [update_merge_request](#update_merge_request): Updates a merge request's title, description, reviewers or auto-merge setting.
 
 ### OAuth Tools
@@ -3983,9 +3983,9 @@ follow `next_step`.
 
 Creates a merge request for the CURRENT development branch into production.
 
-Available only from a development-branch session; on production, tell the user to open a session on the
-merge request's source branch and ask again there. The source branch is the session branch and the target
-is production — there are no branch parameters. A branch can have only one open merge request.
+Available only from a development-branch chat: the source branch is the chat's branch and the target is
+production — there are no branch parameters. On production, tell the user to open Kai on the development
+branch and ask again there. A branch can have only one open merge request.
 
 On a project with the default of 0 required approvals the happy path is two calls:
 create_merge_request → merge_merge_request (no review step). Returns the merge request with its status;
@@ -4060,16 +4060,17 @@ follow `next_step`.
 
 **Description**:
 
-Shows what blocks the current branch's merge request from merging: each conflicting configuration with its
-three-way diff and a per-path classification.
+Shows what blocks a merge request from merging: each conflicting configuration with its three-way diff and a
+per-path classification.
 
-Available only from a development-branch session; on production, tell the user to open a session on the
-merge request's source branch and ask again there. A configuration conflicts when it changed both on the
-branch and in production since the branch was created. For each one you get `base` / `ours` (branch) /
-`theirs` (production), `changes` (each path tagged `changed_by` ours|theirs|both), `conflicting_paths`
-(both sides changed differently — the actual conflict) and `suggested_take` when one side is a safe pick.
-Walk the user through them one by one and resolve each with resolve_merge_request_conflict. Follow
-`status.next_step`.
+From a development-branch chat it works on that branch's merge request (merge_request_id optional); from a
+production chat pass merge_request_id (use this route when Kai is unavailable on the branch because its merge
+request is in review or approved). A chat on another development branch cannot use it. A configuration
+conflicts when it changed both on the branch and in production since the branch was created. For each one you
+get `base` / `ours` (branch) / `theirs` (production), `changes` (each path tagged `changed_by`
+ours|theirs|both), `conflicting_paths` (both sides changed differently — the actual conflict) and
+`suggested_take` when one side is a safe pick. Walk the user through them one by one and resolve each with
+resolve_merge_request_conflict. Follow `status.next_step`.
 
 
 **Input JSON Schema**:
@@ -4182,19 +4183,22 @@ Usage:
 
 **Description**:
 
-Merges the current branch's merge request into production and waits for the merge to finish.
+Merges a merge request into production and waits for the merge to finish.
 
-Available only from a development-branch session; on production, tell the user to open a session on the
-merge request's source branch and ask again there. IRREVERSIBLE: on success the changes are in production
-and the source branch (with everything else on it: buckets, tables, workspaces) is deleted by a background
-job — confirm with the user first. Works directly from `development` when the project requires no
-approvals. The call waits for the merge job and can block for up to 10 minutes; if it returns
-`state='in_merge'` the merge is still running — check again with get_merge_requests, never merge again.
+From a development-branch chat it merges that branch's merge request (merge_request_id optional); from a
+production chat pass merge_request_id (use this route when Kai is unavailable on the branch because its merge
+request is in review or approved). A chat on another development branch cannot merge it. IRREVERSIBLE: on
+success the changes are in production and the source branch (with everything else on it: buckets, tables,
+workspaces) is deleted by a background job — confirm with the user first. Works directly from `development`
+when the project requires no approvals. The call waits for the merge job and can block for up to 10 minutes;
+if it returns `state='in_merge'` the merge is still running — check again with get_merge_requests, never
+merge again.
 
 When the backend refuses, nothing changes and the result explains why: `refusal='conflicts'` lists the
 conflicting configurations (resolve them with get_merge_request_conflicts / resolve_merge_request_conflict,
 then merge again); `refusal='not_ready'` means missing approvals, a merge lock or a wrong state. After a
-success the session's branch is gone: follow `next_step` and tell the user to open a production session.
+success from the branch's own chat that chat is pinned to a deleted branch: follow `next_step` and give the
+user the production link.
 
 
 **Input JSON Schema**:
@@ -4285,10 +4289,10 @@ status; follow `next_step`.
 
 **Description**:
 
-Sends the current branch's merge request for review (author action).
+Sends a merge request for review (author action).
 
-Available only from a development-branch session; on production, tell the user to open a session on the
-merge request's source branch and ask again there. Rarely needed: merge_merge_request already skips the
+From a development-branch chat it works on that branch's merge request (merge_request_id optional); from a
+production chat pass merge_request_id. Rarely needed: merge_merge_request already skips the
 review when the project requires no approvals, so call this only when a merge was refused as "not ready"
 or when the project requires approvals. The merge request moves to `in_review` (or straight to `approved`
 when 0 approvals are required). Returns the merge request with its status; follow `next_step`.
@@ -4325,11 +4329,12 @@ when 0 approvals are required). Returns the merge request with its status; follo
 
 **Description**:
 
-Resolves ONE conflicting configuration of the current branch's merge request by re-anchoring the branch
-configuration onto the current production version with the chosen content.
+Resolves ONE conflicting configuration of a merge request by re-anchoring the branch configuration onto the
+current production version with the chosen content.
 
-Available only from a development-branch session; on production, tell the user to open a session on the
-merge request's source branch and ask again there. Call get_merge_request_conflicts first, then for each
+From a development-branch chat it works on that branch's merge request (merge_request_id optional); from a
+production chat pass merge_request_id — the resolution is written to the merge request's source branch. A chat
+on another development branch cannot use it. Call get_merge_request_conflicts first, then for each
 conflict have the user choose: `take='ours'` / `'theirs'` / `'delete'`, or pass `resolved` with the
 hand-merged content. Taking one side discards the other side's changes and the rebase REPLACES the branch
 version (with 'delete' it deletes the configuration) — say so. The configuration must be in the merge

@@ -35,6 +35,7 @@ from keboola_mcp_server.tools.components.tools import COMPONENT_TOOLS_TAG
 from keboola_mcp_server.tools.constants import (
     CONFIG_DIFF_PREVIEW_TAG,
     MERGE_REQUEST_BRANCH_ONLY_TOOLS,
+    MERGE_REQUEST_SESSION_BOUND_TOOLS,
     MERGE_REQUEST_TOOL_NAMES,
     MERGE_REQUEST_TOOLS_TAG,
 )
@@ -134,11 +135,13 @@ class TestServer:
         tagged = {t.name for t in tools if MERGE_REQUEST_TOOLS_TAG in (t.tags or set())}
 
         assert tagged == MERGE_REQUEST_TOOL_NAMES
-        assert MERGE_REQUEST_BRANCH_ONLY_TOOLS < MERGE_REQUEST_TOOL_NAMES
+        assert MERGE_REQUEST_BRANCH_ONLY_TOOLS < MERGE_REQUEST_SESSION_BOUND_TOOLS < MERGE_REQUEST_TOOL_NAMES
         for tool in tools:
             if tool.name in MERGE_REQUEST_BRANCH_ONLY_TOOLS:
-                assert 'development-branch session' in (tool.description or ''), tool.name
-                # Bound to the session branch: a cross-project target can never carry a branch, so no project_id.
+                assert 'development-branch chat' in (tool.description or ''), tool.name
+            if tool.name in MERGE_REQUEST_SESSION_BOUND_TOOLS:
+                # Bound to the session's branch context: a cross-project target can never carry a branch, so no
+                # project_id (the multi-project middleware targets the active project with them).
                 assert 'project_id' not in (tool.parameters.get('properties') or {}), tool.name
 
     @pytest.mark.asyncio

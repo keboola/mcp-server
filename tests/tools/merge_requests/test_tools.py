@@ -6,7 +6,7 @@ import pytest
 from fastmcp import Context
 from fastmcp.exceptions import ToolError
 
-from keboola_mcp_server.clients.client import KeboolaClient
+from keboola_mcp_server.clients.client import BranchNotFoundError, KeboolaClient
 from keboola_mcp_server.mcp import TOKEN_INFO_VAR
 from keboola_mcp_server.tools.merge_requests import tools as mr_tools
 from keboola_mcp_server.tools.merge_requests.models import (
@@ -289,16 +289,37 @@ async def test_next_step_never_recommends_a_write_the_session_cannot_do(
 
 
 @pytest.mark.asyncio
-async def test_detail_on_production_session_hands_off_by_branch_name(
-    mcp_context_client: Context, storage: AsyncMock, keboola_client: KeboolaClient
+@pytest.mark.parametrize(
+    ('session_branch', 'expected_fragment'),
+    [
+        pytest.param(
+            None,
+            "merge it from here with merge_merge_request(merge_request_id=42) (irreversible; branch 'reporting' is "
+            'deleted afterwards)',
+            id='production_merges_by_id',
+        ),
+        pytest.param(
+            '77',
+            f"open Kai on branch 'reporting' ({MR_UI_URL}) or in production and merge it there with "
+            'merge_merge_request(merge_request_id=42). Include the link.',
+            id='other_branch_hands_off_with_link',
+        ),
+    ],
+)
+async def test_detail_off_the_mr_branch_points_to_the_merge_route(
+    mcp_context_client: Context,
+    storage: AsyncMock,
+    keboola_client: KeboolaClient,
+    session_branch: str | None,
+    expected_fragment: str,
 ) -> None:
-    keboola_client.branch_id = None
+    keboola_client.branch_id = session_branch
     storage.merge_request_detail.return_value = _mr_raw('approved')
 
     result = await get_merge_requests(mcp_context_client, merge_request_ids=[42])
 
     assert isinstance(result, MergeRequestsDetailOutput)
-    assert "open a session on branch 'reporting'" in result.merge_requests[0].status.next_step
+    assert expected_fragment in result.merge_requests[0].status.next_step
 
 
 # ---- create -----------------------------------------------------------------------------------------------
@@ -334,7 +355,7 @@ async def test_create_merge_request_from_session_branch(mcp_context_client: Cont
 @pytest.mark.parametrize(
     ('branch_id', 'kwargs', 'expected_fragment'),
     [
-        pytest.param(None, {}, 'development-branch session', id='production_session'),
+        pytest.param(None, {}, 'development-branch chat', id='production_session'),
         pytest.param(
             str(DEV_BRANCH_ID), {'auto_merge': 'scheduled'}, 'requires auto_merge_at', id='scheduled_without_time'
         ),
@@ -490,16 +511,30 @@ async def test_approve_and_request_changes_pass_through(mcp_context_client: Cont
 # ---- MR-id convention (branch-only tools) ------------------------------------------------------------------
 
 
+_DEV = str(DEV_BRANCH_ID)
+_OTHER_BRANCH_URL = 'https://connection.test.keboola.com/admin/projects/123/branch/77/development-overview'
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ('merge_request_id', 'listed', 'detail', 'expected_error', 'expected_acted_on'),
+    ('session_branch', 'merge_request_id', 'listed', 'detail', 'expected_error', 'expected_acted_on'),
     [
-        pytest.param(None, [_mr_raw(mr_id=42)], None, None, 42, id='omitted_resolves_branch_mr'),
-        pytest.param(42, None, _mr_raw(mr_id=42), None, 42, id='given_and_matching'),
+        # --- a development-branch session: its own MR, implicitly or by id; never another branch's
+        pytest.param(_DEV, None, [_mr_raw(mr_id=42)], None, None, 42, id='omitted_resolves_branch_mr'),
+        pytest.param(_DEV, 42, None, _mr_raw(mr_id=42), None, 42, id='given_and_matching'),
         pytest.param(
-            9, None, _mr_raw(mr_id=9, branch_from=77), "belongs to branch 'other'", None, id='given_other_branch'
+            _DEV,
+            9,
+            None,
+            _mr_raw(mr_id=9, branch_from=77),
+            r"Merge request 9 \('Add reporting'\) belongs to branch 'other' \(id 77\), not to this chat's branch\. "
+            rf'Tell the user to open Kai on that branch \({_OTHER_BRANCH_URL}\) or in production and ask again there '
+            r'with merge_request_id=9; include the link\.',
+            None,
+            id='given_other_branch_hands_off_with_link_and_the_production_route',
         ),
         pytest.param(
+            _DEV,
             None,
             [_mr_raw(mr_id=9, branch_from=77)],
             None,
@@ -508,6 +543,7 @@ async def test_approve_and_request_changes_pass_through(mcp_context_client: Cont
             id='omitted_none_on_branch',
         ),
         pytest.param(
+            _DEV,
             None,
             [_mr_raw('canceled', mr_id=41), _mr_raw('development', mr_id=42)],
             None,
@@ -516,6 +552,7 @@ async def test_approve_and_request_changes_pass_through(mcp_context_client: Cont
             id='omitted_skips_canceled_mr_on_the_branch',
         ),
         pytest.param(
+            _DEV,
             None,
             [_mr_raw('canceled', mr_id=41)],
             None,
@@ -524,6 +561,7 @@ async def test_approve_and_request_changes_pass_through(mcp_context_client: Cont
             id='omitted_only_canceled_is_none',
         ),
         pytest.param(
+            _DEV,
             43,
             None,
             _mr_raw('published', mr_id=43, branch_from=None),
@@ -531,17 +569,60 @@ async def test_approve_and_request_changes_pass_through(mcp_context_client: Cont
             None,
             id='given_published_says_merged_not_branch_none',
         ),
+        # --- a production session: any MR by id; without an id the candidates are listed, never auto-picked
+        pytest.param(None, 9, None, _mr_raw(mr_id=9, branch_from=77), None, 9, id='production_given_any_branch'),
+        pytest.param(
+            None,
+            None,
+            [_mr_raw(mr_id=42), _mr_raw('approved', mr_id=9, branch_from=77), _mr_raw('canceled', mr_id=3)],
+            None,
+            r"This chat is on the production branch: pass merge_request_id\. Open merge requests: 42 'Add reporting' "
+            r"\(branch 'reporting', in_development\); 9 'Add reporting' \(branch 'other', approved\)\. If the request "
+            r'matches more than one, ask the user which one \(by title or branch\); never guess\.',
+            None,
+            id='production_omitted_lists_open_mrs_newest_first_without_terminal_ones',
+        ),
+        pytest.param(
+            None,
+            None,
+            [_mr_raw(mr_id=42)],
+            None,
+            "pass merge_request_id. Open merge requests: 42 'Add reporting'",
+            None,
+            id='production_omitted_never_auto_picks_even_a_single_candidate',
+        ),
+        pytest.param(
+            None,
+            None,
+            [_mr_raw('canceled', mr_id=3)],
+            None,
+            'production branch and the project has no open merge request',
+            None,
+            id='production_omitted_without_candidates',
+        ),
+        pytest.param(
+            None,
+            43,
+            None,
+            _mr_raw('published', mr_id=43, branch_from=None),
+            'already merged .*nothing to do',
+            None,
+            id='production_given_published',
+        ),
     ],
 )
 async def test_mr_id_convention(
     mcp_context_client: Context,
     storage: AsyncMock,
+    keboola_client: KeboolaClient,
+    session_branch: str | None,
     merge_request_id: int | None,
     listed: list[dict] | None,
     detail: dict | None,
     expected_error: str | None,
     expected_acted_on: int | None,
 ) -> None:
+    keboola_client.branch_id = session_branch
     if listed is not None:
         storage.merge_requests_list.return_value = listed
     if detail is not None:
@@ -583,22 +664,26 @@ async def test_omitted_id_in_the_deletion_window_hands_off_to_production(
     """Right after a merge the branch is still listed while its MR is already published: no 'create one' advice."""
     storage.merge_requests_list.return_value = [_mr_raw('published')]
 
-    with pytest.raises(ToolError, match='already merged.*production branch'):
+    with pytest.raises(
+        ToolError,
+        match=r'already merged.*continue in production \(https://connection.test.keboola.com/admin/projects/123/\)',
+    ):
         await request_merge_request_review(mcp_context_client)
 
     storage.merge_request_request_review.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_branch_only_tool_on_production_is_refused(
+async def test_merge_on_production_without_id_lists_candidates_and_never_merges(
     mcp_context_client: Context, storage: AsyncMock, keboola_client: KeboolaClient
 ) -> None:
     keboola_client.branch_id = None
 
-    with pytest.raises(ToolError, match='development-branch session'):
+    with pytest.raises(ToolError, match="pass merge_request_id. Open merge requests: 42 'Add reporting'"):
         await merge_merge_request(mcp_context_client)
 
     storage.merge_request_merge.assert_not_called()
+    storage.merge_request_detail.assert_not_called()
 
 
 # ---- merge ------------------------------------------------------------------------------------------------
@@ -804,7 +889,7 @@ async def test_merge_lost_response_after_the_merge_finished_reports_the_merge(
     assert result.job_id is None
     assert result.source_branch_deleting is True
     assert 'The merge call failed (ReadTimeout: timed out)' in result.warnings[0]
-    assert 'source branch is being deleted' in result.next_step
+    assert "branch 'reporting' is being deleted" in result.next_step
     assert storage.merge_request_merge.await_count == 1
 
 
@@ -875,7 +960,12 @@ async def test_merge_success_awaits_job_and_hands_off(
     assert result.job_id == '987'
     assert result.source_branch_deleting is True
     assert result.refusal is None and result.status is None
-    assert 'source branch is being deleted' in result.next_step and 'production' in result.next_step
+    assert (
+        "branch 'reporting' is being deleted. This chat is pinned to that branch: it can still answer questions about "
+        'production but cannot make changes. Tell the user to continue in production '
+        '(https://connection.test.keboola.com/admin/projects/123/); include the link.'
+    ) in result.next_step
+    assert [link.url for link in result.links] == ['https://connection.test.keboola.com/admin/projects/123/']
     assert storage.job_detail.await_count == 2
     # branchFromId is read from the MR BEFORE the merge is issued
     assert storage.method_calls.index(call.merge_request_detail(42)) < storage.method_calls.index(
@@ -997,7 +1087,26 @@ async def test_merge_timeout_is_not_a_failure(mcp_context_client: Context, stora
 
 
 @pytest.mark.asyncio
-async def test_get_merge_request_conflicts_fans_out(mcp_context_client: Context, storage: AsyncMock) -> None:
+@pytest.mark.parametrize(
+    ('session_branch', 'expected_fragment'),
+    [
+        pytest.param(_DEV, '2 conflicts block the merge; call get_merge_request_conflicts and resolve', id='on_branch'),
+        pytest.param(
+            None,
+            '2 conflicts block the merge; call get_merge_request_conflicts(merge_request_id=42) and resolve them one '
+            "by one with resolve_merge_request_conflict (the resolutions are written to branch 'reporting').",
+            id='from_production_by_id',
+        ),
+    ],
+)
+async def test_get_merge_request_conflicts_fans_out(
+    mcp_context_client: Context,
+    storage: AsyncMock,
+    keboola_client: KeboolaClient,
+    session_branch: str | None,
+    expected_fragment: str,
+) -> None:
+    keboola_client.branch_id = session_branch
     storage.merge_request_conflicts.return_value = [_conflict_raw('cfg-1'), _conflict_raw('cfg-2')]
     storage.configuration_diff.side_effect = [
         _diff(),
@@ -1013,7 +1122,9 @@ async def test_get_merge_request_conflicts_fans_out(mcp_context_client: Context,
     assert first.theirs is not None and first.theirs.version == 9
     assert second.changes[0].path == '/name' and second.suggested_take == 'ours'
     assert result.status.merge_blockers == ['conflicts']
-    assert '2 conflicts block the merge' in result.status.next_step
+    assert expected_fragment in result.status.next_step
+    # /diff is branch-scoped: it goes through a client on the MR's source branch (the session client on that branch)
+    keboola_client.with_branch_id.assert_awaited_once_with(_DEV)
     storage.configuration_diff.assert_has_awaits(
         [call('keboola.ex-db', 'cfg-1'), call('keboola.ex-db', 'cfg-2')], any_order=True
     )
@@ -1126,17 +1237,61 @@ async def test_resolve_conflict_modes(
 
 
 @pytest.mark.asyncio
-async def test_resolve_last_conflict_recommends_merge(mcp_context_client: Context, storage: AsyncMock) -> None:
+@pytest.mark.parametrize(
+    ('session_branch', 'kwargs', 'expected_fragment'),
+    [
+        pytest.param(_DEV, {}, 'Ready: merge it with merge_merge_request', id='on_branch_implicit_mr'),
+        pytest.param(
+            None,
+            {'merge_request_id': 42},
+            'Ready to merge; merge it from here with merge_merge_request(merge_request_id=42)',
+            id='from_production_by_id',
+        ),
+    ],
+)
+async def test_resolve_last_conflict_recommends_merge(
+    mcp_context_client: Context,
+    storage: AsyncMock,
+    keboola_client: KeboolaClient,
+    session_branch: str | None,
+    kwargs: dict[str, Any],
+    expected_fragment: str,
+) -> None:
+    keboola_client.branch_id = session_branch
     storage.merge_request_conflicts.side_effect = [[_conflict_raw('cfg-1')], []]
     storage.configuration_diff.return_value = _diff()
 
     result = await resolve_merge_request_conflict(
-        mcp_context_client, component_id='keboola.ex-db', configuration_id='cfg-1', take='ours'
+        mcp_context_client, component_id='keboola.ex-db', configuration_id='cfg-1', take='ours', **kwargs
     )
 
     assert result.remaining_conflicts == []
     assert result.status.mergeable is True
-    assert 'merge it' in result.status.next_step
+    assert expected_fragment in result.status.next_step
+    # /diff and /rebase are branch-scoped: both go through a client on the MR's source branch
+    keboola_client.with_branch_id.assert_awaited_once_with(_DEV)
+    storage.configuration_rebase.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_resolve_from_production_when_the_branch_is_gone(
+    mcp_context_client: Context, storage: AsyncMock, keboola_client: KeboolaClient
+) -> None:
+    """The MR still lists `branchFromId` (deleted moments ago) but the branch client cannot be built: no rebase."""
+    keboola_client.branch_id = None
+    storage.merge_request_conflicts.return_value = [_conflict_raw('cfg-1')]
+    request = httpx.Request('GET', 'https://connection.test.keboola.com/v2/storage/dev-branches/55')
+    keboola_client.with_branch_id.side_effect = BranchNotFoundError(
+        'Branch "55" not found', branch_id='55', request=request, response=httpx.Response(404, request=request)
+    )
+
+    with pytest.raises(ToolError, match="Branch 'reporting' \\(id 55\\) of merge request 42 no longer exists"):
+        await resolve_merge_request_conflict(
+            mcp_context_client, component_id='keboola.ex-db', configuration_id='cfg-1', take='ours', merge_request_id=42
+        )
+
+    storage.configuration_diff.assert_not_called()
+    storage.configuration_rebase.assert_not_called()
 
 
 @pytest.mark.asyncio
