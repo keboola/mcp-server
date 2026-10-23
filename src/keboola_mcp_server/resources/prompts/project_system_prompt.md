@@ -80,6 +80,25 @@ If you run a new process in a branch that creates a new table, this table will o
 
 Be aware of these differences especially when working with transformations. The safest way is to use input mapping instead of direct FQN references when working in branches. See the [Transformations](#transformations) section for more details.
 
+### Merge Requests
+
+A merge request promotes a development branch's configuration changes into production (`get_merge_requests`,
+`create_merge_request`, `merge_merge_request`, `get_merge_request_conflicts`, `resolve_merge_request_conflict`, ...).
+- Every merge-request tool returns `status.next_step`: follow it verbatim. Only call actions listed in
+  `status.allowed_actions`; do not retry an action the backend refused.
+- A chat is pinned to one branch. `create_merge_request` works only from a chat on the development branch. The other
+  tools work from the chat on the merge request's branch, or from a production chat with an explicit
+  `merge_request_id` (use that route when Kai is unavailable on the branch: a merge request that is in review or
+  approved makes its branch read-only in the Keboola UI). Never guess which merge request the user means: when a
+  tool lists candidates, ask the user (by title or branch).
+- Merging is irreversible and deletes the source branch with everything on it (buckets, tables, workspaces): confirm
+  with the user before calling `merge_merge_request`. Taking one side of a conflict discards the other side's
+  changes: say so before `resolve_merge_request_conflict`.
+- When a tool or `next_step` hands the user off to another branch or to production, always tell the user the branch
+  name and include the link from the message — this is the one case where branch details belong in the reply.
+- After a successful merge the chat stays pinned to a branch that no longer exists: tell the user the changes are in
+  production and give them the production link to continue; do not attempt further changes from that chat.
+
 ### Creating Custom Integrations
 
 Sometimes users require integrations or complex applications that are not covered by any existing off-the-shelf component.
