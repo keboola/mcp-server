@@ -37,8 +37,8 @@ class TestMcpProxy:
     @pytest.mark.parametrize(
         ('token', 'expected_upstream'),
         [
-            ('eu-aws.opaque', 'https://mcp.eu-central-1.keboola.com/mcp'),
-            ('us-gcp.opaque', 'https://mcp.us-east4.gcp.keboola.com/mcp'),
+            ('kbc-eu-central-1.opaque', 'https://mcp.eu-central-1.keboola.com/mcp'),
+            ('com-keboola-gcp-us-east4.opaque', 'https://mcp.us-east4.gcp.keboola.com/mcp'),
         ],
     )
     @pytest.mark.parametrize('path', ['/mcp', '/mcp/'])
@@ -77,7 +77,7 @@ class TestMcpProxy:
                 headers={
                     **forwarded_request,
                     'X-Forwarded-For': '203.0.113.5',
-                    'Cookie': 'keboola_mcp_stack=us-aws',
+                    'Cookie': 'keboola_mcp_stack=kbc-us-east-1',
                     'X-Storage-Api-Url': 'https://connection.keboola.com',
                 },
             )
@@ -118,7 +118,7 @@ class TestMcpProxy:
             },
         }
         headers = {
-            'Authorization': 'Bearer us-aws.opaque',
+            'Authorization': 'Bearer kbc-us-east-1.opaque',
             'Accept': 'application/json, text/event-stream',
             'Mcp-Protocol-Version': version,
             'Mcp-Method': 'tools/call',
@@ -134,7 +134,7 @@ class TestMcpProxy:
                 headers=[*headers.items(), ('Mcp-Method', 'tools/list'), ('Accept', 'text/plain')],
             )
             two_tokens = client.post(
-                '/mcp', json=body, headers=[*headers.items(), ('Authorization', 'Bearer eu-aws.other')]
+                '/mcp', json=body, headers=[*headers.items(), ('Authorization', 'Bearer kbc-eu-central-1.other')]
             )
 
         assert two_tokens.status_code == 400
@@ -156,7 +156,7 @@ class TestMcpProxy:
             ('Bearer xx-unknown.opaque', None, _NOT_ISSUED_CHALLENGE),
             # the stack refused the token: the client is sent back to the router's metadata, never the stack's
             (
-                'Bearer eu-aws.revoked',
+                'Bearer kbc-eu-central-1.revoked',
                 httpx.Response(401, headers={'WWW-Authenticate': f'Bearer {_STACK_PRM}'}),
                 f'Bearer error="invalid_token", error_description="The access token is not valid.", {_PRM}',
             ),
@@ -217,7 +217,7 @@ class TestMcpProxy:
             'raw_path': b'/mcp',
             'root_path': '',
             'query_string': b'',
-            'headers': [(b'authorization', b'Bearer eu-aws.opaque'), (b'content-type', b'application/json')],
+            'headers': [(b'authorization', b'Bearer kbc-eu-central-1.opaque'), (b'content-type', b'application/json')],
         }
         await asyncio.wait_for(app(scope, receive, send), timeout=5)
 
@@ -259,7 +259,9 @@ class TestMcpProxy:
 
         upstream = Upstream(httpx.Response(200, headers={'Content-Type': 'text/event-stream'}, content=events()))
         with router_client(upstream) as client:
-            response = client.post('/mcp', json=_INITIALIZE, headers={'Authorization': 'Bearer eu-aws.opaque'})
+            response = client.post(
+                '/mcp', json=_INITIALIZE, headers={'Authorization': 'Bearer kbc-eu-central-1.opaque'}
+            )
 
         assert response.status_code == 200
         assert response.content == first
@@ -312,7 +314,7 @@ class TestMcpProxy:
             'raw_path': b'/mcp',
             'root_path': '',
             'query_string': b'',
-            'headers': [(b'authorization', b'Bearer eu-aws.opaque')],
+            'headers': [(b'authorization', b'Bearer kbc-eu-central-1.opaque')],
         }
         try:
             await asyncio.wait_for(app(scope, receive, send), timeout=5)
@@ -334,9 +336,9 @@ class TestMcpProxy:
     def test_an_upstream_failure_is_a_gateway_error(self, failure: Exception, expected_status: int, path: str) -> None:
         with router_client(Upstream(failure)) as client:
             if path == '/mcp':
-                response = client.post(path, json=_INITIALIZE, headers={'Authorization': 'Bearer us-aws.opaque'})
+                response = client.post(path, json=_INITIALIZE, headers={'Authorization': 'Bearer kbc-us-east-1.opaque'})
             else:
-                response = client.post(path, data={'grant_type': 'refresh_token', 'refresh_token': 'us-aws.rt'})
+                response = client.post(path, data={'grant_type': 'refresh_token', 'refresh_token': 'kbc-us-east-1.rt'})
 
         assert response.status_code == expected_status
         assert response.json()['error'] == 'temporarily_unavailable'
@@ -352,20 +354,20 @@ class TestMcpProxy:
             return client.post(path, json=_INITIALIZE, headers=headers).status_code
 
         with caplog.at_level(logging.WARNING), router_client(upstream, mcp_rate_limit_per_token=2) as client:
-            first = [call(client, path, 'us-aws.first') for path in ('/mcp', '/mcp/', '/mcp')]
-            second = call(client, '/mcp', 'us-aws.second')
+            first = [call(client, path, 'kbc-us-east-1.first') for path in ('/mcp', '/mcp/', '/mcp')]
+            second = call(client, '/mcp', 'kbc-us-east-1.second')
 
         assert first == [200, 200, 429]  # both spellings count as one endpoint
         assert second == 200
         with router_client(Upstream(httpx.Response(200, json={})), now=125.0, mcp_rate_limit_per_token=1) as client:
-            headers = {'Authorization': 'Bearer us-aws.third'}
+            headers = {'Authorization': 'Bearer kbc-us-east-1.third'}
             refused = [client.post('/mcp', json=_INITIALIZE, headers=headers) for _ in range(2)][-1]
         assert refused.status_code == 429
         assert refused.headers['retry-after'] == '55'  # the seconds left in the window (the test clock is at 125 s)
         assert len(upstream.requests) == 3
         logged = '\n'.join(r.getMessage() for r in caplog.records)
         assert 'Rate limit reached: group=credential:/mcp, key=sha256:' in logged
-        assert 'us-aws.first' not in logged
+        assert 'kbc-us-east-1.first' not in logged
 
     @pytest.mark.asyncio
     async def test_a_token_may_hold_only_its_in_flight_slots(self, caplog: pytest.LogCaptureFixture) -> None:
@@ -429,35 +431,38 @@ class TestMcpProxy:
             await asyncio.wait_for(app(scope, receive, send), timeout=5)
             return next(m for m in sent if m['type'] == 'http.response.start')
 
-        stream = asyncio.create_task(call('us-aws.first', 'held'))
+        stream = asyncio.create_task(call('kbc-us-east-1.first', 'held'))
         await asyncio.wait_for(streaming.wait(), timeout=5)
         with caplog.at_level(logging.WARNING):
-            refused = await call('us-aws.first')
-            refused_again = await call('us-aws.first')
-        other = await call('us-aws.second')
+            refused = await call('kbc-us-east-1.first')
+            refused_again = await call('kbc-us-east-1.first')
+        other = await call('kbc-us-east-1.second')
         finish.set()
         streamed = await stream
-        after = await call('us-aws.first')
+        after = await call('kbc-us-east-1.first')
 
-        stalled = asyncio.create_task(call('us-aws.third', upload=False))
+        stalled = asyncio.create_task(call('kbc-us-east-1.third', upload=False))
         await asyncio.wait_for(uploading.wait(), timeout=5)
-        beside_the_upload = await call('us-aws.third')
+        beside_the_upload = await call('kbc-us-east-1.third')
         stalled.cancel()
         with pytest.raises(asyncio.CancelledError):
             await stalled
-        cancelled = asyncio.create_task(call('us-aws.fourth', 'never-answered'))
+        cancelled = asyncio.create_task(call('kbc-us-east-1.fourth', 'never-answered'))
         await asyncio.wait_for(upstream_reached.wait(), timeout=5)
         cancelled.cancel()
         with pytest.raises(asyncio.CancelledError):
             await cancelled
-        after_the_cancel = await call('us-aws.fourth')
+        after_the_cancel = await call('kbc-us-east-1.fourth')
 
         assert refused['status'] == refused_again['status'] == 429
         assert (b'retry-after', b'1') in refused['headers']
         # logged once while the token stays full, by its hash only
         [line] = [r.getMessage() for r in caplog.records if 'Concurrency limit reached' in r.getMessage()]
-        assert line == f'[router] Concurrency limit reached: key=sha256:{credential_key("us-aws.first")[:12]}, limit=1'
-        assert 'us-aws.first' not in '\n'.join(r.getMessage() for r in caplog.records)
+        assert (
+            line
+            == f'[router] Concurrency limit reached: key=sha256:{credential_key("kbc-us-east-1.first")[:12]}, limit=1'
+        )
+        assert 'kbc-us-east-1.first' not in '\n'.join(r.getMessage() for r in caplog.records)
         assert [other['status'], streamed['status'], after['status']] == [200, 200, 200]
         assert [beside_the_upload['status'], after_the_cancel['status']] == [200, 200]
 
@@ -475,7 +480,7 @@ class TestMcpProxy:
     def test_every_way_out_frees_the_in_flight_slot(self, answer: httpx.Response | Exception) -> None:
         with router_client(Upstream(answer), raise_server_exceptions=False, mcp_max_in_flight_per_token=1) as client:
             statuses = [
-                client.post('/mcp', json=_INITIALIZE, headers={'Authorization': 'Bearer us-aws.t'}).status_code
+                client.post('/mcp', json=_INITIALIZE, headers={'Authorization': 'Bearer kbc-us-east-1.t'}).status_code
                 for _ in range(3)
             ]
 
@@ -512,20 +517,25 @@ class TestMcpProxy:
             upstream, api_rate_limit_per_ip=1, mcp_rate_limit_per_token=1, token_rate_limit_per_credential=1
         ) as client:
             if case == 'address_ceiling_ignored':
-                assert [mcp(client, f'us-aws.t{i}') for i in range(3)] == [200, 200, 200]
+                assert [mcp(client, f'kbc-us-east-1.t{i}') for i in range(3)] == [200, 200, 200]
             elif case == 'unknown_prefix_not_counted':
-                assert [mcp(client, 'xx.t'), mcp(client, 'xx.t'), mcp(client, 'us-aws.t'), mcp(client, 'us-aws.t')] == [
+                assert [
+                    mcp(client, 'xx.t'),
+                    mcp(client, 'xx.t'),
+                    mcp(client, 'kbc-us-east-1.t'),
+                    mcp(client, 'kbc-us-east-1.t'),
+                ] == [
                     401,
                     401,
                     200,
                     429,
                 ]
             elif case == 'mcp_past_the_cap_fails_open':
-                mcp(client, 'us-aws.first')
-                assert [mcp(client, 'us-aws.later') for _ in range(3)] == [200, 200, 200]
+                mcp(client, 'kbc-us-east-1.first')
+                assert [mcp(client, 'kbc-us-east-1.later') for _ in range(3)] == [200, 200, 200]
             else:
-                mcp(client, 'us-aws.random')
-                refresh = {'grant_type': 'refresh_token', 'refresh_token': 'us-aws.rt'}
+                mcp(client, 'kbc-us-east-1.random')
+                refresh = {'grant_type': 'refresh_token', 'refresh_token': 'kbc-us-east-1.rt'}
                 assert [client.post('/token', data=refresh, headers=headers).status_code for _ in range(2)] == [
                     200,
                     429,
@@ -551,10 +561,12 @@ class TestMcpProxy:
                 },
             )
             if path == '/token':
-                refresh = {'grant_type': 'refresh_token', 'refresh_token': 'us-aws.rt'}
+                refresh = {'grant_type': 'refresh_token', 'refresh_token': 'kbc-us-east-1.rt'}
                 call = client.post(path, data=refresh, headers=origin)
             else:
-                call = client.post(path, json=_INITIALIZE, headers={**origin, 'Authorization': 'Bearer us-aws.opaque'})
+                call = client.post(
+                    path, json=_INITIALIZE, headers={**origin, 'Authorization': 'Bearer kbc-us-east-1.opaque'}
+                )
 
         assert preflight.status_code == 200
         assert preflight.headers['access-control-allow-origin'] == '*'
@@ -579,7 +591,7 @@ class TestMcpProxy:
         upstream = Upstream(httpx.Response(405, headers={'Allow': 'POST'}))
         with caplog.at_level(logging.INFO), router_client(upstream) as client:
             response = client.request(
-                method, path, headers={'Authorization': 'Bearer us-aws.opaque', 'Mcp-Session-Id': 'sess-1'}
+                method, path, headers={'Authorization': 'Bearer kbc-us-east-1.opaque', 'Mcp-Session-Id': 'sess-1'}
             )
 
         assert response.status_code == 405
@@ -588,4 +600,4 @@ class TestMcpProxy:
         assert sent.method == method
         assert sent.headers['mcp-session-id'] == 'sess-1'
         [line] = [r.getMessage() for r in caplog.records if ' status=' in r.getMessage()]
-        assert line.startswith(f'[router] {method} {path} status=405 stack_key=us-aws duration_ms=')
+        assert line.startswith(f'[router] {method} {path} status=405 stack_key=kbc-us-east-1 duration_ms=')

@@ -2257,7 +2257,7 @@ class TestDirectoryToolProfile:
         if directory_profile is None:
             return None
         token = ProxyAccessToken(
-            token='eu-aws.opaque',
+            token='kbc-eu-central-1.opaque',
             client_id='chatgpt-dcr-id',
             scopes=['claudai', 'projectless'],
             kbc_access_token='kbc_at_x',

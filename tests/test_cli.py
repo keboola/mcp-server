@@ -704,10 +704,10 @@ class TestDirectoryToolProfile:
             mcp_server_url='https://mcp.keboola.com',
             postgres_dsn='postgresql://user:pass@localhost:1/db',
             session_encryption_key=base64.b64encode(b'0' * 32).decode(),
-            stack_key='us-aws',
+            stack_key='kbc-us-east-1',
             router_url='https://mcp-router.example.com',
         )
-        headers = {**STREAMABLE_HTTP_HEADERS, 'Authorization': 'Bearer us-aws.opaque'}
+        headers = {**STREAMABLE_HTTP_HEADERS, 'Authorization': 'Bearer kbc-us-east-1.opaque'}
 
         def rpc(client: TestClient, method: str, params: dict) -> dict:
             response = client.post(

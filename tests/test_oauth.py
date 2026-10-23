@@ -3355,7 +3355,7 @@ class TestRouterFlows:
             scope='scope',
             jwt_secret=JWT_KEY,
             session_store=FakeSessionStore(),
-            stack_key='eu-aws' if router else None,
+            stack_key='kbc-eu-central-1' if router else None,
             router_url=self.ROUTER_URL if router else None,
             resource_binding=resource_binding,
         )
@@ -3436,7 +3436,7 @@ class TestRouterFlows:
         assert response['state'] == ['client-state']
         assert response['iss'] == ([provider._router_issuer] if router_flow else [provider.issuer])
         code = response['code'][0]
-        assert code.startswith('eu-aws.') is router_flow
+        assert code.startswith('kbc-eu-central-1.') is router_flow
 
         token = client.post(
             '/token',
@@ -3452,7 +3452,7 @@ class TestRouterFlows:
         assert token.status_code == 200, token.text
         tokens = token.json()
         for name in ('access_token', 'refresh_token'):
-            assert tokens[name].startswith('eu-aws.') is router_flow
+            assert tokens[name].startswith('kbc-eu-central-1.') is router_flow
         loaded = asyncio.run(provider.load_access_token(tokens['access_token']))
         assert loaded is not None
         assert loaded.resource == resource
@@ -3469,7 +3469,7 @@ class TestRouterFlows:
         )
         assert refreshed.status_code == 200, refreshed.text
         new_tokens = refreshed.json()
-        assert new_tokens['access_token'].startswith('eu-aws.') is router_flow
+        assert new_tokens['access_token'].startswith('kbc-eu-central-1.') is router_flow
         assert asyncio.run(provider.load_access_token(tokens['access_token'])) is None  # rotated
 
         revoked = client.post('/revoke', data={'token': new_tokens['access_token'], 'client_id': 'chatgpt-dcr-id'})
@@ -3502,7 +3502,7 @@ class TestRouterFlows:
             assert response['error'] == ['invalid_target']
         else:
             assert response['iss'] == [provider.issuer]
-            assert not response['code'][0].startswith('eu-aws.')
+            assert not response['code'][0].startswith('kbc-eu-central-1.')
 
     def test_router_tokens_work_at_mcp_only_while_the_router_is_configured(
         self, monkeypatch: pytest.MonkeyPatch
@@ -3518,12 +3518,12 @@ class TestRouterFlows:
                 _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='chatgpt-dcr-id'), code
             )
         )
-        unprefixed = tokens.access_token.removeprefix('eu-aws.')
+        unprefixed = tokens.access_token.removeprefix('kbc-eu-central-1.')
 
         # a router token also reaches its session directly at the regional URL: same session, nothing gained
         assert asyncio.run(provider.load_access_token(unprefixed)) is not None
         # another stack's prefix is not stripped: no such token exists here
-        assert asyncio.run(provider.load_access_token(f'us-aws.{unprefixed}')) is None
+        assert asyncio.run(provider.load_access_token(f'kbc-us-east-1.{unprefixed}')) is None
         provider._router_resource_keys = frozenset()  # the router taken out of this stack's configuration
         assert asyncio.run(provider.load_access_token(tokens.access_token)) is None
 
@@ -3546,7 +3546,11 @@ class TestRouterFlows:
 
     @pytest.mark.parametrize(
         ('stack_key', 'router_url'),
-        [('eu-aws', None), (None, 'https://mcp-router.example.com'), ('eu.aws', 'https://mcp-router.example.com')],
+        [
+            ('kbc-eu-central-1', None),
+            (None, 'https://mcp-router.example.com'),
+            ('eu.aws', 'https://mcp-router.example.com'),
+        ],
     )
     def test_router_settings_come_together(self, stack_key: str | None, router_url: str | None) -> None:
         with pytest.raises(ValueError):
@@ -3591,7 +3595,7 @@ class TestRouterFlows:
         )
         response = parse_qs(urlparse(redirect).query)
         assert response['iss'] == [provider._router_issuer]
-        assert response['code'][0].startswith('eu-aws.')
+        assert response['code'][0].startswith('kbc-eu-central-1.')
 
     def test_a_router_state_finished_without_router_settings_is_refused(
         self, provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
@@ -3668,13 +3672,13 @@ class TestRouterFlows:
     @pytest.mark.parametrize(
         ('minting_stack', 'redeeming_stack', 'expected_status'),
         [
-            ('eu-aws', 'eu-aws', 200),
+            ('kbc-eu-central-1', 'kbc-eu-central-1', 200),
             # signed with the very same jwt_secret, still refused: the claim names another stack
-            ('eu-aws', 'us-aws', 401),
+            ('kbc-eu-central-1', 'kbc-us-east-1', 401),
             # a code minted before the stack had a key
-            (None, 'eu-aws', 401),
+            (None, 'kbc-eu-central-1', 401),
             # a server without a stack key refuses a code that has a claim, and takes its own codes as before
-            ('eu-aws', None, 401),
+            ('kbc-eu-central-1', None, 401),
             (None, None, 200),
         ],
     )
