@@ -1185,7 +1185,12 @@ async def create_config(
 
     WHEN NOT TO USE:
     - `keboola.orchestrator` / `keboola.flow` → use `create_flow` / `create_conditional_flow`
+    <!-- directory:omit -->
     - `keboola.data-apps` → use `modify_python_js_data_app` / `modify_streamlit_data_app` / `deploy_data_app`
+    <!-- /directory:omit -->
+    <!-- directory:only -->
+    - `keboola.data-apps` → use `modify_streamlit_data_app` / `deploy_data_app`
+    <!-- /directory:only -->
     - `keboola.snowflake-transformation` / `keboola.google-bigquery-transformation` → use `create_sql_transformation`
 
     EXAMPLES:
@@ -1335,7 +1340,12 @@ async def add_config_row(
 
     WHEN NOT TO USE:
     - `keboola.orchestrator` / `keboola.flow` → use `create_flow` / `create_conditional_flow`
+    <!-- directory:omit -->
     - `keboola.data-apps` → use `modify_python_js_data_app` / `modify_streamlit_data_app` / `deploy_data_app`
+    <!-- /directory:omit -->
+    <!-- directory:only -->
+    - `keboola.data-apps` → use `modify_streamlit_data_app` / `deploy_data_app`
+    <!-- /directory:only -->
     - `keboola.snowflake-transformation` / `keboola.google-bigquery-transformation` → use `create_sql_transformation`
 
     EXAMPLES:
@@ -1548,7 +1558,12 @@ async def update_config(
 
     WHEN NOT TO USE:
     - `keboola.orchestrator` / `keboola.flow` → use `update_flow`
+    <!-- directory:omit -->
     - `keboola.data-apps` → use `modify_python_js_data_app` / `modify_streamlit_data_app` / `deploy_data_app`
+    <!-- /directory:omit -->
+    <!-- directory:only -->
+    - `keboola.data-apps` → use `modify_streamlit_data_app` / `deploy_data_app`
+    <!-- /directory:only -->
     - `keboola.snowflake-transformation` / `keboola.google-bigquery-transformation` → use `update_sql_transformation`
 
     PREREQUISITES:
@@ -1820,7 +1835,12 @@ async def update_config_row(
 
     WHEN NOT TO USE:
     - `keboola.orchestrator` / `keboola.flow` → use `update_flow`
+    <!-- directory:omit -->
     - `keboola.data-apps` → use `modify_python_js_data_app` / `modify_streamlit_data_app` / `deploy_data_app`
+    <!-- /directory:omit -->
+    <!-- directory:only -->
+    - `keboola.data-apps` → use `modify_streamlit_data_app` / `deploy_data_app`
+    <!-- /directory:only -->
     - `keboola.snowflake-transformation` / `keboola.google-bigquery-transformation` → use `update_sql_transformation`
 
     PREREQUISITES:

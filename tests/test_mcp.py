@@ -2,6 +2,7 @@ import asyncio
 import base64
 import dataclasses
 import functools
+import json
 import logging
 import time
 from datetime import datetime, timedelta, timezone
@@ -23,7 +24,7 @@ from keboola_mcp_server import auth_login
 from keboola_mcp_server.auth_login import TokenSet, save_tokens
 from keboola_mcp_server.clients.auth_bridge import StorageTokenResolver
 from keboola_mcp_server.clients.base import JsonDict
-from keboola_mcp_server.clients.client import KeboolaClient
+from keboola_mcp_server.clients.client import DATA_APP_COMPONENT_ID, KeboolaClient
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
 from keboola_mcp_server.mcp import (
     CONVERSATION_ID,
@@ -32,6 +33,7 @@ from keboola_mcp_server.mcp import (
     STORAGE_API_URL,
     AggregateError,
     DirectoryProfileMiddleware,
+    KeboolaMcpServer,
     ServerState,
     SessionStateMiddleware,
     ToolsFilteringMiddleware,
@@ -54,6 +56,7 @@ from keboola_mcp_server.scope import (
     resolve_scope_binding_aad,
     resolve_scope_key,
 )
+from keboola_mcp_server.tools.components.utils import _UNSUITABLE_COMPONENTS_MESSAGES, check_suitable
 from keboola_mcp_server.workspace import WorkspaceManager
 
 
@@ -2318,6 +2321,7 @@ class TestDirectoryToolProfile:
         client.metastore_client.list_objects = AsyncMock(return_value=[MagicMock()])
         if path == 'bootstrap':
             del mcp_context_client.session.state[KeboolaClient.STATE_KEY]
+        mcp_context_client.fastmcp = KeboolaMcpServer()
         allowed = ['get_tables', 'query_data', 'modify_flow']
         tools = [_tool(name) for name in [*allowed, *self.EXCLUDED, 'a_tool_added_later']]
 
@@ -2454,6 +2458,69 @@ class TestDirectoryToolProfile:
         swap.assert_not_awaited()
         call_next.assert_not_awaited()
         keboola_client.storage_client.verify_token.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_the_listed_tools_name_only_listed_tools(self, mcp_context_client) -> None:
+        """DMD-2512: nothing a plugin session lists (descriptions, parameter and output schemas) names a tool it does
+        not have; every other session lists the texts that name them, unchanged."""
+        from keboola_mcp_server.server import create_server
+
+        mcp = create_server(Config(), runtime_info=ServerRuntimeInfo(transport='stdio'))
+        registered = await mcp.list_tools(run_middleware=False)
+        hidden = {t.name for t in registered} - DIRECTORY_TOOLS
+        mcp_context_client.fastmcp = mcp
+        # A bootstrap session: lists every tool without a token verification.
+        del mcp_context_client.session.state[KeboolaClient.STATE_KEY]
+
+        async def tools_list(directory_profile: bool) -> dict[str, str]:
+            """What tools/list sends to the client, per tool."""
+            with patch(
+                'keboola_mcp_server.mcp.get_http_request_or_none', return_value=self._request(directory_profile)
+            ):
+                listed = await ToolsFilteringMiddleware().on_list_tools(
+                    SimpleNamespace(fastmcp_context=mcp_context_client), AsyncMock(return_value=registered)
+                )
+            return {t.name: json.dumps(t.to_mcp_tool().model_dump(mode='json')) for t in listed}
+
+        directory, regular = await tools_list(True), await tools_list(False)
+
+        assert regular == {t.name: json.dumps(t.to_mcp_tool().model_dump(mode='json')) for t in registered}
+        assert not any('<!--' in text for text in (*directory.values(), *regular.values()))
+        assert {name: [h for h in hidden if h in text] for name, text in directory.items()} == {
+            name: [] for name in DIRECTORY_TOOLS
+        }
+        # Exactly the tools that name a hidden tool to every other session have a directory variant.
+        names_hidden = {name for name in DIRECTORY_TOOLS if any(h in regular[name] for h in hidden)}
+        assert names_hidden == {name for name in DIRECTORY_TOOLS if directory[name] != regular[name]}
+        assert names_hidden == {
+            'add_config_row',
+            'create_config',
+            'deploy_data_app',
+            'get_data_apps',
+            'modify_streamlit_data_app',
+            'update_config',
+            'update_config_row',
+        }
+
+    @pytest.mark.parametrize('component_id', sorted(_UNSUITABLE_COMPONENTS_MESSAGES))
+    @pytest.mark.parametrize('runtime', [None, {'workspace': {'enabled': True}}])
+    @pytest.mark.parametrize('directory_profile', [True, False])
+    def test_check_suitable_names_only_directory_tools(
+        self, component_id: str, runtime: dict[str, Any] | None, directory_profile: bool
+    ) -> None:
+        """DMD-2512: the rejection of a specialized component by the generic config tools points a plugin session only to
+        tools it has; every other session still gets `modify_python_js_data_app` for a data app."""
+        with (
+            patch('keboola_mcp_server.mcp.get_http_request_or_none', return_value=self._request(directory_profile)),
+            pytest.raises(ValueError, match='cannot be used with') as error,
+        ):
+            check_suitable('update_config', component_id, runtime=runtime)
+
+        named = [name for name in self.EXCLUDED if name in str(error.value)]
+        if directory_profile or component_id != DATA_APP_COMPONENT_ID:
+            assert named == []
+        else:
+            assert named == ['modify_python_js_data_app']
 
     @pytest.mark.parametrize('sql_dialect', ['', 'Snowflake', 'BigQuery'])
     def test_the_directory_instructions_name_only_directory_tools(self, sql_dialect: str) -> None:

@@ -2491,8 +2491,8 @@ data app logs to investigate in-app errors. The logs may be updated after openin
   includes a `drafts: [...]` array of every draft (configs with `isDraft=true` and
   `parentConfigurationId == <prod-cfg>`) currently in the project. Drafts in trash are not
   included. Use this to discover existing drafts when continuing a previously abandoned
-  iteration (Scenario C in `modify_python_js_data_app`). The array is empty for drafts
-  themselves and for Streamlit apps.
+  iteration. The array is empty for drafts themselves and for Streamlit apps.
+  Resuming such an iteration is Scenario C in `modify_python_js_data_app`.
 
 
 **Input JSON Schema**:

@@ -71,6 +71,7 @@ from keboola_mcp_server.provisioned_session import (
 from keboola_mcp_server.provisioned_session import (
     resolve_session as resolve_provisioned_session,
 )
+from keboola_mcp_server.resources.prompts import directory_variant
 from keboola_mcp_server.scope import (
     OAUTH_SESSION_ID_KEY,
     SCOPE_KEY,
@@ -409,15 +410,69 @@ class LegacySsePathMiddleware:
         await response(scope, receive, send)
 
 
+def _map_texts(value: Any, transform: Callable[[str], str]) -> Any:
+    """`value` (a string or a JSON schema) with `transform` applied to every string in it, but not to the keys."""
+    if isinstance(value, str):
+        return transform(value)
+    if isinstance(value, dict):
+        return {key: _map_texts(item, transform) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_map_texts(item, transform) for item in value]
+    return value
+
+
 class KeboolaMcpServer(FastMCP):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        # Before FastMCP's `__init__`, which registers the `tools` it is given through `add_tool`.
+        # Tool name -> {regular text: directory text} for the texts of the tool (description, parameter and output
+        # schemas) that have `directory:omit` / `directory:only` blocks (`directory_variant`).
+        self._directory_texts: dict[str, dict[str, str]] = {}
+        super().__init__(*args, **kwargs)
+
     def add_tool(self, tool: Tool) -> None:
-        """Applies `textwrap.dedent()` function to the tool's docstring, if no explicit description is provided."""
+        """Applies `textwrap.dedent()` function to the tool's docstring, if no explicit description is provided.
+        Registers the tool's texts without their directory blocks and keeps the directory variants for
+        `for_directory()`."""
+        directory_texts: dict[str, str] = {}
+
+        def regular(text: str) -> str:
+            if '<!-- directory:' not in text:
+                return text
+            # The trailing newline ends a marker on the last line, which the regular expressions need.
+            variant = directory_variant(text + '\n', directory=False).strip()
+            directory_texts[variant] = directory_variant(text + '\n', directory=True).strip()
+            return variant
+
+        update: dict[str, Any] = {}
         if tool.description:
-            description = textwrap.dedent(tool.description).strip()
+            description = regular(textwrap.dedent(tool.description).strip())
             if description != tool.description:
-                tool = tool.model_copy(update={'description': description})
+                update['description'] = description
+        for field in ('parameters', 'output_schema'):
+            schema = getattr(tool, field)
+            if (regular_schema := _map_texts(schema, regular)) != schema:
+                update[field] = regular_schema
+        if update:
+            tool = tool.model_copy(update=update)
+        if directory_texts:
+            self._directory_texts[tool.name] = directory_texts
+        else:
+            self._directory_texts.pop(tool.name, None)
 
         super().add_tool(tool)
+
+    def for_directory(self, tool: Tool) -> Tool:
+        """The tool as a session with the directory tool profile lists it: none of its texts names a tool outside
+        `DIRECTORY_TOOLS`. Maps the texts of the tool it is given, so that changes other middlewares made to the
+        listed tool stay."""
+        if not (texts := self._directory_texts.get(tool.name)):
+            return tool
+        return tool.model_copy(
+            update={
+                field: _map_texts(getattr(tool, field), lambda text: texts.get(text, text))
+                for field in ('description', 'parameters', 'output_schema')
+            }
+        )
 
 
 def get_http_request_or_none() -> Request | None:
@@ -1406,7 +1461,8 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         tools = await call_next(context)
         if is_directory_session():
             # First, so that every path below (the bootstrap superset, the verify_token fallback) starts from it.
-            tools = [t for t in tools if t.name in DIRECTORY_TOOLS]
+            server = cast(KeboolaMcpServer, context.fastmcp_context.fastmcp)
+            tools = [server.for_directory(t) for t in tools if t.name in DIRECTORY_TOOLS]
 
         # A bootstrap session (no credential yet -- see `create_session_state`) has no client to
         # verify a token with, so there is nothing to filter on. Advertise the superset; the

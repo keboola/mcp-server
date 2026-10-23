@@ -221,20 +221,34 @@ class DataAppSummary(BaseModel):
             'reaches the running app as the WORKSPACE_ID environment variable. True when the stored '
             'configuration carries `runtime.workspace.enabled = true` (projects with the '
             '`data-apps-storage-workspace` feature) or a `parameters.dataApp.secrets.WORKSPACE_ID` '
-            'entry (projects without it). Only populated by `modify_python_js_data_app` responses; '
-            'left `None` elsewhere, which means "not determined", not "disabled".'
+            'entry (projects without it).\n'
+            '<!-- directory:omit -->\n'
+            'Only populated by `modify_python_js_data_app` responses; '
+            'left `None` elsewhere, which means "not determined", not "disabled".\n'
+            '<!-- /directory:omit -->\n'
+            '<!-- directory:only -->\n'
+            'Left `None` here, which means "not determined", not "disabled".\n'
+            '<!-- /directory:only -->\n'
         ),
     )
     repo_url: str | None = Field(
         default=None,
         description=(
             'HTTPS clone URL of the managed git repo (without embedded credentials). '
-            'Only set for python-js data apps, and only populated by detail-style fetches '
-            '(`get_data_apps(configuration_ids=[...])`) and `modify_python_js_data_app` '
-            'responses. The inventory list path (`get_data_apps` without `configuration_ids`) '
+            'Only set for python-js data apps.\n'
+            '<!-- directory:omit -->\n'
+            'Only populated by detail-style fetches (`get_data_apps(configuration_ids=[...])`) and '
+            '`modify_python_js_data_app` responses.\n'
+            '<!-- /directory:omit -->\n'
+            '<!-- directory:only -->\n'
+            'Only populated by detail-style fetches (`get_data_apps(configuration_ids=[...])`).\n'
+            '<!-- /directory:only -->\n'
+            'The inventory list path (`get_data_apps` without `configuration_ids`) '
             'always leaves this `None` to keep the listing cheap — call the detail path to '
-            'retrieve the URL. Mint a token via `create_python_js_data_app_git_credential` '
-            'to authenticate.'
+            'retrieve the URL.\n'
+            '<!-- directory:omit -->\n'
+            'Mint a token via `create_python_js_data_app_git_credential` to authenticate.\n'
+            '<!-- /directory:omit -->\n'
         ),
     )
     git_branch: str | None = Field(
@@ -300,7 +314,14 @@ class AppRunInfo(BaseModel):
 class RuntimeImage(BaseModel):
     """A backend image a python-js data app can run on, from the platform's runtimes catalog."""
 
-    version: str = Field(description='The image tag, the value `modify_python_js_data_app(image_version=...)` takes.')
+    version: str = Field(
+        description=(
+            'The image tag.\n'
+            '<!-- directory:omit -->\n'
+            'The value `modify_python_js_data_app(image_version=...)` takes.\n'
+            '<!-- /directory:omit -->\n'
+        )
+    )
     description: str | None = Field(
         default=None, description='Human-readable label naming its Python and Node.js versions.'
     )
@@ -408,8 +429,10 @@ class DataApp(BaseModel):
         default=None,
         description=(
             'HTTPS clone URL of the managed git repo (without embedded credentials). '
-            'Only set for python-js data apps. Mint a token via '
-            '`create_python_js_data_app_git_credential` to authenticate.'
+            'Only set for python-js data apps.\n'
+            '<!-- directory:omit -->\n'
+            'Mint a token via `create_python_js_data_app_git_credential` to authenticate.\n'
+            '<!-- /directory:omit -->\n'
         ),
     )
     is_managed_git_repo: bool | None = Field(
@@ -646,8 +669,10 @@ class GetDataAppsOutput(BaseModel):
     available_images: list[RuntimeImage] = Field(
         default_factory=list,
         description=(
-            'When the details include a python-js app: every backend image the platform offers — the valid '
-            '`image_version` values for `modify_python_js_data_app`.'
+            'When the details include a python-js app: every backend image the platform offers.\n'
+            '<!-- directory:omit -->\n'
+            'The valid `image_version` values for `modify_python_js_data_app`.\n'
+            '<!-- /directory:omit -->\n'
         ),
     )
     links: list[Link] = Field(description='Navigation links for the web interface.', default_factory=list)
@@ -691,10 +716,16 @@ async def modify_streamlit_data_app(
 ) -> ModifiedDataAppOutput:
     """Creates or updates a Streamlit data app.
 
+    <!-- directory:omit -->
     Python-js is the default type for new data apps when you can run git: create them with
     `modify_python_js_data_app` (python-js source code is delivered only by `git push`). Use this tool to create
     a new app when you cannot run git or when the user asks for Streamlit explicitly, and to update existing
     Streamlit apps.
+    <!-- /directory:omit -->
+    <!-- directory:only -->
+    Use this tool to create new data apps and to update existing Streamlit apps. Other data apps cannot be changed here;
+    tell the user so.
+    <!-- /directory:only -->
 
     Considerations:
     - The `source_code` parameter must be a complete and runnable Streamlit app. It must include a placeholder
@@ -2019,8 +2050,10 @@ async def get_data_apps(
       includes a `drafts: [...]` array of every draft (configs with `isDraft=true` and
       `parentConfigurationId == <prod-cfg>`) currently in the project. Drafts in trash are not
       included. Use this to discover existing drafts when continuing a previously abandoned
-      iteration (Scenario C in `modify_python_js_data_app`). The array is empty for drafts
-      themselves and for Streamlit apps.
+      iteration. The array is empty for drafts themselves and for Streamlit apps.
+    <!-- directory:omit -->
+      Resuming such an iteration is Scenario C in `modify_python_js_data_app`.
+    <!-- /directory:omit -->
     """
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
@@ -2085,7 +2118,9 @@ async def deploy_data_app(
       development `setup.sh` (hot reload) and the data-app proxy enables an auto-auth path so an
       iframe preview can render without a manual login. Only meaningful on **draft** configs
       (python-js apps with `isDraft=true`).
+    <!-- directory:omit -->
     - To open a dev-mode draft in your own browser, call `get_data_app_preview_link` once the deploy is running.
+    <!-- /directory:omit -->
     - For prod redeploys (including after merging a draft's branch into `main`), use no `mode` —
       the prod app picks up the current `main`.
     - The branch a draft deploys from is pinned in `parameters.dataApp.git.branch` at create time;
