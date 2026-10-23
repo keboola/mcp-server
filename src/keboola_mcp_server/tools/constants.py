@@ -49,6 +49,6 @@ MERGE_REQUEST_BRANCH_ONLY_TOOLS = {'create_merge_request'}
 # `authorize_tool_call` has no branch in scope.
 MERGE_REQUEST_BRANCH_ONLY_MESSAGE = (
     'create_merge_request runs only from a development-branch chat: the merge request is created for the branch '
-    'the chat is on, and this chat is on production. Tell the user to open Kai on the development branch and ask '
+    'the chat is on, and this chat is on production. Tell the user to open a chat on the development branch and ask '
     'again there.'
 )

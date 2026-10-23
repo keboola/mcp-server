@@ -300,7 +300,7 @@ async def test_next_step_never_recommends_a_write_the_session_cannot_do(
         ),
         pytest.param(
             '77',
-            f"open Kai on branch 'reporting' ({MR_UI_URL}) or in production and merge it there with "
+            f"open a chat on branch 'reporting' ({MR_UI_URL}) or in production and merge it there with "
             'merge_merge_request(merge_request_id=42). Include the link.',
             id='other_branch_hands_off_with_link',
         ),
@@ -528,7 +528,7 @@ _OTHER_BRANCH_URL = 'https://connection.test.keboola.com/admin/projects/123/bran
             None,
             _mr_raw(mr_id=9, branch_from=77),
             r"Merge request 9 \('Add reporting'\) belongs to branch 'other' \(id 77\), not to this chat's branch\. "
-            rf'Tell the user to open Kai on that branch \({_OTHER_BRANCH_URL}\) or in production and ask again there '
+            rf'Tell the user to open a chat on that branch \({_OTHER_BRANCH_URL}\) or in production and ask again there '
             r'with merge_request_id=9; include the link\.',
             None,
             id='given_other_branch_hands_off_with_link_and_the_production_route',
