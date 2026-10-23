@@ -3984,7 +3984,7 @@ follow `next_step`.
 Creates a merge request for the CURRENT development branch into production.
 
 Available only from a development-branch chat: the source branch is the chat's branch and the target is
-production — there are no branch parameters. On production, tell the user to open Kai on the development
+production — there are no branch parameters. On production, tell the user to open a chat on the development
 branch and ask again there. A branch can have only one open merge request.
 
 On a project with the default of 0 required approvals the happy path is two calls:

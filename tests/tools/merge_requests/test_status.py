@@ -323,7 +323,7 @@ def test_derive_viewer(mr: dict[str, Any], admin_id: Any, expected: Viewer) -> N
         pytest.param(
             13,
             {'session': OTHER_BRANCH_WRITER},
-            f"Ready to merge; tell the user to open Kai on branch 'reporting' ({BRANCH_URL}) or in production and "
+            f"Ready to merge; tell the user to open a chat on branch 'reporting' ({BRANCH_URL}) or in production and "
             'merge it there with merge_merge_request(merge_request_id=42). Include the link.',
             id='13b_merge_from_another_branch_hands_off_with_link',
         ),

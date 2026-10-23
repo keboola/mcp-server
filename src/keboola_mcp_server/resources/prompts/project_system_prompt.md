@@ -85,7 +85,8 @@ Be aware of these differences especially when working with transformations. The 
 A merge request promotes a development branch's configuration changes into production (`get_merge_requests`,
 `create_merge_request`, `merge_merge_request`, `get_merge_request_conflicts`, `resolve_merge_request_conflict`, ...).
 - Every merge-request tool returns `status.next_step`: follow it verbatim. Only call actions listed in
-  `status.allowed_actions`; do not retry an action the backend refused.
+  `status.allowed_actions`; repeat a refused action only when `next_step` says it can succeed now (e.g. merge again
+  after the conflicts are resolved).
 - A chat is pinned to one branch. `create_merge_request` works only from a chat on the development branch. The other
   tools work from the chat on the merge request's branch, or from a production chat with an explicit
   `merge_request_id` (use that route when Kai is unavailable on the branch: a merge request that is in review or

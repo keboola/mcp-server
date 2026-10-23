@@ -363,7 +363,7 @@ async def _resolve_branch_mr(c: _MrContext, merge_request_id: int | None) -> Jso
             if not candidates:
                 raise ToolError(
                     'This chat is on the production branch and the project has no open merge request. A merge request '
-                    'is created from inside a development branch: tell the user to open Kai on the branch to create one.'
+                    'is created from inside a development branch: tell the user to open a chat on the branch to create one.'
                 )
             raise ToolError(
                 f'This chat is on the production branch: pass merge_request_id. Open merge requests: {candidates}. '
@@ -404,7 +404,7 @@ async def _resolve_branch_mr(c: _MrContext, merge_request_id: int | None) -> Jso
         link = f' ({url})' if url else ''
         raise ToolError(
             f"Merge request {merge_request_id} ('{mr.get('title') or ''}') belongs to {where}, not to this chat's "
-            f'branch. Tell the user to open Kai on that branch{link} or in production and ask again there with '
+            f'branch. Tell the user to open a chat on that branch{link} or in production and ask again there with '
             f'merge_request_id={merge_request_id}; include the link.'
         )
     return mr
@@ -688,7 +688,7 @@ async def create_merge_request(
     Creates a merge request for the CURRENT development branch into production.
 
     Available only from a development-branch chat: the source branch is the chat's branch and the target is
-    production — there are no branch parameters. On production, tell the user to open Kai on the development
+    production — there are no branch parameters. On production, tell the user to open a chat on the development
     branch and ask again there. A branch can have only one open merge request.
 
     On a project with the default of 0 required approvals the happy path is two calls:

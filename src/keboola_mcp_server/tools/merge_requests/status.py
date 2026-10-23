@@ -319,7 +319,7 @@ def build_next_step(
                 )
         else:  # 13, from another branch: hand off
             return (
-                f'Ready to merge; tell the user to open Kai on {branch}{link} or in production and merge it there '
+                f'Ready to merge; tell the user to open a chat on {branch}{link} or in production and merge it there '
                 f'with merge_merge_request({mr_arg}). Include the link.'
             )
     return 'Show the merge request (read-only).'  # 15
