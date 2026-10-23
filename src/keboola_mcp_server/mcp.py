@@ -108,10 +108,10 @@ LISTED_BRANCH_ID = 'listed_branch_id'
 # to its branch for its whole life, so without this every call after a merge fails at the protocol level.
 DELETED_BRANCH_ID = 'deleted_branch_id'
 DELETED_BRANCH_WRITE_MESSAGE = (
-    "Branch {branch_id} no longer exists; it was deleted after its merge request was merged. This chat is pinned "
-    'to that branch: it can still answer questions about production (read-only tools) but cannot change anything. '
-    'Tell the user the changes are in production and that to continue working they should open Kai in production: '
-    '{project_url}'
+    'Branch {branch_id} no longer exists; most likely it was deleted after its merge request was merged. This chat '
+    'is pinned to that branch: it can still answer questions about production (read-only tools) but cannot change '
+    'anything. Tell the user the changes are in production and that to continue working they should open a new chat '
+    'in production: {project_url}'
 )
 # The stack URL this session resolved to (header, env or CLI). Kept in the session state because a
 # bootstrap session (no credential yet, see `create_session_state`) has no KeboolaClient to read it
@@ -1656,6 +1656,13 @@ class ToolsFilteringMiddleware(fmw.Middleware):
             # explanation -- which is exactly backwards for the one audience that needs it most.
             raise ToolError(str(e)) from e
 
+        deleted_branch_id = context.fastmcp_context.session.state.get(DELETED_BRANCH_ID)
+        if deleted_branch_id and not is_read_only_tool(tool):
+            # The session's branch was deleted (merged) and the client was silently rebuilt on production for the
+            # reads; a write would land in production from a chat the user started in a branch, so it is refused. Checked before
+            # the other denials: the session now looks like production, so a branch-only denial would mislead.
+            raise ToolError(self._deleted_branch_write_message(context.fastmcp_context, token_info, deleted_branch_id))
+
         has_semantic_models = False
         if is_semantic_tool(tool):
             client = KeboolaClient.from_state(context.fastmcp_context.session.state)
@@ -1673,12 +1680,6 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         )
         if denial:
             raise ToolError(denial)
-
-        deleted_branch_id = context.fastmcp_context.session.state.get(DELETED_BRANCH_ID)
-        if deleted_branch_id and not is_read_only_tool(tool):
-            # The session's branch was deleted (merged) and the client was silently rebuilt on production for the
-            # reads; a write would land in production from a chat the user started in a branch, so it is refused.
-            raise ToolError(self._deleted_branch_write_message(context.fastmcp_context, token_info, deleted_branch_id))
 
         token = TOKEN_INFO_VAR.set(token_info)
         try:
