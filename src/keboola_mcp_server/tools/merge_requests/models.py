@@ -323,6 +323,10 @@ class MergeResult(BaseModel):
     )
     warnings: list[str] = Field(description='Soft failures that did not prevent the merge.')
     next_step: str = Field(description='The single recommended next action.')
+    links: list[Link] = Field(
+        default_factory=list,
+        description='Keboola UI links: the merge request page on its source branch and the production project.',
+    )
 
 
 class ResolvedConfiguration(BaseModel):

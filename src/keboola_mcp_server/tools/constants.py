@@ -29,19 +29,26 @@ MERGE_REQUEST_TOOL_NAMES = {
     'get_merge_request_conflicts',
     'resolve_merge_request_conflict',
 }
-# Tools that touch or promote branch content: usable only from a development-branch session. They stay
-# visible on production (their descriptions state the constraint) and are denied at call time only.
-MERGE_REQUEST_BRANCH_ONLY_TOOLS = {
+# Tools bound to the session's branch context: they declare no `project_id` (the session branch is the implicit
+# argument when `merge_request_id` is omitted), so the multi-project middleware always targets the active project
+# with them instead of asking which project (see `MultiProjectMiddleware._dispatch_single_target`).
+MERGE_REQUEST_SESSION_BOUND_TOOLS = {
     'create_merge_request',
     'request_merge_request_review',
     'merge_merge_request',
     'get_merge_request_conflicts',
     'resolve_merge_request_conflict',
 }
-# The call-time denial for MERGE_REQUEST_BRANCH_ONLY_TOOLS on a production session. Deliberately
-# branch-agnostic: `authorize_tool_call` has no branch name in scope; the named handoff ("open a session on
-# branch 'reporting'") comes from the read tools' `next_step`, where `branch_from_name` is known.
+# Tools whose implicit argument is the session's own development branch: usable only from a development-branch
+# session. Only `create_merge_request` is left here. Merge / request-review / conflicts / resolve act on an explicit
+# `merge_request_id` from a production session too, because kbc-ui blocks Kai in a branch whose merge request is
+# `in_review` or `approved` (K1) -- exactly when those steps are needed -- and the kbagent CLI allows the same. The
+# tool stays visible on production (its description states the constraint) and is denied at call time only.
+MERGE_REQUEST_BRANCH_ONLY_TOOLS = {'create_merge_request'}
+# The call-time denial for MERGE_REQUEST_BRANCH_ONLY_TOOLS on a production session. Deliberately branch-agnostic:
+# `authorize_tool_call` has no branch in scope.
 MERGE_REQUEST_BRANCH_ONLY_MESSAGE = (
-    'This tool runs only from a development-branch session. Tell the user to open a session on the merge '
-    "request's source branch and ask again there."
+    'create_merge_request runs only from a development-branch chat: the merge request is created for the branch '
+    'the chat is on, and this chat is on production. Tell the user to open Kai on the development branch and ask '
+    'again there.'
 )

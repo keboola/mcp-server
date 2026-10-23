@@ -1,9 +1,12 @@
 """Merge-request tools: the Keboola Branches 2.0 (non-SOX) promotion flow for a development branch.
 
-Read and review-state tools work from any session. Tools that touch or promote branch content (create,
-request review, merge, conflicts, resolve) run only from a development-branch session; the middleware
-denies them on production (see `ToolsFilteringMiddleware.authorize_tool_call`), and their descriptions
-say so up front so the model can hand the user off.
+Read and review-state tools work from any session. `create_merge_request` runs only from a development-branch
+session (the branch is its implicit argument; the middleware denies it on production, see
+`ToolsFilteringMiddleware.authorize_tool_call`). Request review, merge, conflicts and resolve act on the session
+branch's merge request when the id is omitted, and on an explicit `merge_request_id` from a production session too:
+kbc-ui blocks Kai in a branch whose merge request is `in_review` / `approved`, which is exactly when those steps are
+needed, so the production chat is the way to finish. A session on another development branch never acts on a
+foreign branch's merge request; it hands the user off (branch name + UI link, or the production route).
 """
 
 import asyncio
@@ -24,7 +27,7 @@ from pydantic import Field, ValidationError
 
 from keboola_mcp_server.authorization import ToolAuthorizationMiddleware
 from keboola_mcp_server.clients.base import JsonDict
-from keboola_mcp_server.clients.client import KeboolaClient
+from keboola_mcp_server.clients.client import BranchNotFoundError, KeboolaClient
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
 from keboola_mcp_server.mcp import (
@@ -175,7 +178,9 @@ class _MrContext:
     def session(self, mr: Mapping[str, Any]) -> SessionContext:
         branch_from_id = (mr.get('branches') or {}).get('branchFromId')
         on_mr_branch = self.client.branch_id is not None and same_id(branch_from_id, self.client.branch_id)
-        return SessionContext(on_mr_branch=on_mr_branch, can_write=self.can_write)
+        return SessionContext(
+            on_mr_branch=on_mr_branch, can_write=self.can_write, on_production=self.client.branch_id is None
+        )
 
     def branch_from_name(self, mr: Mapping[str, Any]) -> str | None:
         branch_from_id = (mr.get('branches') or {}).get('branchFromId')
@@ -186,6 +191,47 @@ class _MrContext:
         if branch_from_id is None:
             return []
         return [self.links.get_merge_request_link(branch_from_id, str(mr.get('title') or ''))]
+
+    def branch_url(self, mr: Mapping[str, Any]) -> str | None:
+        """The UI page of the MR on its source branch, for the handoff texts (None once the branch is gone)."""
+        links = self.mr_links(mr)
+        return links[0].url if links else None
+
+    @property
+    def project_url(self) -> str:
+        return self.links.get_project_detail_link().url
+
+    def status_kwargs(self, mr: Mapping[str, Any]) -> dict[str, Any]:
+        """The session- and navigation-related arguments every `build_status` call takes."""
+        return {
+            'admin_id': self.admin_id,
+            'session': self.session(mr),
+            'branch_from_name': self.branch_from_name(mr),
+            'branch_url': self.branch_url(mr),
+            'project_url': self.project_url,
+        }
+
+    async def branch_client(self, mr: Mapping[str, Any]) -> KeboolaClient:
+        """
+        A client scoped to the MR's source branch for the branch-scoped `/diff` and `/rebase` endpoints. On the
+        MR's own branch it is the session client; from production it is built on `branchFromId` (one branch-detail
+        call), so the conflict flow works from a production session with an explicit `merge_request_id`.
+        """
+        branch_from_id = (mr.get('branches') or {}).get('branchFromId')
+        if branch_from_id is None:
+            raise ToolError(
+                f'Merge request {mr.get("id")} is already {derive_state(mr)} and its source branch is gone; there '
+                'are no conflicts to work on.'
+            )
+        try:
+            return await self.client.with_branch_id(str(branch_from_id))
+        except BranchNotFoundError as exc:
+            name = self.branch_from_name(mr)
+            where = f"Branch '{name}' (id {branch_from_id})" if name else f'Branch {branch_from_id}'
+            raise ToolError(
+                f'{where} of merge request {mr.get("id")} no longer exists (a development branch is deleted after '
+                'its merge request is merged); there is nothing to resolve. Check get_merge_requests.'
+            ) from exc
 
 
 async def _load(ctx: Context) -> _MrContext:
@@ -257,13 +303,7 @@ def _build_detail(
     activity_log = mr.get('activityLog')
     return MergeRequestDetail(
         **summary.model_dump(),
-        status=build_status(
-            mr,
-            conflicts=conflicts,
-            admin_id=c.admin_id,
-            session=c.session(mr),
-            branch_from_name=c.branch_from_name(mr),
-        ),
+        status=build_status(mr, conflicts=conflicts, **c.status_kwargs(mr)),
         changed_configurations=ChangedConfig.list_from_change_log(mr.get('changeLog')),
         activity_log=(
             [ActivityEvent.from_api(e) for e in activity_log if isinstance(e, Mapping)]
@@ -298,13 +338,41 @@ def _open_branch_mrs(rows: Sequence[Mapping[str, Any]], branch_id: Any) -> list[
     return sorted(matches, key=lambda r: int(r.get('id') or 0), reverse=True)  # type: ignore[return-value]
 
 
+def _describe_open_mrs(c: _MrContext, rows: Sequence[Mapping[str, Any]]) -> str:
+    """`24 'Add reporting' (branch 'reporting', approved); 26 ...` — the candidates a production caller must choose from."""
+    parts = []
+    for r in sorted(rows, key=lambda r: int(r.get('id') or 0), reverse=True):
+        if r.get('state') in TERMINAL_STATES:
+            continue
+        name = c.branch_from_name(r)
+        branch = f"branch '{name}'" if name else 'branch deleted'
+        parts.append(f"{r.get('id')} '{r.get('title') or ''}' ({branch}, {derive_state(r)})")
+    return '; '.join(parts)
+
+
 async def _resolve_branch_mr(c: _MrContext, merge_request_id: int | None) -> JsonDict:
     """
-    The MR-id convention for branch-only tools: with the id omitted, the session branch's open MR; with the id
-    given, the MR is validated to belong to the session branch — never act on another branch's MR.
+    The MR-id convention: with the id omitted, the session branch's open MR (a production session must pass the
+    id — the candidates are listed, never auto-picked); with the id given, any MR from a production session, and
+    only the session branch's own MR from a development-branch session — a chat never acts on another branch.
     """
     if c.client.branch_id is None:
-        raise ToolError(MERGE_REQUEST_BRANCH_ONLY_MESSAGE)
+        if merge_request_id is None:
+            rows = await c.client.storage_client.merge_requests_list()
+            candidates = _describe_open_mrs(c, rows)
+            if not candidates:
+                raise ToolError(
+                    'This chat is on the production branch and the project has no open merge request. A merge request '
+                    'is created from inside a development branch: tell the user to open Kai on the branch to create one.'
+                )
+            raise ToolError(
+                f'This chat is on the production branch: pass merge_request_id. Open merge requests: {candidates}. '
+                'If the request matches more than one, ask the user which one (by title or branch); never guess.'
+            )
+        mr = await c.client.storage_client.merge_request_detail(merge_request_id)
+        if (mr.get('branches') or {}).get('branchFromId') is None:
+            raise ToolError(_merged_and_gone(merge_request_id, mr))
+        return mr
     if merge_request_id is None:
         rows = await c.client.storage_client.merge_requests_list()
         matches = _open_branch_mrs(rows, c.client.branch_id)
@@ -318,28 +386,35 @@ async def _resolve_branch_mr(c: _MrContext, merge_request_id: int | None) -> Jso
                 # The deletion window: the branch is still listed but its MR is already published.
                 raise ToolError(
                     "The current development branch's merge request is already merged and the branch is being "
-                    'deleted. Tell the user to open a session on the production branch to continue.'
+                    f'deleted. Tell the user to continue in production ({c.project_url}); include the link.'
                 )
             raise ToolError(
                 'The current development branch has no open merge request. Create one with create_merge_request, '
-                'or pass merge_request_id if you meant another branch (open a session on that branch first).'
+                "or, if you meant another branch's merge request, pass merge_request_id from a production chat."
             )
         return matches[0]
     mr = await c.client.storage_client.merge_request_detail(merge_request_id)
     branch_from_id = (mr.get('branches') or {}).get('branchFromId')
     if branch_from_id is None:
-        raise ToolError(
-            f'Merge request {merge_request_id} is already {derive_state(mr)} (state {mr.get("state")}) and its source '
-            'branch is gone; there is nothing to do on it.'
-        )
+        raise ToolError(_merged_and_gone(merge_request_id, mr))
     if not same_id(branch_from_id, c.client.branch_id):
         name = c.branch_from_name(mr)
         where = f"branch '{name}' (id {branch_from_id})" if name else f'branch id {branch_from_id}'
+        url = c.branch_url(mr)
+        link = f' ({url})' if url else ''
         raise ToolError(
-            f'Merge request {merge_request_id} belongs to {where}, not to the current session branch. '
-            'Tell the user to open a session on that branch and ask again there.'
+            f"Merge request {merge_request_id} ('{mr.get('title') or ''}') belongs to {where}, not to this chat's "
+            f'branch. Tell the user to open Kai on that branch{link} or in production and ask again there with '
+            f'merge_request_id={merge_request_id}; include the link.'
         )
     return mr
+
+
+def _merged_and_gone(merge_request_id: int, mr: Mapping[str, Any]) -> str:
+    return (
+        f'Merge request {merge_request_id} is already {derive_state(mr)} (state {mr.get("state")}) and its source '
+        'branch is gone; there is nothing to do on it.'
+    )
 
 
 def _validate_auto_merge(strategy: str | None, at: str | None) -> None:
@@ -612,9 +687,9 @@ async def create_merge_request(
     """
     Creates a merge request for the CURRENT development branch into production.
 
-    Available only from a development-branch session; on production, tell the user to open a session on the
-    merge request's source branch and ask again there. The source branch is the session branch and the target
-    is production — there are no branch parameters. A branch can have only one open merge request.
+    Available only from a development-branch chat: the source branch is the chat's branch and the target is
+    production — there are no branch parameters. On production, tell the user to open Kai on the development
+    branch and ask again there. A branch can have only one open merge request.
 
     On a project with the default of 0 required approvals the happy path is two calls:
     create_merge_request → merge_merge_request (no review step). Returns the merge request with its status;
@@ -670,10 +745,10 @@ async def request_merge_request_review(
     ] = None,
 ) -> MergeRequestDetail:
     """
-    Sends the current branch's merge request for review (author action).
+    Sends a merge request for review (author action).
 
-    Available only from a development-branch session; on production, tell the user to open a session on the
-    merge request's source branch and ask again there. Rarely needed: merge_merge_request already skips the
+    From a development-branch chat it works on that branch's merge request (merge_request_id optional); from a
+    production chat pass merge_request_id. Rarely needed: merge_merge_request already skips the
     review when the project requires no approvals, so call this only when a merge was refused as "not ready"
     or when the project requires approvals. The merge request moves to `in_review` (or straight to `approved`
     when 0 approvals are required). Returns the merge request with its status; follow `next_step`.
@@ -693,15 +768,7 @@ def _refused_merge(
     message: str,
     conflicts: list[ConflictRef] | None,
 ) -> MergeResult:
-    status = build_status(
-        mr,
-        conflicts=conflicts,
-        admin_id=c.admin_id,
-        session=c.session(mr),
-        branch_from_name=c.branch_from_name(mr),
-        last_refusal=refusal,
-        refusal_message=message,
-    )
+    status = build_status(mr, conflicts=conflicts, last_refusal=refusal, refusal_message=message, **c.status_kwargs(mr))
     return MergeResult(
         merge_request_id=int(mr['id']),
         merged=False,
@@ -714,6 +781,7 @@ def _refused_merge(
         source_branch_deleting=False,
         warnings=[],
         next_step=status.next_step,
+        links=c.mr_links(mr),
     )
 
 
@@ -721,7 +789,15 @@ def _merge_running(
     c: _MrContext, mr: Mapping[str, Any], *, session: SessionContext, branch_name: str | None, warning: str
 ) -> MergeResult:
     """The result for a merge that is running (the re-read MR is `in_merge`): not a refusal, never merge again."""
-    status = build_status(mr, conflicts=None, admin_id=c.admin_id, session=session, branch_from_name=branch_name)
+    status = build_status(
+        mr,
+        conflicts=None,
+        admin_id=c.admin_id,
+        session=session,
+        branch_from_name=branch_name,
+        branch_url=c.branch_url(mr),
+        project_url=c.project_url,
+    )
     return MergeResult(
         merge_request_id=int(mr['id']),
         merged=False,
@@ -734,6 +810,7 @@ def _merge_running(
         source_branch_deleting=False,
         warnings=[warning],
         next_step=status.next_step,
+        links=c.mr_links(mr),
     )
 
 
@@ -769,7 +846,11 @@ def _merge_succeeded(
             pending=[],
             session=session,
             branch_from_name=branch_name,
+            merge_request_id=int(mr['id']),
+            project_url=c.project_url,
         ),
+        # The branch page is about to vanish with the branch; the production project is where the user continues.
+        links=[c.links.get_project_detail_link()],
     )
 
 
@@ -798,19 +879,22 @@ async def merge_merge_request(
     ] = None,
 ) -> MergeResult:
     """
-    Merges the current branch's merge request into production and waits for the merge to finish.
+    Merges a merge request into production and waits for the merge to finish.
 
-    Available only from a development-branch session; on production, tell the user to open a session on the
-    merge request's source branch and ask again there. IRREVERSIBLE: on success the changes are in production
-    and the source branch (with everything else on it: buckets, tables, workspaces) is deleted by a background
-    job — confirm with the user first. Works directly from `development` when the project requires no
-    approvals. The call waits for the merge job and can block for up to 10 minutes; if it returns
-    `state='in_merge'` the merge is still running — check again with get_merge_requests, never merge again.
+    From a development-branch chat it merges that branch's merge request (merge_request_id optional); from a
+    production chat pass merge_request_id (use this route when Kai is unavailable on the branch because its merge
+    request is in review or approved). A chat on another development branch cannot merge it. IRREVERSIBLE: on
+    success the changes are in production and the source branch (with everything else on it: buckets, tables,
+    workspaces) is deleted by a background job — confirm with the user first. Works directly from `development`
+    when the project requires no approvals. The call waits for the merge job and can block for up to 10 minutes;
+    if it returns `state='in_merge'` the merge is still running — check again with get_merge_requests, never
+    merge again.
 
     When the backend refuses, nothing changes and the result explains why: `refusal='conflicts'` lists the
     conflicting configurations (resolve them with get_merge_request_conflicts / resolve_merge_request_conflict,
     then merge again); `refusal='not_ready'` means missing approvals, a merge lock or a wrong state. After a
-    success the session's branch is gone: follow `next_step` and tell the user to open a production session.
+    success from the branch's own chat that chat is pinned to a deleted branch: follow `next_step` and give the
+    user the production link.
     """
     c = await _load(ctx)
     mr = await _resolve_branch_mr(c, merge_request_id)  # `branchFromId` captured before the merge (nulled later)
@@ -906,7 +990,13 @@ async def merge_merge_request(
     if final is None:
         in_merge = _with_state(mr, 'in_merge')
         status = build_status(
-            in_merge, conflicts=None, admin_id=c.admin_id, session=session, branch_from_name=branch_name
+            in_merge,
+            conflicts=None,
+            admin_id=c.admin_id,
+            session=session,
+            branch_from_name=branch_name,
+            branch_url=c.branch_url(mr),
+            project_url=c.project_url,
         )
         return MergeResult(
             merge_request_id=mr_id,
@@ -927,6 +1017,7 @@ async def merge_merge_request(
                 f'The merge is probably still running (Storage job {job_id}); check its state with get_merge_requests '
                 'in a moment, do not merge again and do not edit the branch meanwhile.'
             ),
+            links=c.mr_links(mr),
         )
     if str(final.get('status')) == 'success':
         return _merge_succeeded(c, mr, session=session, branch_name=branch_name, job_id=job_id, warnings=[])
@@ -946,7 +1037,15 @@ async def merge_merge_request(
             job_id=job_id,
             warnings=[f'The merge job reported a failure ({error}), but the merge request is merged.'],
         )
-    status = build_status(after, conflicts=None, admin_id=c.admin_id, session=session, branch_from_name=branch_name)
+    status = build_status(
+        after,
+        conflicts=None,
+        admin_id=c.admin_id,
+        session=session,
+        branch_from_name=branch_name,
+        branch_url=c.branch_url(mr),
+        project_url=c.project_url,
+    )
     return MergeResult(
         merge_request_id=mr_id,
         merged=False,
@@ -959,6 +1058,7 @@ async def merge_merge_request(
         source_branch_deleting=False,
         warnings=[],
         next_step=f'The merge job failed ({error}); the merge request is now in `{status.state}`. {status.next_step}',
+        links=c.mr_links(mr),
     )
 
 
@@ -974,30 +1074,30 @@ async def get_merge_request_conflicts(
     ] = None,
 ) -> MergeRequestConflictsOutput:
     """
-    Shows what blocks the current branch's merge request from merging: each conflicting configuration with its
-    three-way diff and a per-path classification.
+    Shows what blocks a merge request from merging: each conflicting configuration with its three-way diff and a
+    per-path classification.
 
-    Available only from a development-branch session; on production, tell the user to open a session on the
-    merge request's source branch and ask again there. A configuration conflicts when it changed both on the
-    branch and in production since the branch was created. For each one you get `base` / `ours` (branch) /
-    `theirs` (production), `changes` (each path tagged `changed_by` ours|theirs|both), `conflicting_paths`
-    (both sides changed differently — the actual conflict) and `suggested_take` when one side is a safe pick.
-    Walk the user through them one by one and resolve each with resolve_merge_request_conflict. Follow
-    `status.next_step`.
+    From a development-branch chat it works on that branch's merge request (merge_request_id optional); from a
+    production chat pass merge_request_id (use this route when Kai is unavailable on the branch because its merge
+    request is in review or approved). A chat on another development branch cannot use it. A configuration
+    conflicts when it changed both on the branch and in production since the branch was created. For each one you
+    get `base` / `ours` (branch) / `theirs` (production), `changes` (each path tagged `changed_by`
+    ours|theirs|both), `conflicting_paths` (both sides changed differently — the actual conflict) and
+    `suggested_take` when one side is a safe pick. Walk the user through them one by one and resolve each with
+    resolve_merge_request_conflict. Follow `status.next_step`.
     """
     c = await _load(ctx)
     mr = await _resolve_branch_mr(c, merge_request_id)
     mr_id = int(mr['id'])
     refs = _parse_conflicts(await c.client.storage_client.merge_request_conflicts(mr_id))
+    branch_client = await c.branch_client(mr) if refs else c.client  # /diff is branch-scoped
 
     async def _one(ref: ConflictRef) -> ConfigConflict:
-        diff = await c.client.storage_client.configuration_diff(ref.component_id, ref.configuration_id)
+        diff = await branch_client.storage_client.configuration_diff(ref.component_id, ref.configuration_id)
         return build_config_conflict(ref, diff)
 
     conflicts = unwrap_results(await process_concurrently(refs, _one), 'Failed to load configuration diffs')
-    status = build_status(
-        mr, conflicts=refs, admin_id=c.admin_id, session=c.session(mr), branch_from_name=c.branch_from_name(mr)
-    )
+    status = build_status(mr, conflicts=refs, **c.status_kwargs(mr))
     return MergeRequestConflictsOutput(merge_request_id=mr_id, conflicts=conflicts, status=status)
 
 
@@ -1035,11 +1135,12 @@ async def resolve_merge_request_conflict(
     ] = None,
 ) -> ResolveConflictResult:
     """
-    Resolves ONE conflicting configuration of the current branch's merge request by re-anchoring the branch
-    configuration onto the current production version with the chosen content.
+    Resolves ONE conflicting configuration of a merge request by re-anchoring the branch configuration onto the
+    current production version with the chosen content.
 
-    Available only from a development-branch session; on production, tell the user to open a session on the
-    merge request's source branch and ask again there. Call get_merge_request_conflicts first, then for each
+    From a development-branch chat it works on that branch's merge request (merge_request_id optional); from a
+    production chat pass merge_request_id — the resolution is written to the merge request's source branch. A chat
+    on another development branch cannot use it. Call get_merge_request_conflicts first, then for each
     conflict have the user choose: `take='ours'` / `'theirs'` / `'delete'`, or pass `resolved` with the
     hand-merged content. Taking one side discards the other side's changes and the rebase REPLACES the branch
     version (with 'delete' it deletes the configuration) — say so. The configuration must be in the merge
@@ -1061,7 +1162,8 @@ async def resolve_merge_request_conflict(
             'Call get_merge_request_conflicts for the current set.'
         )
 
-    diff = await c.client.storage_client.configuration_diff(component_id, configuration_id)
+    branch_client = await c.branch_client(mr)  # /diff and /rebase are branch-scoped
+    diff = await branch_client.storage_client.configuration_diff(component_id, configuration_id)
     theirs = diff.get('theirs')
     onto_version = theirs.get('version') if isinstance(theirs, Mapping) else None
     if onto_version is None:
@@ -1120,19 +1222,12 @@ async def resolve_merge_request_conflict(
         )
 
     async with _mapped_write_errors():
-        await c.client.storage_client.configuration_rebase(
+        await branch_client.storage_client.configuration_rebase(
             component_id, configuration_id, version=int(onto_version), diff=body
         )
 
     remaining = _parse_conflicts(await c.client.storage_client.merge_request_conflicts(mr_id))
-    status = build_status(
-        mr,
-        conflicts=remaining,
-        admin_id=c.admin_id,
-        session=c.session(mr),
-        branch_from_name=c.branch_from_name(mr),
-        remaining_conflicts=remaining,
-    )
+    status = build_status(mr, conflicts=remaining, remaining_conflicts=remaining, **c.status_kwargs(mr))
     return ResolveConflictResult(
         component_id=component_id,
         configuration_id=str(configuration_id),
