@@ -24,10 +24,11 @@ from keboola_mcp_server import auth_login
 from keboola_mcp_server.auth_login import TokenSet, save_tokens
 from keboola_mcp_server.clients.auth_bridge import StorageTokenResolver
 from keboola_mcp_server.clients.base import JsonDict
-from keboola_mcp_server.clients.client import DATA_APP_COMPONENT_ID, KeboolaClient
+from keboola_mcp_server.clients.client import DATA_APP_COMPONENT_ID, BranchNotFoundError, KeboolaClient
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
 from keboola_mcp_server.mcp import (
     CONVERSATION_ID,
+    DELETED_BRANCH_ID,
     DIRECTORY_TOOLS,
     LISTED_BRANCH_ID,
     STORAGE_API_URL,
@@ -838,44 +839,12 @@ class TestToolsFilteringMiddleware:
                 {'branches-merge-requests'},
                 False,
                 True,
-                'development-branch session',
+                'development-branch chat',
             ),
-            (
-                'request_merge_request_review',
-                False,
-                'admin',
-                {'branches-merge-requests'},
-                False,
-                True,
-                'development-branch session',
-            ),
-            (
-                'merge_merge_request',
-                False,
-                'admin',
-                {'branches-merge-requests'},
-                False,
-                True,
-                'development-branch session',
-            ),
-            (
-                'get_merge_request_conflicts',
-                True,
-                'guest',
-                {'branches-merge-requests'},
-                False,
-                True,
-                'development-branch session',
-            ),
-            (
-                'resolve_merge_request_conflict',
-                False,
-                'admin',
-                {'branches-merge-requests'},
-                False,
-                True,
-                'development-branch session',
-            ),
+            ('request_merge_request_review', False, 'admin', {'branches-merge-requests'}, False, True, None),
+            ('merge_merge_request', False, 'admin', {'branches-merge-requests'}, False, True, None),
+            ('get_merge_request_conflicts', True, 'guest', {'branches-merge-requests'}, False, True, None),
+            ('resolve_merge_request_conflict', False, 'admin', {'branches-merge-requests'}, False, True, None),
             ('create_merge_request', False, 'admin', {'branches-merge-requests'}, False, False, None),
             ('get_merge_request_conflicts', True, 'guest', {'branches-merge-requests'}, False, False, None),
             ('request_merge_request_changes', False, 'share', {'branches-merge-requests'}, False, True, None),
@@ -1015,6 +984,38 @@ class TestToolsFilteringMiddleware:
 
         assert seen == [token_info]
         assert TOKEN_INFO_VAR.get(None) is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ('read_only', 'expect_refused'),
+        [pytest.param(True, False, id='read_served_from_production'), pytest.param(False, True, id='write_refused')],
+    )
+    async def test_call_tool_on_a_session_whose_branch_was_deleted(
+        self, mcp_context_client, keboola_client, read_only: bool, expect_refused: bool
+    ) -> None:
+        """The session's branch is gone (merged): the client was rebuilt on production (`DELETED_BRANCH_ID`), reads
+        go through, writes are refused with the production handoff -- a ToolError, not a protocol error."""
+        mcp_context_client.session.state[DELETED_BRANCH_ID] = '273'
+        keboola_client.storage_client.verify_token = AsyncMock(
+            return_value={'owner': {'id': 123, 'features': []}, 'admin': {'id': 10, 'role': 'admin'}}
+        )
+        tool = _tool('get_config' if read_only else 'update_config', read_only=read_only)
+        mcp_context_client.fastmcp = SimpleNamespace(get_tool=AsyncMock(return_value=tool))
+        context = SimpleNamespace(fastmcp_context=mcp_context_client, message=SimpleNamespace(name=tool.name))
+        call_next = AsyncMock(return_value='result')
+
+        if expect_refused:
+            with pytest.raises(ToolError) as exc_info:
+                await ToolsFilteringMiddleware().on_call_tool(context, call_next)
+            assert str(exc_info.value) == (
+                'Branch 273 no longer exists; it was deleted after its merge request was merged. This chat is pinned '
+                'to that branch: it can still answer questions about production (read-only tools) but cannot change '
+                'anything. Tell the user the changes are in production and that to continue working they should open '
+                'Kai in production: https://connection.test.keboola.com/admin/projects/123'
+            )
+            call_next.assert_not_awaited()
+        else:
+            assert await ToolsFilteringMiddleware().on_call_tool(context, call_next) == 'result'
 
 
 class TestServerStateStorageTokenResolver:
@@ -1779,6 +1780,44 @@ class TestCreateSessionStateTokenResolutionWiring:
         assert client.bearer_token == 'kbc_at_abc'
         assert client.legacy_storage_token == 'legacy-storage-token-789'
         resolver.resolve.assert_awaited_once_with(subject_token='kbc_at_abc', project_id=42)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize('has_production_client', [True, False], ids=['falls_back_to_production', 'reraised'])
+    async def test_deleted_branch_falls_back_to_the_production_client(self, has_production_client: bool) -> None:
+        """A Kai chat keeps sending the branch it was opened on after that branch was merged and deleted: the
+        session is served from production and marked, instead of every request failing at the protocol level."""
+        config = Config(
+            storage_api_url='https://connection.keboola.com', storage_token='sapi_token_456', branch_id='273'
+        )
+        production = KeboolaClient(
+            storage_api_url='https://connection.keboola.com', legacy_storage_token='sapi_token_456'
+        )
+        request = httpx.Request('GET', 'https://connection.keboola.com/v2/storage/dev-branches/273')
+        error = BranchNotFoundError(
+            'Branch "273" not found',
+            branch_id='273',
+            request=request,
+            response=httpx.Response(404, request=request),
+            production_client=production if has_production_client else None,
+        )
+
+        with (
+            patch.object(WorkspaceManager, 'create', AsyncMock(return_value='wsm')),
+            patch('keboola_mcp_server.mcp.KeboolaClient.create', AsyncMock(side_effect=error)),
+        ):
+            if not has_production_client:
+                with pytest.raises(BranchNotFoundError):
+                    await SessionStateMiddleware.create_session_state(
+                        config, ServerRuntimeInfo(transport='http'), own_stack_storage_api_url=None
+                    )
+                return
+            state = await SessionStateMiddleware.create_session_state(
+                config, ServerRuntimeInfo(transport='http'), own_stack_storage_api_url=None
+            )
+
+        assert state[KeboolaClient.STATE_KEY] is production
+        assert state[KeboolaClient.STATE_KEY].branch_id is None
+        assert state[DELETED_BRANCH_ID] == '273'
 
 
 class TestMaybeUseStoredSession:
