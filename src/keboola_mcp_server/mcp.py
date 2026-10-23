@@ -178,7 +178,7 @@ DATA_APP_BRANCH_GATED_TOOLS = {
 # the commerce rules), and the tools that hand out a secret, which OpenAI forbids in responses:
 # `create_python_js_data_app_git_credential` and `modify_python_js_data_app` (git URLs with an embedded secret),
 # `delete_python_js_data_app_draft` (part of that git workflow) and `get_data_app_preview_link` (a URL that carries a
-# secret and skips the app login).
+# secret and skips the app login). The merge-request tools are not listed either: not reviewed for the directory yet.
 DIRECTORY_TOOLS = frozenset(
     {
         'add_config_row',

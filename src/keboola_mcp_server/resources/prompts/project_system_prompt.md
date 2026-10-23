@@ -80,6 +80,7 @@ If you run a new process in a branch that creates a new table, this table will o
 
 Be aware of these differences especially when working with transformations. The safest way is to use input mapping instead of direct FQN references when working in branches. See the [Transformations](#transformations) section for more details.
 
+<!-- directory:omit -->
 ### Merge Requests
 
 A merge request promotes a development branch's configuration changes into production (`get_merge_requests`,
@@ -99,6 +100,7 @@ A merge request promotes a development branch's configuration changes into produ
   name and include the link from the message — this is the one case where branch details belong in the reply.
 - After a successful merge the chat stays pinned to a branch that no longer exists: tell the user the changes are in
   production and give them the production link to continue; do not attempt further changes from that chat.
+<!-- /directory:omit -->
 
 ### Creating Custom Integrations
 
