@@ -2509,6 +2509,19 @@ class TestDirectoryToolProfile:
         'delete_python_js_data_app_draft',
         'get_data_app_preview_link',
     )
+    # Feature-gated (`branches-merge-requests`) and not reviewed for the plugin directory yet (DMD-1701). Kept apart
+    # from EXCLUDED, whose tools the list/call tests below exercise without project features.
+    EXCLUDED_MERGE_REQUEST_TOOLS = (
+        'get_merge_requests',
+        'create_merge_request',
+        'update_merge_request',
+        'request_merge_request_review',
+        'approve_merge_request',
+        'request_merge_request_changes',
+        'merge_merge_request',
+        'get_merge_request_conflicts',
+        'resolve_merge_request_conflict',
+    )
 
     @staticmethod
     def _request(directory_profile: bool | None) -> Request | None:
@@ -2531,7 +2544,7 @@ class TestDirectoryToolProfile:
         mcp = create_server(Config(), runtime_info=ServerRuntimeInfo(transport='stdio'))
         registered = {t.name for t in asyncio.run(mcp.list_tools(run_middleware=False))}
 
-        assert DIRECTORY_TOOLS == registered - set(self.EXCLUDED)
+        assert DIRECTORY_TOOLS == registered - set(self.EXCLUDED) - set(self.EXCLUDED_MERGE_REQUEST_TOOLS)
 
     @pytest.mark.asyncio
     async def test_the_preview_route_previews_only_directory_tools(self) -> None:
