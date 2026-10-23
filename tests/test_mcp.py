@@ -23,13 +23,15 @@ from keboola_mcp_server import auth_login
 from keboola_mcp_server.auth_login import TokenSet, save_tokens
 from keboola_mcp_server.clients.auth_bridge import StorageTokenResolver
 from keboola_mcp_server.clients.base import JsonDict
-from keboola_mcp_server.clients.client import KeboolaClient
+from keboola_mcp_server.clients.client import BranchNotFoundError, KeboolaClient
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
 from keboola_mcp_server.mcp import (
     CONVERSATION_ID,
+    DELETED_BRANCH_ID,
     DIRECTORY_TOOLS,
     LISTED_BRANCH_ID,
     STORAGE_API_URL,
+    TOKEN_INFO_VAR,
     AggregateError,
     DirectoryProfileMiddleware,
     ServerState,
@@ -801,6 +803,225 @@ class TestToolsFilteringMiddleware:
             result = await middleware.on_call_tool(context, call_next)
             assert result is expected
 
+    @pytest.mark.parametrize(
+        ('tool_name', 'is_read_only', 'token_role', 'features', 'is_oauth', 'is_main_branch', 'expected_fragment'),
+        [
+            # feature axis: every MR tool needs the project feature, reads included
+            ('get_merge_requests', True, 'admin', set(), False, True, 'branches-merge-requests'),
+            ('merge_merge_request', False, 'admin', set(), False, False, 'branches-merge-requests'),
+            # role axis: reads open to everyone, writes need admin/share or OAuth
+            ('get_merge_requests', True, 'guest', {'branches-merge-requests'}, False, True, None),
+            ('get_merge_requests', True, 'developer', {'branches-merge-requests'}, False, True, None),
+            ('approve_merge_request', False, 'admin', {'branches-merge-requests'}, False, True, None),
+            ('approve_merge_request', False, 'share', {'branches-merge-requests'}, False, True, None),
+            ('approve_merge_request', False, 'developer', {'branches-merge-requests'}, False, True, 'admin" or "share'),
+            ('approve_merge_request', False, 'reviewer', {'branches-merge-requests'}, False, True, 'admin" or "share'),
+            ('approve_merge_request', False, 'guest', {'branches-merge-requests'}, False, True, 'admin" or "share'),
+            ('approve_merge_request', False, '', {'branches-merge-requests'}, True, True, None),  # OAuth carve-out
+            (
+                'update_merge_request',
+                False,
+                'readOnly',
+                {'branches-merge-requests'},
+                False,
+                True,
+                'read-only operations',
+            ),
+            # branch axis: only create_merge_request is branch-only (denied on main with the branch-agnostic
+            # message); merge / request-review / conflicts / resolve run from production with an explicit id
+            (
+                'create_merge_request',
+                False,
+                'admin',
+                {'branches-merge-requests'},
+                False,
+                True,
+                'development-branch chat',
+            ),
+            ('request_merge_request_review', False, 'admin', {'branches-merge-requests'}, False, True, None),
+            ('merge_merge_request', False, 'admin', {'branches-merge-requests'}, False, True, None),
+            ('get_merge_request_conflicts', True, 'guest', {'branches-merge-requests'}, False, True, None),
+            ('resolve_merge_request_conflict', False, 'admin', {'branches-merge-requests'}, False, True, None),
+            ('create_merge_request', False, 'admin', {'branches-merge-requests'}, False, False, None),
+            ('get_merge_request_conflicts', True, 'guest', {'branches-merge-requests'}, False, False, None),
+            ('request_merge_request_changes', False, 'share', {'branches-merge-requests'}, False, True, None),
+            ('get_merge_requests', True, 'guest', {'branches-merge-requests'}, False, False, None),
+        ],
+    )
+    def test_authorize_merge_request_tools(
+        self,
+        tool_name: str,
+        is_read_only: bool,
+        token_role: str,
+        features: set[str],
+        is_oauth: bool,
+        is_main_branch: bool,
+        expected_fragment: str | None,
+    ) -> None:
+        """The three gating axes of the merge-request tools (feature, role + OAuth carve-out, session branch)."""
+        denial = ToolsFilteringMiddleware.authorize_tool_call(
+            tool_name=tool_name,
+            is_read_only=is_read_only,
+            is_semantic=False,
+            has_semantic_models=False,
+            token_role=token_role,
+            features=features,
+            is_oauth=is_oauth,
+            is_main_branch=is_main_branch,
+        )
+        if expected_fragment is None:
+            assert denial is None
+        else:
+            assert denial is not None and expected_fragment in denial
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ('token_role', 'bearer_token', 'features', 'branch_id', 'hidden_tools', 'visible_tools'),
+        [
+            pytest.param(
+                'admin',
+                None,
+                [],
+                None,
+                {'get_merge_requests', 'create_merge_request', 'approve_merge_request'},
+                set(),
+                id='no_feature_hides_all',
+            ),
+            pytest.param(
+                'developer',
+                None,
+                ['branches-merge-requests'],
+                None,
+                {'create_merge_request', 'approve_merge_request'},
+                {'get_merge_requests', 'get_merge_request_conflicts'},
+                id='developer_sees_reads_only',
+            ),
+            pytest.param(
+                '',
+                'oauth_token',
+                ['branches-merge-requests'],
+                None,
+                set(),
+                {'get_merge_requests', 'create_merge_request', 'approve_merge_request'},
+                id='oauth_sees_writes',
+            ),
+            pytest.param(
+                'admin',
+                None,
+                ['branches-merge-requests'],
+                None,
+                set(),
+                {'create_merge_request', 'merge_merge_request', 'get_merge_request_conflicts'},
+                id='branch_only_tools_stay_visible_on_main',
+            ),
+            pytest.param(
+                'admin',
+                None,
+                ['branches-merge-requests'],
+                'dev-55',
+                set(),
+                {'create_merge_request', 'merge_merge_request', 'approve_merge_request'},
+                id='dev_branch_sees_everything',
+            ),
+        ],
+    )
+    async def test_list_tools_filters_merge_request_tools(
+        self,
+        mcp_context_client,
+        keboola_client,
+        token_role: str,
+        bearer_token: str | None,
+        features: list[str],
+        branch_id: str | None,
+        hidden_tools: set[str],
+        visible_tools: set[str],
+    ) -> None:
+        keboola_client.bearer_token = bearer_token
+        keboola_client.branch_id = branch_id
+        keboola_client.storage_client.verify_token = AsyncMock(
+            return_value={'owner': {'features': features}, 'admin': {'role': token_role}}
+        )
+        tools = [
+            _tool('get_merge_requests', read_only=True),
+            _tool('get_merge_request_conflicts', read_only=True),
+            _tool('create_merge_request'),
+            _tool('approve_merge_request'),
+            _tool('merge_merge_request'),
+            _tool('other_tool'),
+        ]
+
+        async def call_next(_):
+            return tools
+
+        middleware = ToolsFilteringMiddleware()
+        context = SimpleNamespace(fastmcp_context=mcp_context_client)
+        result_names = {t.name for t in await middleware.on_list_tools(context, call_next)}
+
+        assert 'other_tool' in result_names
+        assert hidden_tools.isdisjoint(result_names)
+        assert visible_tools <= result_names
+
+    @pytest.mark.asyncio
+    async def test_call_tool_publishes_token_info_for_the_call(self, mcp_context_client, keboola_client) -> None:
+        """The tool body reads the verification the middleware already paid for (no second verify_token); the
+        contextvar is scoped to the call and reset afterwards."""
+        token_info = {'owner': {'id': 1, 'features': ['branches-merge-requests']}, 'admin': {'id': 10, 'role': 'admin'}}
+        keboola_client.storage_client.verify_token = AsyncMock(return_value=token_info)
+        tool = _tool('get_merge_requests', read_only=True)
+        mcp_context_client.fastmcp = SimpleNamespace(get_tool=AsyncMock(return_value=tool))
+        context = SimpleNamespace(fastmcp_context=mcp_context_client, message=SimpleNamespace(name=tool.name))
+
+        seen: list = []
+
+        async def call_next(_):
+            seen.append(TOKEN_INFO_VAR.get(None))
+            return MagicMock()
+
+        await ToolsFilteringMiddleware().on_call_tool(context, call_next)
+
+        assert seen == [token_info]
+        assert TOKEN_INFO_VAR.get(None) is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ('tool_name', 'read_only', 'expect_refused'),
+        [
+            pytest.param('get_config', True, False, id='read_served_from_production'),
+            pytest.param('update_config', False, True, id='write_refused'),
+            # The session now looks like production; the deleted-branch handoff must win over the branch-only denial.
+            pytest.param('create_merge_request', False, True, id='branch_only_write_gets_the_handoff'),
+        ],
+    )
+    async def test_call_tool_on_a_session_whose_branch_was_deleted(
+        self, mcp_context_client, keboola_client, tool_name: str, read_only: bool, expect_refused: bool
+    ) -> None:
+        """The session's branch is gone (merged): the client was rebuilt on production (`DELETED_BRANCH_ID`), reads
+        go through, writes are refused with the production handoff -- a ToolError, not a protocol error."""
+        mcp_context_client.session.state[DELETED_BRANCH_ID] = '273'
+        keboola_client.storage_client.verify_token = AsyncMock(
+            return_value={
+                'owner': {'id': 123, 'features': ['branches-merge-requests']},
+                'admin': {'id': 10, 'role': 'admin'},
+            }
+        )
+        tool = _tool(tool_name, read_only=read_only)
+        mcp_context_client.fastmcp = SimpleNamespace(get_tool=AsyncMock(return_value=tool))
+        context = SimpleNamespace(fastmcp_context=mcp_context_client, message=SimpleNamespace(name=tool.name))
+        call_next = AsyncMock(return_value='result')
+
+        if expect_refused:
+            with pytest.raises(ToolError) as exc_info:
+                await ToolsFilteringMiddleware().on_call_tool(context, call_next)
+            assert str(exc_info.value) == (
+                'Branch 273 no longer exists; most likely it was deleted after its merge request was merged. This chat '
+                'is pinned to that branch: it can still answer questions about production (read-only tools) but cannot '
+                'change anything. Tell the user the changes are in production and that to continue working they should '
+                'open a new chat in production: https://connection.test.keboola.com/admin/projects/123'
+            )
+            call_next.assert_not_awaited()
+        else:
+            assert await ToolsFilteringMiddleware().on_call_tool(context, call_next) == 'result'
+
 
 class TestServerStateStorageTokenResolver:
     """`ServerState.storage_token_resolver` -- PSGO-280 (P1): a fanned-out multi-project call, and
@@ -1565,6 +1786,44 @@ class TestCreateSessionStateTokenResolutionWiring:
         assert client.legacy_storage_token == 'legacy-storage-token-789'
         resolver.resolve.assert_awaited_once_with(subject_token='kbc_at_abc', project_id=42)
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize('has_production_client', [True, False], ids=['falls_back_to_production', 'reraised'])
+    async def test_deleted_branch_falls_back_to_the_production_client(self, has_production_client: bool) -> None:
+        """A Kai chat keeps sending the branch it was opened on after that branch was merged and deleted: the
+        session is served from production and marked, instead of every request failing at the protocol level."""
+        config = Config(
+            storage_api_url='https://connection.keboola.com', storage_token='sapi_token_456', branch_id='273'
+        )
+        production = KeboolaClient(
+            storage_api_url='https://connection.keboola.com', legacy_storage_token='sapi_token_456'
+        )
+        request = httpx.Request('GET', 'https://connection.keboola.com/v2/storage/dev-branches/273')
+        error = BranchNotFoundError(
+            'Branch "273" not found',
+            branch_id='273',
+            request=request,
+            response=httpx.Response(404, request=request),
+            production_client=production if has_production_client else None,
+        )
+
+        with (
+            patch.object(WorkspaceManager, 'create', AsyncMock(return_value='wsm')),
+            patch('keboola_mcp_server.mcp.KeboolaClient.create', AsyncMock(side_effect=error)),
+        ):
+            if not has_production_client:
+                with pytest.raises(BranchNotFoundError):
+                    await SessionStateMiddleware.create_session_state(
+                        config, ServerRuntimeInfo(transport='http'), own_stack_storage_api_url=None
+                    )
+                return
+            state = await SessionStateMiddleware.create_session_state(
+                config, ServerRuntimeInfo(transport='http'), own_stack_storage_api_url=None
+            )
+
+        assert state[KeboolaClient.STATE_KEY] is production
+        assert state[KeboolaClient.STATE_KEY].branch_id is None
+        assert state[DELETED_BRANCH_ID] == '273'
+
 
 class TestMaybeUseStoredSession:
     """Local HTTP with no token falls back to the stored PKCE session (PSGO-261)."""
@@ -2250,6 +2509,19 @@ class TestDirectoryToolProfile:
         'delete_python_js_data_app_draft',
         'get_data_app_preview_link',
     )
+    # Feature-gated (`branches-merge-requests`) and not reviewed for the plugin directory yet (DMD-1701). Kept apart
+    # from EXCLUDED, whose tools the list/call tests below exercise without project features.
+    EXCLUDED_MERGE_REQUEST_TOOLS = (
+        'get_merge_requests',
+        'create_merge_request',
+        'update_merge_request',
+        'request_merge_request_review',
+        'approve_merge_request',
+        'request_merge_request_changes',
+        'merge_merge_request',
+        'get_merge_request_conflicts',
+        'resolve_merge_request_conflict',
+    )
 
     @staticmethod
     def _request(directory_profile: bool | None) -> Request | None:
@@ -2272,7 +2544,7 @@ class TestDirectoryToolProfile:
         mcp = create_server(Config(), runtime_info=ServerRuntimeInfo(transport='stdio'))
         registered = {t.name for t in asyncio.run(mcp.list_tools(run_middleware=False))}
 
-        assert DIRECTORY_TOOLS == registered - set(self.EXCLUDED)
+        assert DIRECTORY_TOOLS == registered - set(self.EXCLUDED) - set(self.EXCLUDED_MERGE_REQUEST_TOOLS)
 
     @pytest.mark.asyncio
     async def test_the_preview_route_previews_only_directory_tools(self) -> None:

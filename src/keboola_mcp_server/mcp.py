@@ -52,7 +52,7 @@ from keboola_mcp_server.clients.auth_bridge import (
     strip_bearer,
 )
 from keboola_mcp_server.clients.base import JsonDict
-from keboola_mcp_server.clients.client import KeboolaClient
+from keboola_mcp_server.clients.client import BranchNotFoundError, KeboolaClient
 from keboola_mcp_server.config import (
     Config,
     ServerRuntimeInfo,
@@ -86,6 +86,10 @@ from keboola_mcp_server.session_store.kai_scope import KaiScopeStore
 from keboola_mcp_server.session_store.repository import SessionStore
 from keboola_mcp_server.tools.constants import (
     BOOTSTRAP_TOOLS,
+    MERGE_REQUEST_BRANCH_ONLY_MESSAGE,
+    MERGE_REQUEST_BRANCH_ONLY_TOOLS,
+    MERGE_REQUEST_TOOL_NAMES,
+    MERGE_REQUESTS_FEATURE,
     MODIFY_FLOW_TOOL_NAME,
     SEMANTIC_TOOLS_TAG,
     UPDATE_FLOW_TOOL_NAME,
@@ -98,10 +102,26 @@ CONVERSATION_ID = 'conversation_id'
 # branch (see `SessionStateMiddleware.on_request`), so `ToolsFilteringMiddleware` reads this to apply
 # the branch-gated filters.
 LISTED_BRANCH_ID = 'listed_branch_id'
+# The development branch this request was configured for although it no longer exists (deleted after its merge
+# request was merged). The session client is then built on the production branch so read-only tools keep working,
+# and `ToolsFilteringMiddleware.on_call_tool` refuses every write with the handoff below -- a Kai chat is pinned
+# to its branch for its whole life, so without this every call after a merge fails at the protocol level.
+DELETED_BRANCH_ID = 'deleted_branch_id'
+DELETED_BRANCH_WRITE_MESSAGE = (
+    'Branch {branch_id} no longer exists; most likely it was deleted after its merge request was merged. This chat '
+    'is pinned to that branch: it can still answer questions about production (read-only tools) but cannot change '
+    'anything. Tell the user the changes are in production and that to continue working they should open a new chat '
+    'in production: {project_url}'
+)
 # The stack URL this session resolved to (header, env or CLI). Kept in the session state because a
 # bootstrap session (no credential yet, see `create_session_state`) has no KeboolaClient to read it
 # from, and `ServerState.config` holds only the server-level value, not the request's.
 STORAGE_API_URL = 'storage_api_url'
+# ToolsFilteringMiddleware.on_call_tool publishes the `verify_token` result of the current call here, so tool
+# bodies (merge requests: role, admin id, project id) can read it without a second call. A contextvar, not
+# session state: it is scoped to this call's task, so concurrent calls (multi-project fan-out) cannot see each
+# other's token info.
+TOKEN_INFO_VAR: ContextVar[JsonDict | None] = ContextVar('token_info', default=None)
 
 # The project the current request runs against, stamped on every log record (see
 # `install_project_id_log_field`) so logs can be filtered per project/organization in Datadog.
@@ -157,7 +177,7 @@ DATA_APP_BRANCH_GATED_TOOLS = {
 # the commerce rules), and the tools that hand out a secret, which OpenAI forbids in responses:
 # `create_python_js_data_app_git_credential` and `modify_python_js_data_app` (git URLs with an embedded secret),
 # `delete_python_js_data_app_draft` (part of that git workflow) and `get_data_app_preview_link` (a URL that carries a
-# secret and skips the app login).
+# secret and skips the app login). The merge-request tools are not listed either: not reviewed for the directory yet.
 DIRECTORY_TOOLS = frozenset(
     {
         'add_config_row',
@@ -1268,20 +1288,30 @@ class SessionStateMiddleware(fmw.Middleware):
             # a project is chosen. A legacy project-bound Storage token derives its project from
             # the token itself and must not get the header.
             project_id = config.project_id if is_programmatic_token(config.storage_token) else None
-            client = await KeboolaClient.create(
-                storage_api_url=config.storage_api_url,
-                storage_token=config.storage_token,
-                bearer_token=config.bearer_token,
-                branch_id=config.branch_id,
-                project_id=project_id,
-                token_resolver=token_resolver,
-                headers={
-                    **build_tracing_headers(runtime_info),
-                    **({'X-KBC-ProjectId': project_id} if project_id else {}),
-                },
-                readonly=readonly,
-                own_stack_storage_api_url=own_stack_storage_api_url,
-            )
+            try:
+                client = await KeboolaClient.create(
+                    storage_api_url=config.storage_api_url,
+                    storage_token=config.storage_token,
+                    bearer_token=config.bearer_token,
+                    branch_id=config.branch_id,
+                    project_id=project_id,
+                    token_resolver=token_resolver,
+                    headers={
+                        **build_tracing_headers(runtime_info),
+                        **({'X-KBC-ProjectId': project_id} if project_id else {}),
+                    },
+                    readonly=readonly,
+                    own_stack_storage_api_url=own_stack_storage_api_url,
+                )
+            except BranchNotFoundError as e:
+                if e.production_client is None:
+                    raise
+                # The configured branch is gone (deleted after its merge request was merged). Serve the session
+                # from production instead of failing every request; writes are refused in
+                # `ToolsFilteringMiddleware.on_call_tool` (see DELETED_BRANCH_ID).
+                LOG.warning(f'Branch "{e.branch_id}" not found; serving the session from the production branch.')
+                client = e.production_client
+                state[DELETED_BRANCH_ID] = e.branch_id
 
             state[KeboolaClient.STATE_KEY] = client
             LOG.info('Successfully initialized Storage API client.')
@@ -1481,6 +1511,14 @@ class ToolsFilteringMiddleware(fmw.Middleware):
             # Filter out data app tools when the client is not using the main/production branch
             tools = [t for t in tools if t.name not in DATA_APP_BRANCH_GATED_TOOLS]
 
+        # Merge-request tools: hidden when the project lacks the feature; the writes hidden for roles that cannot
+        # use them. The branch-only tools stay visible on production on purpose (call-time denial only) so the
+        # model keeps their descriptions and can hand the user off to a development-branch session.
+        if MERGE_REQUESTS_FEATURE not in features:
+            tools = [t for t in tools if t.name not in MERGE_REQUEST_TOOL_NAMES]
+        elif not (token_role in ('admin', 'share') or is_oauth):
+            tools = [t for t in tools if t.name not in MERGE_REQUEST_TOOL_NAMES or is_read_only_tool(t)]
+
         if token_role == 'readonly':
             tools = [t for t in tools if is_read_only_tool(t)]
             LOG.debug(f'Read-only access: filtered to {len(tools)} read-only tools for role={token_role}')
@@ -1561,7 +1599,33 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         if tool_name in DATA_APP_BRANCH_GATED_TOOLS and not is_main_branch:
             return 'Data apps are supported only in the main production branch.'
 
+        if tool_name in MERGE_REQUEST_TOOL_NAMES:
+            # Three axes (RFC feature_spec/branches_merge_requests_mcp): feature, role (+ OAuth carve-out as for
+            # the flow tools above), and session branch. Reads are open to every role.
+            if MERGE_REQUESTS_FEATURE not in features:
+                return (
+                    f'The tool "{tool_name}" is not available in this project. Merge requests require the '
+                    f'"{MERGE_REQUESTS_FEATURE}" project feature; ask Keboola support to enable it.'
+                )
+            if not is_read_only and token_role not in ('admin', 'share') and not is_oauth:
+                return (
+                    f'The tool "{tool_name}" is not available for your role ({token_role or "unknown"}). '
+                    'Only project admins (role "admin" or "share") can modify merge requests.'
+                )
+            if is_main_branch and tool_name in MERGE_REQUEST_BRANCH_ONLY_TOOLS:
+                return MERGE_REQUEST_BRANCH_ONLY_MESSAGE
+
         return None
+
+    @staticmethod
+    def _deleted_branch_write_message(ctx: Context, token_info: JsonDict, branch_id: str) -> str:
+        """The write refusal of a session whose branch is gone, with the production project's UI link."""
+        client = KeboolaClient.from_state(ctx.session.state)
+        owner = token_info.get('owner')
+        project_id = owner.get('id') if isinstance(owner, dict) else None
+        base_url = client.storage_api_url.rstrip('/')
+        project_url = f'{base_url}/admin/projects/{project_id}' if project_id is not None else base_url
+        return DELETED_BRANCH_WRITE_MESSAGE.format(branch_id=branch_id, project_url=project_url)
 
     async def on_call_tool(
         self,
@@ -1592,6 +1656,13 @@ class ToolsFilteringMiddleware(fmw.Middleware):
             # explanation -- which is exactly backwards for the one audience that needs it most.
             raise ToolError(str(e)) from e
 
+        deleted_branch_id = context.fastmcp_context.session.state.get(DELETED_BRANCH_ID)
+        if deleted_branch_id and not is_read_only_tool(tool):
+            # The session's branch was deleted (merged) and the client was silently rebuilt on production for the
+            # reads; a write would land in production from a chat the user started in a branch, so it is refused. Checked before
+            # the other denials: the session now looks like production, so a branch-only denial would mislead.
+            raise ToolError(self._deleted_branch_write_message(context.fastmcp_context, token_info, deleted_branch_id))
+
         has_semantic_models = False
         if is_semantic_tool(tool):
             client = KeboolaClient.from_state(context.fastmcp_context.session.state)
@@ -1610,7 +1681,11 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         if denial:
             raise ToolError(denial)
 
-        return await call_next(context)
+        token = TOKEN_INFO_VAR.set(token_info)
+        try:
+            return await call_next(context)
+        finally:
+            TOKEN_INFO_VAR.reset(token)
 
 
 def _to_python(data: Any, exclude_none: bool = True) -> Any | None:
