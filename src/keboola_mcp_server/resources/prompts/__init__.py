@@ -107,15 +107,20 @@ def load_prompt(name: str) -> str:
     return resources.files(__package__).joinpath(name).read_text(encoding='utf-8')
 
 
-# Blocks of the project system prompt that differ for sessions of the ChatGPT plugin (the directory tool profile,
-# `mcp.DIRECTORY_TOOLS`): `omit` blocks name tools those sessions do not have, `only` blocks replace them.
-_DIRECTORY_BLOCK = re.compile(r'<!-- (/?)directory:(omit|only) -->\n')
-_DIRECTORY_OMIT = re.compile(r'<!-- directory:omit -->\n.*?<!-- /directory:omit -->\n', re.DOTALL)
-_DIRECTORY_ONLY = re.compile(r'<!-- directory:only -->\n.*?<!-- /directory:only -->\n', re.DOTALL)
+# Blocks of the project system prompt and of tool descriptions that differ for sessions of the ChatGPT plugin (the
+# directory tool profile, `mcp.DIRECTORY_TOOLS`): `omit` blocks name tools those sessions do not have, `only` blocks
+# replace them. A marker is a whole line of its own; its indentation does not matter.
+_DIRECTORY_BLOCK = re.compile(r'^[ \t]*<!-- (/?)directory:(omit|only) -->[ \t]*\n', re.MULTILINE)
+_DIRECTORY_OMIT = re.compile(
+    r'^[ \t]*<!-- directory:omit -->[ \t]*\n.*?^[ \t]*<!-- /directory:omit -->[ \t]*\n', re.DOTALL | re.MULTILINE
+)
+_DIRECTORY_ONLY = re.compile(
+    r'^[ \t]*<!-- directory:only -->[ \t]*\n.*?^[ \t]*<!-- /directory:only -->[ \t]*\n', re.DOTALL | re.MULTILINE
+)
 
 
-def _prompt_variant(text: str, *, directory: bool) -> str:
-    """The prompt for the directory tool profile or for every other session, with the markers removed."""
+def directory_variant(text: str, *, directory: bool) -> str:
+    """The text for the directory tool profile or for every other session, with the markers removed."""
     text = (_DIRECTORY_OMIT if directory else _DIRECTORY_ONLY).sub('', text)
     return _DIRECTORY_BLOCK.sub('', text)
 
@@ -123,7 +128,7 @@ def _prompt_variant(text: str, *, directory: bool) -> str:
 def get_project_system_prompt(sql_dialect: str = '', *, directory: bool = False) -> str:
     """:param directory: The session has the directory tool profile (ChatGPT plugin): the variant that names only the
     tools it has."""
-    base = _prompt_variant(load_prompt('project_system_prompt.md'), directory=directory)
+    base = directory_variant(load_prompt('project_system_prompt.md'), directory=directory)
     if not sql_dialect:
         return base
     return _build_dialect_section(sql_dialect) + '\n\n---\n\n' + base

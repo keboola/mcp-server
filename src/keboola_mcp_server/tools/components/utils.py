@@ -41,6 +41,7 @@ from keboola_mcp_server.clients.client import (
 from keboola_mcp_server.clients.storage import ComponentAPIResponse, ConfigurationAPIResponse
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.links import ProjectLinksManager
+from keboola_mcp_server.mcp import is_directory_session
 from keboola_mcp_server.tools.components import tf_update
 from keboola_mcp_server.tools.components.model import (
     ALL_COMPONENT_TYPES,
@@ -1072,6 +1073,10 @@ _UNSUITABLE_COMPONENTS_MESSAGES: Mapping[str, str] = {
     BIGQUERY_TRANSFORMATION_ID: 'Use `create_sql_transformation` / `update_sql_transformation` instead.',
     SNOWFLAKE_TRANSFORMATION_ID: 'Use `create_sql_transformation` / `update_sql_transformation` instead.',
 }
+# Overrides for a session of the ChatGPT plugin, which has no `modify_python_js_data_app` (`mcp.DIRECTORY_TOOLS`).
+_DIRECTORY_UNSUITABLE_COMPONENTS_MESSAGES: Mapping[str, str] = {
+    DATA_APP_COMPONENT_ID: 'Use `modify_streamlit_data_app` / `deploy_data_app` instead.',
+}
 
 
 def check_suitable(tool_name: str, component_id: str, *, runtime: Mapping[str, Any] | None = None) -> None:
@@ -1084,14 +1089,20 @@ def check_suitable(tool_name: str, component_id: str, *, runtime: Mapping[str, A
     :raises ValueError: If the component needs to be handled by special tools.
     """
     if message := _UNSUITABLE_COMPONENTS_MESSAGES.get(component_id):
+        directory = is_directory_session()
+        if directory:
+            message = _DIRECTORY_UNSUITABLE_COMPONENTS_MESSAGES.get(component_id, message)
         if component_id == DATA_APP_COMPONENT_ID and isinstance(runtime, Mapping) and 'workspace' in runtime:
             # Writing `runtime.workspace` on a data app is an attempt to toggle Storage access.
             # Answer with the call that does it, so the rejection is the recovery path rather than
             # a redirect the caller still has to interpret.
-            message = (
-                "To change a data app's Storage access, call "
-                '`modify_python_js_data_app(configuration_id=..., storage_access=True)` (or '
-                '`storage_access=False` to turn it off), then `deploy_data_app`. '
-                f'{message}'
-            )
+            if directory:
+                message = "A data app's Storage access cannot be changed here; tell the user so."
+            else:
+                message = (
+                    "To change a data app's Storage access, call "
+                    '`modify_python_js_data_app(configuration_id=..., storage_access=True)` (or '
+                    '`storage_access=False` to turn it off), then `deploy_data_app`. '
+                    f'{message}'
+                )
         raise ValueError(f'The "{tool_name}" tool cannot be used with {component_id} component. {message}')
