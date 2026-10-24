@@ -38,6 +38,8 @@ def keboola_client(mocker) -> KeboolaClient:
     client.hostname_suffix = 'test.keboola.com'
     client.headers = {}
     client.with_branch_id = mocker.AsyncMock(return_value=client)
+    # No project feature unless a test turns it on (an awaited mock attribute would otherwise be truthy).
+    client.has_feature = mocker.AsyncMock(return_value=False)
     # New per-session flow-schema cache: default to "empty cache" so resolve_flow_schema()
     # always exercises the (patched) fetch_component in tests instead of returning a MagicMock.
     client.get_cached_flow_schema = mocker.Mock(return_value=None)
