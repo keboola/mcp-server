@@ -2521,6 +2521,13 @@ class TestDirectoryToolProfile:
             assert named == []
         else:
             assert named == ['modify_python_js_data_app']
+        # A plugin session that tries to toggle a data app's Storage access gets its own answer, not the redirect.
+        storage_access_answer = "A data app's Storage access cannot be changed here; tell the user so." in str(
+            error.value
+        )
+        assert storage_access_answer is (
+            directory_profile and component_id == DATA_APP_COMPONENT_ID and runtime is not None
+        )
 
     @pytest.mark.parametrize('sql_dialect', ['', 'Snowflake', 'BigQuery'])
     def test_the_directory_instructions_name_only_directory_tools(self, sql_dialect: str) -> None:
