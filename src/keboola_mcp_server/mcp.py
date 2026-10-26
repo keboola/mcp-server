@@ -56,8 +56,10 @@ from keboola_mcp_server.clients.auth_bridge import (
 from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import FLOW_TYPES, BranchNotFoundError, KeboolaClient
 from keboola_mcp_server.config import (
+    WORKSPACE_SCOPE_STRICT,
     Config,
     ServerRuntimeInfo,
+    WorkspaceScopeError,
     build_tracing_headers,
     deployed_sa_token_path,
     is_same_stack,
@@ -125,6 +127,15 @@ STORAGE_API_URL = 'storage_api_url'
 # session state: it is scoped to this call's task, so concurrent calls (multi-project fan-out) cannot see each
 # other's token info.
 TOKEN_INFO_VAR: ContextVar[JsonDict | None] = ContextVar('token_info', default=None)
+# The session's `Config.workspace_scope`. Kept in the session state for the same reason as STORAGE_API_URL: a
+# bootstrap session has no WorkspaceManager to carry it, yet its tools must be limited all the same.
+WORKSPACE_SCOPE = 'workspace_scope'
+
+
+def is_strict_workspace_scope(state: Any) -> bool:
+    """Whether the session state belongs to a session with `X-Workspace-Scope: strict`."""
+    return isinstance(state, dict) and state.get(WORKSPACE_SCOPE) == WORKSPACE_SCOPE_STRICT
+
 
 # The project the current request runs against, stamped on every log record (see
 # `install_project_id_log_field`) so logs can be filtered per project/organization in Datadog.
@@ -541,13 +552,18 @@ def directory_denial(tool_name: str) -> str:
 #: Exceptions this middleware raises whose message *is* the answer the caller needs, rather than a
 #: failure to be reported as one. They have to leave as `ToolError`, because anything else raised
 #: from a middleware is not a tool result: FastMCP masks it and the caller is handed "Internal
-#: server error" instead of the explanation -- which is precisely backwards for these three.
+#: server error" instead of the explanation -- which is precisely backwards for these.
 #:
 #: Found on canary-orion: claiming a provisioned project did end the session exactly as designed
 #: (Connection refused the refresh token, the row was revoked, `session_ended` was raised with the
 #: right text) and the caller still saw only "Internal server error" -- the one outcome requirement
 #: 5 of the RFC exists to prevent.
-_CALLER_FACING_ERRORS = (ProvisionedSessionEnded, ProvisionedSessionRotationLost, ScopeTokenUnreadable)
+_CALLER_FACING_ERRORS = (
+    ProvisionedSessionEnded,
+    ProvisionedSessionRotationLost,
+    ScopeTokenUnreadable,
+    WorkspaceScopeError,
+)
 
 
 class SessionStateMiddleware(fmw.Middleware):
@@ -982,6 +998,14 @@ class SessionStateMiddleware(fmw.Middleware):
             # detects it downstream and the full PSGO-261 multi-project machinery applies unchanged.
             config = dataclasses.replace(config, storage_token=user.access_token.kbc_access_token)
 
+        config.check_workspace_scope()
+        if config.is_strict_workspace_scope and Config.count_header_values(http_rq.headers, 'workspace_id') > 1:
+            # A broker in front of this server sets the pin; the caller behind it can add the same field under
+            # another spelling or repeat the header, and `KBC_` beats `X-` while a repeated header's last value wins.
+            raise WorkspaceScopeError(
+                'A strict workspace scope requires exactly one workspace pin, but more than one header sets it.'
+            )
+
         if is_anonymous_entry(http_rq):
             # The unauthenticated endpoint serves exactly one shape of caller: one who has no
             # credential of their own (see `anonymous_entry`). The caller's own headers were already
@@ -1343,8 +1367,10 @@ class SessionStateMiddleware(fmw.Middleware):
         """
         _PROJECT_ID_LOG_CTX.set(config.project_id)
         LOG.info(f'Creating SessionState from config: {config}.')
+        # Also here, for transports without an HTTP request (stdio), which never pass `apply_request_config`.
+        config.check_workspace_scope()
 
-        state: dict[str, Any] = {STORAGE_API_URL: config.storage_api_url}
+        state: dict[str, Any] = {STORAGE_API_URL: config.storage_api_url, WORKSPACE_SCOPE: config.workspace_scope}
 
         if not config.storage_token:
             # Bootstrap session (agent_provisioning RFC): no credential anywhere -- no header, no
@@ -1416,6 +1442,7 @@ class SessionStateMiddleware(fmw.Middleware):
                 config.workspace_schema,
                 kubernetes_token_path=kubernetes_token_path,
                 workspace_id=config.workspace_id,
+                strict=config.is_strict_workspace_scope,
             )
             state[WorkspaceManager.STATE_KEY] = workspace_manager
             LOG.info('Successfully initialized Storage API Workspace manager.')

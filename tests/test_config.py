@@ -53,6 +53,15 @@ class TestConfig:
                 Config(),
             ),
             (
+                # workspace_scope is normalized and, like workspace_id, needs the KBC_/X- prefix.
+                {'X-Workspace-Scope': ' Strict '},
+                Config(workspace_scope='strict'),
+            ),
+            (
+                {'workspace_scope': 'strict', 'X-Workspace-Scope': ''},
+                Config(),
+            ),
+            (
                 {'foo': 'bar', 'storage_api_url': 'http://nowhere'},
                 Config(storage_api_url='http://nowhere'),
             ),
@@ -130,6 +139,12 @@ class TestConfig:
                 Config(workspace_id='999'),
             ),
             (
+                # Nor loosen a server-configured strict workspace scope.
+                Config(workspace_scope='strict'),
+                {'X-Workspace-Scope': ''},
+                Config(workspace_scope='strict'),
+            ),
+            (
                 # Unlike workspace_id, an empty workspace_schema header must still clear a
                 # server default (to the falsy '', same as pre-existing main behavior) -- this is
                 # the multi-user opt-out the README describes for X-Workspace-Schema, and must
@@ -144,20 +159,22 @@ class TestConfig:
         assert orig.replace_by(d) == expected
 
     @pytest.mark.parametrize(
-        ('orig', 'd'),
+        ('orig', 'd', 'match'),
         [
             # A malformed workspace_id always raises, same as any other invalid field -- it is
             # a per-request caller's job (e.g. `apply_request_config`) to decide how to turn that
             # into a clean rejection, not `replace_by`'s job to silently drop the pin (which would
             # widen an unpinned multi-tenant session's scope instead of rejecting the request).
-            (Config(), {'X-Workspace-Id': 'abc'}),
+            (Config(), {'X-Workspace-Id': 'abc'}, 'Invalid workspace_id'),
             # A malformed header must not be treated any differently when it would have
             # overridden an existing server-configured pin.
-            (Config(workspace_id='999'), {'X-Workspace-Id': 'abc'}),
+            (Config(workspace_id='999'), {'X-Workspace-Id': 'abc'}, 'Invalid workspace_id'),
+            # `strict` is the only workspace scope, so no header value can loosen a strict server.
+            (Config(workspace_scope='strict'), {'X-Workspace-Scope': 'none'}, 'Invalid workspace_scope'),
         ],
     )
-    def test_replace_by_reraises_malformed_workspace_id(self, orig: Config, d: Mapping[str, str]) -> None:
-        with pytest.raises(ValueError, match='Invalid workspace_id'):
+    def test_replace_by_reraises_malformed_workspace_pin(self, orig: Config, d: Mapping[str, str], match: str) -> None:
+        with pytest.raises(ValueError, match=match):
             orig.replace_by(d)
 
     def test_replace_by_reraises_other_errors(self) -> None:
@@ -175,7 +192,7 @@ class TestConfig:
         config = Config(storage_token='foo', postgres_dsn='postgresql://u:p@host/db', session_encryption_key='abc')
         assert str(config) == (
             "Config(storage_api_url=None, storage_token='****', branch_id=None, workspace_schema=None, "
-            'workspace_id=None, '
+            'workspace_id=None, workspace_scope=None, '
             'oauth_client_id=None, oauth_client_secret=None, '
             'oauth_server_url=None, oauth_scope=None, mcp_server_url=None, '
             "jwt_secret=None, postgres_dsn='****', session_encryption_key='****', "
@@ -270,11 +287,13 @@ class TestReplaceByHeaders:
                 'X-Storage-Api-Url': 'https://connection.keboola.com',
                 'X-Branch-Id': '123',
                 'X-Conversation-Id': 'conv-1',
+                'X-Workspace-Scope': 'strict',
             }
         )
         assert out.storage_api_url == 'https://connection.keboola.com'
         assert out.branch_id == '123'
         assert out.conversation_id == 'conv-1'
+        assert out.workspace_scope == 'strict'
 
     def test_replace_by_is_unrestricted_for_trusted_input(self) -> None:
         # replace_by (env/CLI, operator-trusted) is deliberately NOT subject to the same
