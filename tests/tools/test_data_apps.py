@@ -662,6 +662,9 @@ class TestGetDataAppsFiltering:
                 _make_data_app_response(component_id='other.component', data_app_id='app-4'),
             ]
         )
+        keboola_client.storage_client.configuration_list = mocker.AsyncMock(
+            return_value=[{'id': 'cfg-123', 'version': 7}]
+        )
 
         # Mock ProjectLinksManager
         mock_link = Link(type='ui-dashboard', title='Data Apps', url='https://example.com/data-apps')
@@ -679,6 +682,8 @@ class TestGetDataAppsFiltering:
         assert 'app-3' in data_app_ids
         assert 'app-2' not in data_app_ids
         assert 'app-4' not in data_app_ids
+        # The /v2 record has no config version; the Storage listing supplies it.
+        assert [app.config_version for app in result.data_apps] == ['7', '7']
 
     @pytest.mark.asyncio
     async def test_get_data_apps_returns_empty_when_no_matching_apps(self, mocker, mcp_context_client: Context) -> None:

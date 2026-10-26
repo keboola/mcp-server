@@ -201,10 +201,7 @@ class DataAppSummary(BaseModel):
     data_app_id: str = Field(description='The ID of the data app.')
     project_id: str = Field(description='The ID of the project.')
     branch_id: str = Field(description='The ID of the branch.')
-    config_version: str | None = Field(
-        default=None,
-        description='The version of the data app config. Not set by the inventory listing (`get_data_apps` without IDs).',
-    )
+    config_version: str = Field(description='The version of the data app config.')
     state: SafeState = Field(description='The state of the data app.')
     type: SafeType = Field(
         description=(
@@ -260,13 +257,14 @@ class DataAppSummary(BaseModel):
     )
 
     @classmethod
-    def from_api_response(cls, api_response: DataAppResponse) -> 'DataAppSummary':
+    def from_api_response(cls, api_response: DataAppResponse, config_version: str) -> 'DataAppSummary':
         return cls(
             component_id=api_response.component_id,
             configuration_id=api_response.config_id,
             data_app_id=api_response.id,
             project_id=api_response.project_id,
             branch_id=api_response.branch_id or '',
+            config_version=config_version,
             state=api_response.reported_state,
             type=api_response.type or 'unknown',
             deployment_url=api_response.url,
@@ -889,7 +887,9 @@ async def modify_streamlit_data_app(
             return ModifiedDataAppOutput(
                 response='created',
                 change_summary=folder_hint,
-                data_app=DataAppSummary.from_api_response(data_app_resp),
+                data_app=DataAppSummary.from_api_response(
+                    data_app_resp, await _config_version_or_blank(client, data_app_resp.config_id)
+                ),
                 links=links,
             )
         except Exception:
@@ -1018,7 +1018,7 @@ def _partial_create_output(
     call site) -- the agent-facing message stays stable and free of internal detail.
     """
     try:
-        summary = DataAppSummary.from_api_response(data_app_resp)
+        summary = DataAppSummary.from_api_response(data_app_resp, '')
     except Exception:
         # Defensive: this helper must never raise (the app already exists). SafeState/SafeType accept any
         # string, so building from the create-response primitives cannot fail even if the schema is tightened.
@@ -1628,7 +1628,9 @@ async def modify_python_js_data_app(
             deployment_link=data_app_resp.url,
             uses_basic_authentication=uses_basic_auth,
         )
-        data_app_summary = DataAppSummary.from_api_response(data_app_resp)
+        data_app_summary = DataAppSummary.from_api_response(
+            data_app_resp, await _config_version_or_blank(client, data_app_resp.config_id)
+        )
         data_app_summary.repo_url = repo_url
         data_app_summary.storage_access_enabled = wants_storage_access
         data_app_summary.git_branch = draft_branch
@@ -2051,12 +2053,19 @@ async def get_data_apps(
         return GetDataAppsOutput(data_apps=found_data_apps, available_images=images if has_python_js and images else [])
     else:
         # List all data apps in the project
-        data_apps: list[DataAppResponse] = await client.data_science_client.list_data_apps(limit=limit, offset=offset)
-        # Filter to only include keboola.data-apps component
-        data_apps = [app for app in data_apps if app.component_id == DATA_APP_COMPONENT_ID]
+        data_apps, configs = await asyncio.gather(
+            client.data_science_client.list_data_apps(limit=limit, offset=offset),
+            client.storage_client.configuration_list(DATA_APP_COMPONENT_ID),
+        )
+        # The /v2 record carries no config version; one Storage listing has them all.
+        versions = {str(cfg.get('id')): str(cfg.get('version', '')) for cfg in configs}
         links = [links_manager.get_data_app_dashboard_link()]
         return GetDataAppsOutput(
-            data_apps=[DataAppSummary.from_api_response(data_app) for data_app in data_apps],
+            data_apps=[
+                DataAppSummary.from_api_response(data_app, versions.get(data_app.config_id, ''))
+                for data_app in data_apps
+                if data_app.component_id == DATA_APP_COMPONENT_ID
+            ],
             links=links,
         )
 
@@ -2636,6 +2645,18 @@ async def _build_data_app_with_repo(
         except Exception as exc:
             LOG.warning(f'Could not fetch git repo info for python-js app {data_app_science.id}: {exc}')
     return data_app
+
+
+async def _config_version_or_blank(client: KeboolaClient, configuration_id: str) -> str:
+    """The latest version of a just-created app's configuration; blank when Storage does not answer.
+
+    - A blank version must not fail a create that already committed.
+    """
+    try:
+        return str(await client.storage_client.configuration_version_latest(DATA_APP_COMPONENT_ID, configuration_id))
+    except Exception:
+        LOG.exception(f'Could not read the config version of the created data app {configuration_id}')
+        return ''
 
 
 async def _fetch_published_config_version(client: KeboolaClient, data_app: DataApp) -> str | None:
