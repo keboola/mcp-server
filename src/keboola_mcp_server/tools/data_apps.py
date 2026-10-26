@@ -114,8 +114,8 @@ def add_data_app_tools(mcp: FastMCP) -> None:
     LOG.info('Data app tools initialized.')
 
 
-# State of the data app
-State = Literal['created', 'running', 'stopped', 'starting', 'stopping', 'restarting']
+# State of the data app's production: `starting` also covers a deployment on its way to production
+State = Literal['notDeployed', 'starting', 'running', 'suspended', 'disabled']
 # Accepts known states or any string preventing from validation errors when receiving unknown states from the API
 # LLM agent can still understand the state of the data app even if it is different from the known states
 SafeState = State | str
@@ -201,7 +201,10 @@ class DataAppSummary(BaseModel):
     data_app_id: str = Field(description='The ID of the data app.')
     project_id: str = Field(description='The ID of the project.')
     branch_id: str = Field(description='The ID of the branch.')
-    config_version: str = Field(description='The version of the data app config.')
+    config_version: str | None = Field(
+        default=None,
+        description='The version of the data app config. Not set by the inventory listing (`get_data_apps` without IDs).',
+    )
     state: SafeState = Field(description='The state of the data app.')
     type: SafeType = Field(
         description=(
@@ -264,11 +267,9 @@ class DataAppSummary(BaseModel):
             data_app_id=api_response.id,
             project_id=api_response.project_id,
             branch_id=api_response.branch_id or '',
-            config_version=api_response.config_version,
-            state=api_response.state,
-            type=api_response.type,
+            state=_app_state(api_response),
+            type=api_response.type or 'unknown',
             deployment_url=api_response.url,
-            auto_suspend_after_seconds=api_response.auto_suspend_after_seconds,
         )
 
 
@@ -302,7 +303,7 @@ class AppRunInfo(BaseModel):
         if failure_message and len(failure_message) > _APP_RUN_MESSAGE_LIMIT:
             failure_message = '…' + failure_message[-(_APP_RUN_MESSAGE_LIMIT - 1) :]
         return cls(
-            state=run.state,
+            state=run.state or ('finished' if run.stopped_at else 'running'),
             created_at=run.created_at,
             stopped_at=run.stopped_at,
             failure_reason=run.failure_reason.reason if run.failure_reason else None,
@@ -338,9 +339,9 @@ class DeploymentInfo(BaseModel):
 
     version: str = Field(
         description=(
-            'The configuration version the data app is actually running (the published version pinned '
-            'by the data-app service). This is NOT necessarily the latest saved configuration version -- '
-            'compare with `latest_config_version`.'
+            'The configuration version deployed to production (the published version pinned by the data-app '
+            'service); while `state` is "starting" it is still rolling out. This is NOT necessarily the latest '
+            'saved configuration version -- compare with `latest_config_version`.'
         )
     )
     latest_config_version: str | None = Field(
@@ -404,7 +405,7 @@ class DataApp(BaseModel):
     published_config_version: str | None = Field(
         default=None,
         description=(
-            'The config version the data app is actually running (published). When it is lower than '
+            'The config version deployed to production (published). When it is lower than '
             '`config_version`, the latest configuration changes are not live yet.'
         ),
     )
@@ -415,8 +416,8 @@ class DataApp(BaseModel):
             'may report other types as well.'
         )
     )
-    desired_state: str | None = Field(
-        description='The state the data app was last asked to reach.', default=None, exclude=True
+    desired_deployment_id: str | None = Field(
+        description='The deployment most recently asked to be production.', default=None, exclude=True
     )
     deployment_url: str | None = Field(
         description='The URL the data app serves on; a draft reports it before its first run.', default=None
@@ -485,6 +486,7 @@ class DataApp(BaseModel):
         cls,
         api_response: DataAppResponse,
         api_configuration: ConfigurationAPIResponse,
+        published_config_version: str | None = None,
     ) -> 'DataApp':
         data_app = cls(
             component_id=api_configuration.component_id,
@@ -493,12 +495,12 @@ class DataApp(BaseModel):
             project_id=api_response.project_id,
             branch_id=api_response.branch_id or '',
             config_version=str(api_configuration.version),
-            published_config_version=api_response.config_version or None,
-            state=api_response.state,
-            desired_state=api_response.desired_state,
-            type=api_response.type,
+            published_config_version=published_config_version,
+            state=_app_state(api_response),
+            desired_deployment_id=api_response.production.desired_deployment_id,
+            type=api_response.type or 'unknown',
             deployment_url=api_response.url,
-            auto_suspend_after_seconds=api_response.auto_suspend_after_seconds,
+            auto_suspend_after_seconds=_config_auto_suspend(api_configuration.configuration),
             name=api_configuration.name,
             description=api_configuration.description,
             folder=api_configuration.folder or '',
@@ -833,7 +835,7 @@ async def modify_streamlit_data_app(
             )
             response = (
                 'updated (redeploy required to apply changes in the running app)'
-                if data_app.state in ('running', 'starting')
+                if data_app.state in ('running', 'starting', 'suspended')
                 else 'updated'
             )
             return ModifiedDataAppOutput(
@@ -992,11 +994,11 @@ def _partial_update_output(
         )
     except Exception:
         links = []
-    # Mirror the success-path wording: the redeploy hint only applies to a running/starting app. The pre-update
+    # Mirror the success-path wording: the redeploy hint only applies to a deployed app. The pre-update
     # state is a faithful proxy here -- a config write does not change deployment state on its own.
     response = (
         'updated (redeploy required to apply changes in the running app)'
-        if data_app_pre.state in ('running', 'starting')
+        if data_app_pre.state in ('running', 'starting', 'suspended')
         else 'updated'
     )
     return ModifiedDataAppOutput(
@@ -1496,7 +1498,7 @@ async def modify_python_js_data_app(
         )
         response = (
             'updated (redeploy required to apply changes in the running app)'
-            if data_app.state in ('running', 'starting')
+            if data_app.state in ('running', 'starting', 'suspended')
             else 'updated'
         )
         data_app_summary = DataAppSummary.model_validate(data_app.model_dump())
@@ -2125,8 +2127,10 @@ async def deploy_data_app(
     `mode=None` is the expected call shape.
 
     ## General considerations
-    - Redeploying a data app takes some time, and the app may temporarily report status "stopped" during the
-      restart.
+    - Redeploying a data app takes some time; the app reports `state="starting"` until the new deployment serves
+      production.
+    - `state` is `notDeployed` (never deployed), `starting`, `running`, `suspended` (asleep, wakes on the next
+      visit) or `disabled` (failed to start; only a deploy brings it back).
     - After deployment, the deployment info includes the app URL and the latest logs to help diagnose in-app
       errors.
     """
@@ -2134,19 +2138,20 @@ async def deploy_data_app(
     links_manager = await ProjectLinksManager.from_client(client)
     if action == 'deploy':
         data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
-        if data_app.state == 'stopping':
-            raise ValueError('Data app is currently "stopping", could not be started at the moment.')
         # Always pin the latest config version (python-js included): without `configVersion` the data-app
         # service keeps the previously published version, so config-only changes (secrets, Storage access,
         # git branch, ...) would never go live.
         config_version = await client.storage_client.configuration_version_latest(
             DATA_APP_COMPONENT_ID, data_app.configuration_id
         )
-        _ = await client.data_science_client.deploy_data_app(
-            data_app.data_app_id,
-            str(config_version),
-            mode=mode,
-        )
+        if mode is not None:
+            await client.data_science_client.set_data_app_mode(data_app.data_app_id, 'dev' if mode == 'dev' else 'prod')
+        try:
+            await client.data_science_client.deploy_data_app(data_app.data_app_id, str(config_version))
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == HTTPStatus.CONFLICT and _LEGACY_WORKLOAD in _api_error_text(e.response):
+                raise ValueError(_legacy_workload_message(data_app)) from e
+            raise
         data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
         logs, last_run, images = await asyncio.gather(
             _fetch_logs(client, data_app.data_app_id),
@@ -2163,9 +2168,18 @@ async def deploy_data_app(
         return DeploymentDataAppOutput(state=data_app.state, links=links, deployment_info=data_app.deployment_info)
     elif action == 'stop':
         data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
-        if data_app.state in ('starting', 'restarting'):
+        if data_app.state == 'starting':
             raise ValueError('Data app is currently "starting", could not be stopped at the moment.')
-        _ = await client.data_science_client.suspend_data_app(data_app.data_app_id)
+        if data_app.state != 'suspended':
+            try:
+                await client.data_science_client.suspend_data_app(data_app.data_app_id)
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == HTTPStatus.CONFLICT:
+                    raise ValueError(
+                        f'Data app "{data_app.configuration_id}" has no running deployment to stop '
+                        f'(state "{data_app.state}"). API error: {_api_error_text(e.response)}'
+                    ) from e
+                raise
         data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
         links = links_manager.get_data_app_links(
             configuration_id=data_app.configuration_id,
@@ -2316,6 +2330,7 @@ async def get_data_app_preview_link(
     return DataAppPreviewLinkOutput(url=link.url, link_expires_at=link.link_expires_at)
 
 
+_LEGACY_WORKLOAD = 'still running as a /v1 workload'
 _PREVIEW_LINK_NOT_DEV = 'is not in dev mode'
 _PREVIEW_LINK_NO_URL = 'has no URL yet'
 _PREVIEW_LINK_NOT_AUTHORIZED = 'is not authorized to manage app'
@@ -2368,6 +2383,15 @@ def _preview_link_error(exc: httpx.HTTPStatusError, data_app: DataApp) -> ValueE
             "preview link. Tell the user. Do not try the app's password login instead."
         )
     return None
+
+
+def _legacy_workload_message(data_app: DataApp) -> str:
+    timeout = data_app.auto_suspend_after_seconds
+    after = f'after {timeout} seconds without visitors' if timeout else 'once it has no visitors'
+    return (
+        f'Data app "{data_app.configuration_id}" still runs on the old platform and cannot be redeployed while it '
+        f'runs. It falls asleep on its own {after}; deploy it again then. Tell the user; do not retry in a loop.'
+    )
 
 
 def _not_authorized_error(configuration_id: str, api_error: str) -> ValueError:
@@ -2611,8 +2635,10 @@ async def _build_data_app_with_repo(
     data_app_science: DataAppResponse,
     api_config: ConfigurationAPIResponse,
 ) -> DataApp:
-    """Build a `DataApp` and, for python-js apps, attach the managed git repo URL."""
-    data_app = DataApp.from_api_responses(data_app_science, api_config)
+    """Build a `DataApp` with the config version production runs and, for python-js apps, the managed git repo URL."""
+    data_app = DataApp.from_api_responses(
+        data_app_science, api_config, await _fetch_published_config_version(client, data_app_science)
+    )
     data_app.deployment_url = data_app.deployment_url or _app_url(client, data_app_science.id, api_config.configuration)
     if data_app_science.type == 'python-js':
         try:
@@ -2622,6 +2648,18 @@ async def _build_data_app_with_repo(
         except Exception as exc:
             LOG.warning(f'Could not fetch git repo info for python-js app {data_app_science.id}: {exc}')
     return data_app
+
+
+async def _fetch_published_config_version(client: KeboolaClient, data_app: DataAppResponse) -> str | None:
+    """The config version of the deployment last asked to be production, or None when none ever was.
+
+    - While it rolls out (`state="starting"`), the previous deployment still serves production.
+    """
+    deployment_id = data_app.production.desired_deployment_id
+    if deployment_id is None:
+        return None
+    deployment = await client.data_science_client.get_deployment(data_app.id, deployment_id)
+    return deployment.config_version
 
 
 async def _fetch_data_app_details_task(
@@ -2827,11 +2865,31 @@ def _validate_explicit_slug(slug: str) -> None:
 def _is_never_deployed(data_app: 'DataApp') -> bool:
     """Whether the data app has never been deployed.
 
-    - Every app nobody has deployed rests in `state='created'`.
-    - A first deploy keeps `state='created'` while the app comes up, with `desired_state='running'`;
-      that app counts as deployed.
+    - No deployment was ever asked to be production.
+    - A first deploy names one at once, while the app is still coming up; that app counts as deployed.
     """
-    return data_app.state == 'created' and data_app.desired_state != 'running'
+    return data_app.desired_deployment_id is None
+
+
+def _app_state(api_response: DataAppResponse) -> str:
+    """The state of the app's production, with a rollout reported as `starting`.
+
+    - `/v2` keeps `running` while a new deployment is on its way to production.
+    - A promotion wakes a suspended app, so its rollout is a start too.
+    - A disabled app stays so: its start failed.
+    """
+    production = api_response.production
+    rolling_out = production.desired_deployment_id != production.actual_deployment_id
+    if rolling_out and api_response.state != 'disabled':
+        return 'starting'
+    return api_response.state
+
+
+def _config_auto_suspend(configuration: Mapping[str, Any]) -> int | None:
+    """The `parameters.autoSuspendAfterSeconds` of a stored data-app configuration, or None without one."""
+    parameters = configuration.get('parameters')
+    value = parameters.get('autoSuspendAfterSeconds') if isinstance(parameters, Mapping) else None
+    return value if isinstance(value, int) else None
 
 
 def _config_slug(configuration: Mapping[str, Any]) -> str | None:

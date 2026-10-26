@@ -9,7 +9,26 @@ from keboola_mcp_server.clients.base import KeboolaServiceClient, RawKeboolaClie
 LOG = logging.getLogger(__name__)
 
 
+class AppProductionResponse(BaseModel):
+    """Which deployment of an app is production."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    desired_deployment_id: str | None = Field(
+        validation_alias=AliasChoices('desiredDeploymentId', 'desired_deployment_id'),
+        default=None,
+        description='The deployment most recently asked to be production; `null` when nothing ever was.',
+    )
+    actual_deployment_id: str | None = Field(
+        validation_alias=AliasChoices('actualDeploymentId', 'actual_deployment_id'),
+        default=None,
+        description='The deployment serving production traffic right now.',
+    )
+
+
 class DataAppResponse(BaseModel):
+    """A data app as `GET /v2/apps/{appId}` reports it."""
+
     id: str = Field(validation_alias=AliasChoices('id', 'data_app_id'), description='The data app ID')
     project_id: str = Field(validation_alias=AliasChoices('projectId', 'project_id'), description='The project ID')
     component_id: str = Field(
@@ -19,35 +38,35 @@ class DataAppResponse(BaseModel):
     config_id: str = Field(
         validation_alias=AliasChoices('configId', 'config_id'), description='The component config ID'
     )
+    type: str | None = Field(default=None, description='The type of the data app')
+    state: str = Field(
+        description='Whether production serves traffic: notDeployed, starting, running, suspended or disabled'
+    )
+    url: str | None = Field(default=None, description='The production URL of the data app')
+    has_managed_git_repo: bool = Field(
+        validation_alias=AliasChoices('hasManagedGitRepo', 'has_managed_git_repo'),
+        default=False,
+        description='Whether the app has a Keboola-managed git repository',
+    )
+    production: AppProductionResponse = Field(
+        default_factory=AppProductionResponse, description='Which deployment is production'
+    )
+
+
+class DeploymentResponse(BaseModel):
+    """One immutable deployment of a data app (`/v2/apps/{appId}/deployments`)."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: str = Field(description='The deployment ID')
     config_version: str = Field(
         validation_alias=AliasChoices('configVersion', 'config_version'),
-        description='The config version the app is deployed with (published), not necessarily the latest one',
+        description='The configuration version the deployment runs',
     )
-    type: str = Field(description='The type of the data app')
-    state: str = Field(description='The state of the data app')
-    desired_state: str = Field(
-        validation_alias=AliasChoices('desiredState', 'desired_state'), description='The desired state'
-    )
-    last_request_timestamp: str | None = Field(
-        validation_alias=AliasChoices('lastRequestTimestamp', 'last_request_timestamp'),
+    created_at: str | None = Field(
+        validation_alias=AliasChoices('createdAt', 'created_at'),
         default=None,
-        description='The last request timestamp',
-    )
-    last_start_timestamp: str | None = Field(
-        validation_alias=AliasChoices('lastStartTimestamp', 'last_start_timestamp'),
-        default=None,
-        description='The last start timestamp',
-    )
-    url: str | None = Field(
-        validation_alias=AliasChoices('url', 'url'), description='The URL of the running data app', default=None
-    )
-    auto_suspend_after_seconds: int | None = Field(
-        validation_alias=AliasChoices('autoSuspendAfterSeconds', 'auto_suspend_after_seconds'),
-        description='The auto suspend after seconds',
-        default=None,
-    )
-    size: str | None = Field(
-        validation_alias=AliasChoices('size', 'size'), description='The size of the data app', default=None
+        description='When the deployment was created',
     )
 
 
@@ -332,7 +351,13 @@ class AppRunResponse(BaseModel):
         default=None,
         description='The ID of the data app this run belongs to.',
     )
-    state: str = Field(description='The state of the run: "starting", "running", "finished" or "failed".')
+    state: str | None = Field(
+        default=None,
+        description=(
+            'The state of the run: "starting", "running", "finished" or "failed"; `null` on a historic run, '
+            'whose `stopped_at` tells whether it finished.'
+        ),
+    )
     created_at: str | None = Field(
         validation_alias=AliasChoices('createdAt', 'created_at'),
         default=None,
@@ -447,59 +472,60 @@ class DataScienceClient(KeboolaServiceClient):
         :param data_app_id: The ID of the data app
         :return: The data app
         """
-        response = await self.get(endpoint=f'apps/{data_app_id}')
+        response = await self.get(endpoint=f'v2/apps/{data_app_id}')
         return DataAppResponse.model_validate(response)
 
-    async def deploy_data_app(
-        self,
-        data_app_id: str,
-        config_version: str | None = None,
-        *,
-        mode: str | None = None,
-        restart_if_running: bool = True,
-        update_dependencies: bool = False,
-    ) -> DataAppResponse:
+    async def get_deployment(self, data_app_id: str, deployment_id: str) -> DeploymentResponse:
         """
-        Deploy a data app by its ID.
+        Get one deployment of a data app.
 
         :param data_app_id: The ID of the data app
-        :param config_version: The version of the config to deploy (publish). When omitted, the service keeps the
-                    previously published version, so configuration changes saved since then do not go live.
-        :param mode: Deployment mode. Set to 'dev' to deploy a python-js draft as a dev version
-                    (hot reload + auto-auth for iframe preview). Leave None for Streamlit apps and
-                    for prod deploys.
-        :param restart_if_running: Whether to restart the data app if it is already running
-        :param update_dependencies: If set to `true`, latest package versions are installed during app startup,
-                    instead of using frozen versions.
-        :return: The data app
+        :param deployment_id: The ID of the deployment
+        :return: The deployment, including the configuration version it runs
         """
-        data: dict[str, Any] = {
-            'desiredState': 'running',
-            'restartIfRunning': restart_if_running,
-            'updateDependencies': update_dependencies,
-        }
-        if config_version is not None:
-            data['configVersion'] = config_version
-        if mode is not None:
-            data['mode'] = mode
-        response = await self.patch(endpoint=f'apps/{data_app_id}', data=data)
-        return DataAppResponse.model_validate(response)
+        response = await self.get(endpoint=f'v2/apps/{data_app_id}/deployments/{deployment_id}')
+        return DeploymentResponse.model_validate(response)
+
+    async def deploy_data_app(self, data_app_id: str, config_version: str) -> DeploymentResponse:
+        """
+        Deploy a data app: create a deployment of the given config version and promote it to production.
+
+        :param data_app_id: The ID of the data app
+        :param config_version: The config version to deploy (publish)
+        :return: The new deployment
+        """
+        response = await self.post(
+            endpoint=f'v2/apps/{data_app_id}/deployments', data={'configVersion': config_version}
+        )
+        return DeploymentResponse.model_validate(response)
+
+    async def set_data_app_mode(self, data_app_id: str, mode: str) -> None:
+        """
+        Set the mode the next deployment of a data app runs in, without starting it.
+
+        - `/v2` has no mode; a `/v2` deployment runs in the mode stored on the app.
+        - `restartIfRunning` lets the mode change on an app that is not stopped.
+
+        :param data_app_id: The ID of the data app
+        :param mode: 'dev' (hot reload + preview links) or 'prod'
+        """
+        await self.patch(endpoint=f'apps/{data_app_id}', data={'mode': mode, 'restartIfRunning': True})
 
     async def suspend_data_app(self, data_app_id: str) -> DataAppResponse:
         """
-        Suspend a data app by setting its desired state to 'stopped'.
+        Suspend a data app: it sleeps now and wakes on the next request.
+
         :param data_app_id: Data app ID to suspend
         :return: Updated data app response with the new state
         """
-        data = {'desiredState': 'stopped'}
-        response = await self.patch(endpoint=f'apps/{data_app_id}', data=data)
+        response = await self.post(endpoint=f'v2/apps/{data_app_id}/suspend', data={})
         return DataAppResponse.model_validate(response)
 
     async def get_data_app_password(self, data_app_id: str) -> str:
         """
         Get the password for a data app by its ID.
         """
-        response = await self.get(endpoint=f'apps/{data_app_id}/password')
+        response = await self.get(endpoint=f'v2/apps/{data_app_id}/password')
         assert isinstance(response, dict)
         return cast(str, response['password'])
 
@@ -550,7 +576,7 @@ class DataScienceClient(KeboolaServiceClient):
         }
         if use_managed_git_repo:
             data['useManagedGitRepo'] = True
-        response = await self.post(endpoint='apps', data=data)
+        response = await self.post(endpoint='v2/apps', data=data)
         return DataAppResponse.model_validate(response)
 
     async def create_app_git_credential(
@@ -569,7 +595,7 @@ class DataScienceClient(KeboolaServiceClient):
         :return: The created credential, including the one-time `secret`.
         """
         data = {'type': 'http_token', 'permissions': permissions}
-        response = await self.post(endpoint=f'apps/{data_app_id}/git-repo/credentials', data=data)
+        response = await self.post(endpoint=f'v2/apps/{data_app_id}/git-repo/credentials', data=data)
         return CreatedGitCredentialResponse.model_validate(response)
 
     async def get_app_git_repo(self, data_app_id: str) -> AppGitRepoResponse:
@@ -581,7 +607,7 @@ class DataScienceClient(KeboolaServiceClient):
         :param data_app_id: The ID of the data app
         :return: The git repo info, including the clone URL.
         """
-        response = await self.get(endpoint=f'apps/{data_app_id}/git-repo')
+        response = await self.get(endpoint=f'v2/apps/{data_app_id}/git-repo')
         return AppGitRepoResponse.model_validate(response)
 
     async def list_app_runs(self, data_app_id: str, *, limit: int = 5, offset: int = 0) -> list[AppRunResponse]:
@@ -593,23 +619,18 @@ class DataScienceClient(KeboolaServiceClient):
         :param offset: Number of runs to skip
         :return: The app runs, including `failure_reason` for unsuccessful ones.
         """
-        response = await self.get(endpoint=f'apps/{data_app_id}/runs', params={'limit': limit, 'offset': offset})
+        response = await self.get(endpoint=f'v2/apps/{data_app_id}/runs', params={'limit': limit, 'offset': offset})
         assert isinstance(response, list)
         return [AppRunResponse.model_validate(run) for run in response]
 
     async def delete_data_app(self, data_app_id: str) -> None:
         """
         Delete a data app by its ID.
-        - The DSAPI delete endpoint removes the data app only if its desired and current states match.
-        - If they do not match, it returns a 400 Bad Request.
-        - Desired state is the state where the app is supposed to be after the action is completed. While current
-        state reflects the actual state of the app. E.g. If we deploy the app, the desired state is 'running' and the
-        current state is 'started' until the app is deployed.
-        - When successful, DSAPI deletes both the app configuration from storage and the data app itself.
-        If the configuration was already deleted, DSAPI does not delete the data app and returns 500 error.
+        - Stops every deployment, moves the app's Storage configuration to the trash and removes its credentials.
+        - Deprovisions the app's managed git repository, when it has one.
         :param data_app_id: ID of the data app to delete
         """
-        await self.delete(endpoint=f'apps/{data_app_id}')
+        await self.delete(endpoint=f'v2/apps/{data_app_id}')
 
     async def list_runtimes(self) -> list[RuntimeResponse]:
         """
@@ -621,9 +642,9 @@ class DataScienceClient(KeboolaServiceClient):
 
     async def list_data_apps(self, limit: int = 100, offset: int = 0) -> list[DataAppResponse]:
         """
-        List all data apps.
+        List the data apps of the project, across all its branches.
         """
-        response = await self.get(endpoint='apps', params={'limit': limit, 'offset': offset})
+        response = await self.get(endpoint='v2/apps', params={'limit': limit, 'offset': offset})
         return [DataAppResponse.model_validate(app) for app in response]
 
     async def tail_app_logs(
@@ -661,5 +682,5 @@ class DataScienceClient(KeboolaServiceClient):
         else:
             raise ValueError('Either "since" or "lines" must be provided.')
 
-        response = await self.get_text(endpoint=f'apps/{app_id}/logs/tail', params=params)
+        response = await self.get_text(endpoint=f'v2/apps/{app_id}/logs/tail', params=params)
         return cast(str, response)

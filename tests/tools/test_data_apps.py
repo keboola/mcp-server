@@ -8,7 +8,14 @@ from fastmcp import Context
 
 from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import DATA_APP_COMPONENT_ID, KeboolaClient
-from keboola_mcp_server.clients.data_science import AppRunResponse, DataAppConfig, DataAppResponse, RuntimeResponse
+from keboola_mcp_server.clients.data_science import (
+    AppProductionResponse,
+    AppRunResponse,
+    DataAppConfig,
+    DataAppResponse,
+    DeploymentResponse,
+    RuntimeResponse,
+)
 from keboola_mcp_server.clients.storage import ConfigurationAPIResponse
 from keboola_mcp_server.links import Link
 from keboola_mcp_server.tools.data_apps import (
@@ -70,10 +77,8 @@ def _make_data_app_response(
         component_id=component_id,
         branch_id='branch-1',
         config_id=config_id,
-        config_version='1',
         type='streamlit',
         state='running',
-        desired_state='running',
     )
 
 
@@ -82,8 +87,6 @@ def _make_data_app_response(
     ('current_state', 'action', 'error_match'),
     [
         ('starting', 'stop', 'Data app is currently "starting", could not be stopped at the moment.'),
-        ('restarting', 'stop', 'Data app is currently "starting", could not be stopped at the moment.'),
-        ('stopping', 'deploy', 'Data app is currently "stopping", could not be started at the moment.'),
     ],
 )
 async def test_deploy_data_app_when_current_state_contradicts_with_action(
@@ -758,16 +761,21 @@ class TestFetchDataAppValidation:
 
         data_app_response = _make_data_app_response(
             component_id=DATA_APP_COMPONENT_ID, data_app_id=data_app_id, config_id=config_id
+        ).model_copy(
+            update={'production': AppProductionResponse(desired_deployment_id='dep-2', actual_deployment_id='dep-1')}
         )
 
         keboola_client.data_science_client.get_data_app = mocker.AsyncMock(return_value=data_app_response)
+        keboola_client.data_science_client.get_deployment = mocker.AsyncMock(
+            return_value=DeploymentResponse(id='dep-1', config_version='1')
+        )
         keboola_client.storage_client.configuration_detail = mocker.AsyncMock(
             return_value={
                 'id': config_id,
                 'name': 'test-app',
                 'description': 'test',
                 'configuration': {'parameters': {'id': data_app_id}, 'authorization': {}, 'storage': {}},
-                'version': 1,
+                'version': 2,
             }
         )
 
@@ -775,6 +783,11 @@ class TestFetchDataAppValidation:
 
         assert result.data_app_id == data_app_id
         assert result.component_id == DATA_APP_COMPONENT_ID
+        # The deployment on its way to production is the published one; the rollout shows in `state`.
+        keboola_client.data_science_client.get_deployment.assert_awaited_once_with(data_app_id, 'dep-2')
+        assert result.published_config_version == '1'
+        assert result.config_version == '2'
+        assert result.state == 'starting'
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -1233,10 +1246,8 @@ def _make_python_js_data_app_response(
         component_id=DATA_APP_COMPONENT_ID,
         branch_id='branch-1',
         config_id=config_id,
-        config_version='1',
         type='python-js',
-        state='created',
-        desired_state='created',
+        state='notDeployed',
         url='https://demo.canary-orion.keboola.dev',
     )
 
@@ -1310,26 +1321,26 @@ async def test_modify_python_js_data_app_create_prod_derives_or_honors_slug(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ('stored_name', 'stored_slug', 'is_draft', 'state', 'desired_state', 'kwargs', 'expected_slug'),
+    ('stored_name', 'stored_slug', 'is_draft', 'state', 'desired_deployment_id', 'kwargs', 'expected_slug'),
     [
         # Never deployed, generic slug from the UI → the slug follows the new name.
-        ('New App', 'new-app', False, 'created', 'stopped', {'name': 'Sales Dashboard'}, 'sales-dashboard'),
+        ('New App', 'new-app', False, 'notDeployed', None, {'name': 'Sales Dashboard'}, 'sales-dashboard'),
         # Never deployed and already renamed once → it keeps following.
-        ('Sales Dashboard', 'sales-dashboard', False, 'created', None, {'name': 'Revenue'}, 'revenue'),
+        ('Sales Dashboard', 'sales-dashboard', False, 'notDeployed', None, {'name': 'Revenue'}, 'revenue'),
         # A UI-derived slug that kept repeated hyphens still counts as following the name.
-        ('Sales & Ops', 'sales---ops', False, 'created', 'stopped', {'name': 'Ops Board'}, 'ops-board'),
+        ('Sales & Ops', 'sales---ops', False, 'notDeployed', None, {'name': 'Ops Board'}, 'ops-board'),
         # First deploy in progress → the URL is being served, the slug stays.
-        ('New App', 'new-app', False, 'created', 'running', {'name': 'Sales'}, 'new-app'),
+        ('New App', 'new-app', False, 'starting', 'dep-1', {'name': 'Sales'}, 'new-app'),
         # Deployed before → a rename keeps the slug.
-        ('New App', 'new-app', False, 'stopped', 'stopped', {'name': 'Sales'}, 'new-app'),
+        ('New App', 'new-app', False, 'suspended', 'dep-1', {'name': 'Sales'}, 'new-app'),
         # A custom slug that never followed the name → a rename keeps it.
-        ('Sales Dashboard', 'sales', False, 'created', 'stopped', {'name': 'Revenue'}, 'sales'),
+        ('Sales Dashboard', 'sales', False, 'notDeployed', None, {'name': 'Revenue'}, 'sales'),
         # Drafts never change their slug on rename.
-        ('New App', 'new-app-draft-a1b2c3', True, 'created', 'stopped', {'name': 'Sales'}, 'new-app-draft-a1b2c3'),
+        ('New App', 'new-app-draft-a1b2c3', True, 'notDeployed', None, {'name': 'Sales'}, 'new-app-draft-a1b2c3'),
         # Same name → nothing to follow.
-        ('New App', 'new-app', False, 'created', 'stopped', {'name': 'New App'}, 'new-app'),
+        ('New App', 'new-app', False, 'notDeployed', None, {'name': 'New App'}, 'new-app'),
         # An explicit slug on a deployed prod app is written.
-        ('Sales', 'sales', False, 'running', 'running', {'name': 'Sales', 'slug': 'kpis'}, 'kpis'),
+        ('Sales', 'sales', False, 'running', 'dep-1', {'name': 'Sales', 'slug': 'kpis'}, 'kpis'),
     ],
 )
 async def test_modify_python_js_data_app_update_slug(
@@ -1339,7 +1350,7 @@ async def test_modify_python_js_data_app_update_slug(
     stored_slug: str,
     is_draft: bool,
     state: str,
-    desired_state: str | None,
+    desired_deployment_id: str | None,
     kwargs: dict,
     expected_slug: str,
 ) -> None:
@@ -1360,7 +1371,7 @@ async def test_modify_python_js_data_app_update_slug(
         type='python-js',
         configuration={'parameters': {'autoSuspendAfterSeconds': 900, 'dataApp': data_app_block}},
         state=state,
-        desired_state=desired_state,
+        desired_deployment_id=desired_deployment_id,
     )
     mocker.patch(
         'keboola_mcp_server.tools.data_apps._fetch_data_app',
@@ -2689,7 +2700,11 @@ async def test_deploy_data_app_publishes_latest_config_version_and_reports_publi
     result = await deploy_data_app(ctx=mcp_context_client, action='deploy', configuration_id='cfg-1', mode=mode)
 
     keboola_client.storage_client.configuration_version_latest.assert_awaited_once_with(DATA_APP_COMPONENT_ID, 'cfg-1')
-    keboola_client.data_science_client.deploy_data_app.assert_awaited_once_with('app-1', '5', mode=mode)
+    keboola_client.data_science_client.deploy_data_app.assert_awaited_once_with('app-1', '5')
+    if mode is None:
+        keboola_client.data_science_client.set_data_app_mode.assert_not_awaited()
+    else:
+        keboola_client.data_science_client.set_data_app_mode.assert_awaited_once_with('app-1', mode)
     assert result.deployment_info is not None
     assert result.deployment_info.version == published_after
     assert result.deployment_info.latest_config_version == latest_after
@@ -2729,15 +2744,45 @@ def test_with_deployment_info_reports_published_version(
 
 
 def test_data_app_from_api_responses_keeps_published_and_latest_versions_apart() -> None:
-    api_response = _make_data_app_response().model_copy(update={'config_version': '3'})
     api_configuration = ConfigurationAPIResponse.model_validate(
         {'componentId': DATA_APP_COMPONENT_ID, 'id': 'cfg-123', 'name': 'app', 'version': 5, 'configuration': {}}
     )
 
-    data_app = DataApp.from_api_responses(api_response, api_configuration)
+    data_app = DataApp.from_api_responses(_make_data_app_response(), api_configuration, published_config_version='3')
 
     assert data_app.config_version == '5'
     assert data_app.published_config_version == '3'
+
+
+@pytest.mark.parametrize(
+    ('state', 'desired', 'actual', 'expected'),
+    [
+        pytest.param('running', 'dep-1', 'dep-1', 'running', id='serving'),
+        pytest.param('running', 'dep-2', 'dep-1', 'starting', id='rollout_on_a_running_app'),
+        pytest.param('notDeployed', 'dep-1', None, 'starting', id='first_deploy'),
+        pytest.param('suspended', 'dep-2', 'dep-1', 'starting', id='rollout_wakes_a_suspended_app'),
+        pytest.param('disabled', 'dep-2', 'dep-1', 'disabled', id='rollout_on_a_failed_app'),
+        pytest.param('notDeployed', None, None, 'notDeployed', id='never_deployed'),
+    ],
+)
+def test_data_app_from_api_responses_reports_a_rollout_as_starting(
+    state: str, desired: str | None, actual: str | None, expected: str
+) -> None:
+    api_response = _make_data_app_response().model_copy(
+        update={
+            'state': state,
+            'production': AppProductionResponse(desired_deployment_id=desired, actual_deployment_id=actual),
+        }
+    )
+    api_configuration = ConfigurationAPIResponse.model_validate(
+        {'componentId': DATA_APP_COMPONENT_ID, 'id': 'cfg-123', 'name': 'app', 'version': 5}
+        | {'configuration': {'parameters': {'autoSuspendAfterSeconds': 900}}}
+    )
+
+    data_app = DataApp.from_api_responses(api_response, api_configuration)
+
+    assert data_app.state == expected
+    assert data_app.auto_suspend_after_seconds == 900
 
 
 @pytest.mark.parametrize(
@@ -4260,3 +4305,86 @@ def test_get_data_app_preview_link_description_allows_a_browser_run_from_the_she
     assert 'chrome-devtools-axi' not in doc, 'the description must not assume a specific browser tool'
     assert 'any command other than the one that opens the browser' in doc
     assert 'Do not fetch it with an HTTP client or curl' in doc
+
+
+# ===== Tests for the /v2 deploy and stop refusals =====
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('action', 'state', 'error', 'error_match'),
+    [
+        pytest.param(
+            'deploy',
+            'running',
+            _sandboxes_error(
+                409,
+                'App "app-1" is still running as a /v1 workload (state "Running") and cannot be adopted into the '
+                'deployments model. Stop it first, then deploy again.',
+            ),
+            'falls asleep on its own after 900 seconds without visitors',
+            id='deploy_live_v1_workload',
+        ),
+        pytest.param(
+            'stop',
+            'notDeployed',
+            _sandboxes_error(409, 'App "app-1" has no currently serving deployment'),
+            'has no running deployment to stop',
+            id='stop_without_serving_deployment',
+        ),
+    ],
+)
+async def test_deploy_data_app_turns_a_conflict_into_guidance(
+    mocker,
+    mcp_context_client: Context,
+    action: Literal['deploy', 'stop'],
+    state: str,
+    error: dict,
+    error_match: str,
+) -> None:
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.data_science_client = mocker.AsyncMock()
+    keboola_client.data_science_client.deploy_data_app.side_effect = _http_error(409, error)
+    keboola_client.data_science_client.suspend_data_app.side_effect = _http_error(409, error)
+    keboola_client.storage_client.configuration_version_latest = mocker.AsyncMock(return_value=5)
+    app = DataApp(
+        name='app',
+        component_id=DATA_APP_COMPONENT_ID,
+        configuration_id='cfg-1',
+        data_app_id='app-1',
+        project_id='proj-1',
+        branch_id='branch-1',
+        config_version='5',
+        type='python-js',
+        configuration={},
+        state=state,
+        auto_suspend_after_seconds=900,
+    )
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=app))
+
+    with pytest.raises(ValueError, match=error_match):
+        await deploy_data_app(ctx=mcp_context_client, action=action, configuration_id='cfg-1')
+
+
+@pytest.mark.asyncio
+async def test_deploy_data_app_stop_leaves_a_suspended_app_alone(mocker, mcp_context_client: Context) -> None:
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.data_science_client = mocker.AsyncMock()
+    app = DataApp(
+        name='app',
+        component_id=DATA_APP_COMPONENT_ID,
+        configuration_id='cfg-1',
+        data_app_id='app-1',
+        project_id='proj-1',
+        branch_id='branch-1',
+        config_version='5',
+        type='streamlit',
+        configuration={},
+        state='suspended',
+    )
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=app))
+
+    result = await deploy_data_app(ctx=mcp_context_client, action='stop', configuration_id='cfg-1')
+
+    keboola_client.data_science_client.suspend_data_app.assert_not_awaited()
+    assert result.state == 'suspended'
