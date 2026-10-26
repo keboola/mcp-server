@@ -2328,8 +2328,10 @@ Streamlit apps have no managed git repo, so `mode` has no effect on the deployed
 `mode=None` is the expected call shape.
 
 ## General considerations
-- Redeploying a data app takes some time, and the app may temporarily report status "stopped" during the
-  restart.
+- Redeploying a data app takes some time; the app reports `state="starting"` until the new deployment serves
+  production.
+- `state` is `notDeployed` (never deployed), `starting`, `running`, `suspended` (asleep, wakes on the next
+  visit) or `disabled` (failed to start; only a deploy brings it back).
 - After deployment, the deployment info includes the app URL and the latest logs to help diagnose in-app
   errors.
 
