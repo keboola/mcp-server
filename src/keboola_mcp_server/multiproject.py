@@ -18,7 +18,7 @@ from pydantic import ValidationError as PydanticValidationError
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import build_tracing_headers, deployed_sa_token_path
 from keboola_mcp_server.errors import sanitized_failure
-from keboola_mcp_server.mcp import ServerState, is_read_only_tool
+from keboola_mcp_server.mcp import ServerState, is_read_only_tool, is_strict_workspace_scope
 from keboola_mcp_server.scope import PROJECT_ID_ARG, SCOPE_KEY, SessionScope
 from keboola_mcp_server.tools.constants import BOOTSTRAP_TOOLS
 from keboola_mcp_server.workspace import WorkspaceManager
@@ -76,6 +76,11 @@ class MultiProjectMiddleware(fmw.Middleware):
         state = ctx.session.state
         scope = state.get(SCOPE_KEY) if isinstance(state, dict) else None
         name = context.message.name
+
+        # A strict workspace scope keeps every call on the pinned workspace: swapping in another project's
+        # client would also swap in that project's MCP-managed workspace.
+        if is_strict_workspace_scope(state):
+            return await call_next(context)
 
         # Ask-first gate: until the user confirms a scope via set_project_scope, block data tools and
         # tell the assistant to ask the user which projects to work on. Only applies when a scope has
@@ -283,7 +288,9 @@ class MultiProjectMiddleware(fmw.Middleware):
         # (and others) don't do mid-session — that left the newly-unlocked tools invisible until a
         # reconnect. Instead every tool stays listed and the call-time ask-first gate (on_call_tool)
         # steers the user to set_project_scope first; once scoped, the already-listed tools just work.
-        if not (isinstance(scope, SessionScope) and scope.confirmed and len(scope.project_ids) > 1):
+        if is_strict_workspace_scope(state) or not (
+            isinstance(scope, SessionScope) and scope.confirmed and len(scope.project_ids) > 1
+        ):
             return tools
 
         patched: list[Tool] = []

@@ -65,21 +65,26 @@ class TestPreviewConfigDiff:
     """Tests for the POST /preview/configuration endpoint."""
 
     @pytest.mark.parametrize(
-        ('headers', 'expected_status'),
+        ('headers', 'expected_status', 'message_fragment'),
         [
             # No authorization headers -> allowed (reaches the mutator path).
-            ({}, 200),
+            ({}, 200, None),
             # Tool explicitly allowed.
-            ({'X-Allowed-Tools': 'update_config,get_tables'}, 200),
+            ({'X-Allowed-Tools': 'update_config,get_tables'}, 200, None),
             # Tool not in the allow-list -> denied.
-            ({'X-Allowed-Tools': 'get_tables,get_buckets'}, 403),
+            ({'X-Allowed-Tools': 'get_tables,get_buckets'}, 403, 'not authorized'),
             # Tool explicitly disallowed -> denied.
-            ({'X-Disallowed-Tools': 'update_config'}, 403),
+            ({'X-Disallowed-Tools': 'update_config'}, 403, 'not authorized'),
             # Read-only mode denies a mutator preview.
-            ({'X-Read-Only-Mode': 'true'}, 403),
+            ({'X-Read-Only-Mode': 'true'}, 403, 'not authorized'),
+            # A strict workspace scope denies every preview, with or without a valid pin.
+            ({'X-Workspace-Scope': 'strict', 'X-Workspace-Id': '123'}, 403, 'strict workspace scope'),
+            ({'X-Workspace-Scope': 'strict'}, 403, 'requires a workspace pin'),
         ],
     )
-    def test_preview_tool_authorization(self, test_client: TestClient, mocker, headers, expected_status):
+    def test_preview_tool_authorization(
+        self, test_client: TestClient, mocker, headers, expected_status, message_fragment
+    ):
         """The preview endpoint enforces the same tool-authorization headers as the MCP middleware."""
         from keboola_mcp_server.clients.storage import ComponentAPIResponse
 
@@ -118,8 +123,8 @@ class TestPreviewConfigDiff:
 
         response = test_client.post('/preview/configuration', json=request_payload, headers=headers)
         assert response.status_code == expected_status
-        if expected_status == 403:
-            assert 'not authorized' in response.json()['message']
+        if message_fragment:
+            assert message_fragment in response.json()['message']
 
     @pytest.mark.parametrize(
         ('tool_name', 'role', 'branch_id', 'expected_fragment'),
