@@ -430,7 +430,9 @@ class KeboolaServiceClient:
         :param retry: Whether to apply the retry policy; False for calls that start a non-idempotent operation
         :return: API response as dictionary
         """
-        return await self.raw_client.put(endpoint=endpoint, data=data, params=params, retry=retry)
+        # Forwarded only when opting out, so the default call to the raw client stays the plain one.
+        extra: dict[str, Any] = {} if retry else {'retry': False}
+        return await self.raw_client.put(endpoint=endpoint, data=data, params=params, **extra)
 
     async def delete(
         self,
