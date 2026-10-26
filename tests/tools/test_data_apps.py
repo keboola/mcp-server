@@ -33,6 +33,7 @@ from keboola_mcp_server.tools.data_apps import (
     _build_data_app_config,
     _fetch_data_app,
     _fetch_latest_run,
+    _fetch_published_config_version,
     _get_authorization,
     _get_data_app_slug,
     _get_query_function_code,
@@ -766,9 +767,6 @@ class TestFetchDataAppValidation:
         )
 
         keboola_client.data_science_client.get_data_app = mocker.AsyncMock(return_value=data_app_response)
-        keboola_client.data_science_client.get_deployment = mocker.AsyncMock(
-            return_value=DeploymentResponse(id='dep-1', config_version='1')
-        )
         keboola_client.storage_client.configuration_detail = mocker.AsyncMock(
             return_value={
                 'id': config_id,
@@ -783,10 +781,8 @@ class TestFetchDataAppValidation:
 
         assert result.data_app_id == data_app_id
         assert result.component_id == DATA_APP_COMPONENT_ID
-        # The deployment on its way to production is the published one; the rollout shows in `state`.
-        keboola_client.data_science_client.get_deployment.assert_awaited_once_with(data_app_id, 'dep-2')
-        assert result.published_config_version == '1'
         assert result.config_version == '2'
+        assert result.desired_deployment_id == 'dep-2'
         assert result.state == 'starting'
 
     @pytest.mark.asyncio
@@ -980,8 +976,8 @@ async def test_modify_streamlit_data_app_folder(
     [
         # Update: failure at the re-fetch step, running app keeps the "redeploy required" hint.
         ('cfg-1', '_fetch_data_app', 'running', 'updated (redeploy required to apply changes in the running app)'),
-        # Update: failure at the FIRST post-write step (metadata) on a stopped app -> still partial, no redeploy hint.
-        ('cfg-1', 'set_cfg_update_metadata', 'stopped', 'updated'),
+        # Update: failure at the FIRST post-write step (metadata) on a never-deployed app -> still partial, no hint.
+        ('cfg-1', 'set_cfg_update_metadata', 'notDeployed', 'updated'),
         # Create: failure at a post-write step.
         ('', 'set_cfg_creation_metadata', None, 'created'),
     ],
@@ -1031,6 +1027,7 @@ async def test_modify_streamlit_data_app_partial_success_when_response_building_
             auto_suspend_after_seconds=900,
             configuration=encrypted_config,
             state=state,
+            desired_deployment_id=None if state == 'notDeployed' else 'dep-1',
         )
         mocker.patch(
             'keboola_mcp_server.tools.data_apps.modify_streamlit_data_app_internal',
@@ -1105,6 +1102,7 @@ async def test_partial_output_helpers_never_raise_when_summary_construction_fail
         type='streamlit',
         configuration={'authorization': {}},
         state='running',
+        desired_deployment_id='dep-1',
     )
     mocker.patch.object(DataAppSummary, 'model_validate', side_effect=RuntimeError('validate boom'))
     update_out = _partial_update_output(
@@ -2673,6 +2671,9 @@ async def test_deploy_data_app_publishes_latest_config_version_and_reports_publi
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
     keboola_client.data_science_client.list_runtimes = mocker.AsyncMock(return_value=_RUNTIMES)
+    keboola_client.data_science_client.deploy_data_app.return_value = DeploymentResponse(
+        id='dep-2', config_version=published_after
+    )
     keboola_client.storage_client.configuration_version_latest = mocker.AsyncMock(return_value=5)
 
     def make_app(config_version: str, published_config_version: str) -> DataApp:
@@ -2743,15 +2744,29 @@ def test_with_deployment_info_reports_published_version(
     assert info.has_unpublished_changes is expected_unpublished
 
 
-def test_data_app_from_api_responses_keeps_published_and_latest_versions_apart() -> None:
-    api_configuration = ConfigurationAPIResponse.model_validate(
-        {'componentId': DATA_APP_COMPONENT_ID, 'id': 'cfg-123', 'name': 'app', 'version': 5, 'configuration': {}}
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('desired_deployment_id', 'expected'),
+    [
+        pytest.param('dep-2', '3', id='deployment_on_its_way_is_published'),
+        pytest.param(None, None, id='never_deployed'),
+    ],
+)
+async def test_fetch_published_config_version_reads_the_desired_deployment(
+    mocker, data_app: DataApp, desired_deployment_id: str | None, expected: str | None
+) -> None:
+    client = mocker.Mock()
+    client.data_science_client.get_deployment = mocker.AsyncMock(
+        return_value=DeploymentResponse(id='dep-2', config_version='3')
     )
+    data_app.desired_deployment_id = desired_deployment_id
 
-    data_app = DataApp.from_api_responses(_make_data_app_response(), api_configuration, published_config_version='3')
+    assert await _fetch_published_config_version(client, data_app) == expected
 
-    assert data_app.config_version == '5'
-    assert data_app.published_config_version == '3'
+    if desired_deployment_id:
+        client.data_science_client.get_deployment.assert_awaited_once_with(data_app.data_app_id, 'dep-2')
+    else:
+        client.data_science_client.get_deployment.assert_not_awaited()
 
 
 @pytest.mark.parametrize(

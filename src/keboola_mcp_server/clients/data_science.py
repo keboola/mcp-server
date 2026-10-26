@@ -2,7 +2,7 @@ import logging
 from datetime import datetime
 from typing import Any, Union, cast
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, ValidationError
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from keboola_mcp_server.clients.base import KeboolaServiceClient, RawKeboolaClient
 
@@ -43,14 +43,20 @@ class DataAppResponse(BaseModel):
         description='Whether production serves traffic: notDeployed, starting, running, suspended or disabled'
     )
     url: str | None = Field(default=None, description='The production URL of the data app')
-    has_managed_git_repo: bool = Field(
-        validation_alias=AliasChoices('hasManagedGitRepo', 'has_managed_git_repo'),
-        default=False,
-        description='Whether the app has a Keboola-managed git repository',
-    )
     production: AppProductionResponse = Field(
         default_factory=AppProductionResponse, description='Which deployment is production'
     )
+
+    @property
+    def reported_state(self) -> str:
+        """The state of the app's production, with a rollout reported as `starting`.
+
+        - `/v2` keeps `running` while a new deployment is on its way to production.
+        - A promotion wakes a suspended app, so its rollout is a start too.
+        - A disabled app stays so: its start failed.
+        """
+        rolling_out = self.production.desired_deployment_id != self.production.actual_deployment_id
+        return 'starting' if rolling_out and self.state != 'disabled' else self.state
 
 
 class DeploymentResponse(BaseModel):
@@ -62,11 +68,6 @@ class DeploymentResponse(BaseModel):
     config_version: str = Field(
         validation_alias=AliasChoices('configVersion', 'config_version'),
         description='The configuration version the deployment runs',
-    )
-    created_at: str | None = Field(
-        validation_alias=AliasChoices('createdAt', 'created_at'),
-        default=None,
-        description='When the deployment was created',
     )
 
 
@@ -351,13 +352,7 @@ class AppRunResponse(BaseModel):
         default=None,
         description='The ID of the data app this run belongs to.',
     )
-    state: str | None = Field(
-        default=None,
-        description=(
-            'The state of the run: "starting", "running", "finished" or "failed"; `null` on a historic run, '
-            'whose `stopped_at` tells whether it finished.'
-        ),
-    )
+    state: str = Field(description='The state of the run: "starting", "running", "finished" or "failed".')
     created_at: str | None = Field(
         validation_alias=AliasChoices('createdAt', 'created_at'),
         default=None,
@@ -387,6 +382,15 @@ class AppRunResponse(BaseModel):
         ),
     )
     mode: str | None = Field(default=None, description='The mode of the run, e.g. "prod" or "dev".')
+
+    @model_validator(mode='before')
+    @classmethod
+    def _state_of_a_historic_run(cls, data: Any) -> Any:
+        """A historic `/v2` run carries no `state`; it finished when it has `stoppedAt`."""
+        if isinstance(data, dict) and data.get('state') is None:
+            stopped = data.get('stoppedAt') or data.get('stopped_at')
+            data = {**data, 'state': 'finished' if stopped else 'running'}
+        return data
 
 
 class AppPreviewLinkResponse(BaseModel):
@@ -511,15 +515,13 @@ class DataScienceClient(KeboolaServiceClient):
         """
         await self.patch(endpoint=f'apps/{data_app_id}', data={'mode': mode, 'restartIfRunning': True})
 
-    async def suspend_data_app(self, data_app_id: str) -> DataAppResponse:
+    async def suspend_data_app(self, data_app_id: str) -> None:
         """
         Suspend a data app: it sleeps now and wakes on the next request.
 
         :param data_app_id: Data app ID to suspend
-        :return: Updated data app response with the new state
         """
-        response = await self.post(endpoint=f'v2/apps/{data_app_id}/suspend', data={})
-        return DataAppResponse.model_validate(response)
+        await self.post(endpoint=f'v2/apps/{data_app_id}/suspend', data={})
 
     async def get_data_app_password(self, data_app_id: str) -> str:
         """

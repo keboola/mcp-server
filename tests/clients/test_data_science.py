@@ -180,10 +180,9 @@ async def test_suspend_data_app_posts_to_suspend() -> None:
     client = DataScienceClient.create('https://api.example.com', token=None)
     client.post = AsyncMock(return_value=_create_app_response() | {'state': 'suspended'})  # type: ignore[assignment]
 
-    app = await client.suspend_data_app('app-123')
+    await client.suspend_data_app('app-123')
 
     client.post.assert_awaited_once_with(endpoint='v2/apps/app-123/suspend', data={})
-    assert app.state == 'suspended'
 
 
 @pytest.mark.asyncio
@@ -197,7 +196,7 @@ async def test_get_data_app_parses_the_v2_record() -> None:
     app = await client.get_data_app('app-123')
 
     client.get.assert_awaited_once_with(endpoint='v2/apps/app-123')
-    assert app.has_managed_git_repo is True
+    assert app.reported_state == 'starting'
     assert app.production.desired_deployment_id == 'dep-2'
     assert app.production.actual_deployment_id == 'dep-1'
 
@@ -344,7 +343,7 @@ async def test_list_app_runs_gets_expected_endpoint_and_parses_failure_reason() 
 
     client.get.assert_awaited_once_with(endpoint='v2/apps/app-123/runs', params={'limit': 2, 'offset': 0})
     assert len(runs) == 3
-    assert runs[2].state is None
+    assert runs[2].state == 'finished'
     assert all(isinstance(run, AppRunResponse) for run in runs)
     assert runs[0].state == 'failed'
     assert runs[0].started_at is None

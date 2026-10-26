@@ -267,7 +267,7 @@ class DataAppSummary(BaseModel):
             data_app_id=api_response.id,
             project_id=api_response.project_id,
             branch_id=api_response.branch_id or '',
-            state=_app_state(api_response),
+            state=api_response.reported_state,
             type=api_response.type or 'unknown',
             deployment_url=api_response.url,
         )
@@ -303,7 +303,7 @@ class AppRunInfo(BaseModel):
         if failure_message and len(failure_message) > _APP_RUN_MESSAGE_LIMIT:
             failure_message = '…' + failure_message[-(_APP_RUN_MESSAGE_LIMIT - 1) :]
         return cls(
-            state=run.state or ('finished' if run.stopped_at else 'running'),
+            state=run.state,
             created_at=run.created_at,
             stopped_at=run.stopped_at,
             failure_reason=run.failure_reason.reason if run.failure_reason else None,
@@ -486,7 +486,6 @@ class DataApp(BaseModel):
         cls,
         api_response: DataAppResponse,
         api_configuration: ConfigurationAPIResponse,
-        published_config_version: str | None = None,
     ) -> 'DataApp':
         data_app = cls(
             component_id=api_configuration.component_id,
@@ -495,8 +494,7 @@ class DataApp(BaseModel):
             project_id=api_response.project_id,
             branch_id=api_response.branch_id or '',
             config_version=str(api_configuration.version),
-            published_config_version=published_config_version,
-            state=_app_state(api_response),
+            state=api_response.reported_state,
             desired_deployment_id=api_response.production.desired_deployment_id,
             type=api_response.type or 'unknown',
             deployment_url=api_response.url,
@@ -833,11 +831,7 @@ async def modify_streamlit_data_app(
                 deployment_link=data_app.deployment_url,
                 uses_basic_authentication=_uses_basic_authentication(data_app.configuration.get('authorization') or {}),
             )
-            response = (
-                'updated (redeploy required to apply changes in the running app)'
-                if data_app.state in ('running', 'starting', 'suspended')
-                else 'updated'
-            )
+            response = _update_response(data_app)
             return ModifiedDataAppOutput(
                 response=response,
                 change_summary=folder_hint,
@@ -996,11 +990,7 @@ def _partial_update_output(
         links = []
     # Mirror the success-path wording: the redeploy hint only applies to a deployed app. The pre-update
     # state is a faithful proxy here -- a config write does not change deployment state on its own.
-    response = (
-        'updated (redeploy required to apply changes in the running app)'
-        if data_app_pre.state in ('running', 'starting', 'suspended')
-        else 'updated'
-    )
+    response = _update_response(data_app_pre)
     return ModifiedDataAppOutput(
         response=response,
         change_summary=(
@@ -1496,11 +1486,7 @@ async def modify_python_js_data_app(
             deployment_link=data_app.deployment_url,
             uses_basic_authentication=_uses_basic_authentication(data_app.configuration.get('authorization') or {}),
         )
-        response = (
-            'updated (redeploy required to apply changes in the running app)'
-            if data_app.state in ('running', 'starting', 'suspended')
-            else 'updated'
-        )
+        response = _update_response(data_app)
         data_app_summary = DataAppSummary.model_validate(data_app.model_dump())
         data_app_summary.repo_url = repo_url
         # Read it back off the config we just wrote rather than the re-fetched app, so the answer
@@ -2147,12 +2133,13 @@ async def deploy_data_app(
         if mode is not None:
             await client.data_science_client.set_data_app_mode(data_app.data_app_id, 'dev' if mode == 'dev' else 'prod')
         try:
-            await client.data_science_client.deploy_data_app(data_app.data_app_id, str(config_version))
+            deployment = await client.data_science_client.deploy_data_app(data_app.data_app_id, str(config_version))
         except httpx.HTTPStatusError as e:
             if e.response.status_code == HTTPStatus.CONFLICT and _LEGACY_WORKLOAD in _api_error_text(e.response):
                 raise ValueError(_legacy_workload_message(data_app)) from e
             raise
         data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
+        data_app.published_config_version = deployment.config_version
         logs, last_run, images = await asyncio.gather(
             _fetch_logs(client, data_app.data_app_id),
             _fetch_latest_run(client, data_app.data_app_id),
@@ -2635,10 +2622,8 @@ async def _build_data_app_with_repo(
     data_app_science: DataAppResponse,
     api_config: ConfigurationAPIResponse,
 ) -> DataApp:
-    """Build a `DataApp` with the config version production runs and, for python-js apps, the managed git repo URL."""
-    data_app = DataApp.from_api_responses(
-        data_app_science, api_config, await _fetch_published_config_version(client, data_app_science)
-    )
+    """Build a `DataApp` and, for python-js apps, attach the managed git repo URL."""
+    data_app = DataApp.from_api_responses(data_app_science, api_config)
     data_app.deployment_url = data_app.deployment_url or _app_url(client, data_app_science.id, api_config.configuration)
     if data_app_science.type == 'python-js':
         try:
@@ -2650,15 +2635,14 @@ async def _build_data_app_with_repo(
     return data_app
 
 
-async def _fetch_published_config_version(client: KeboolaClient, data_app: DataAppResponse) -> str | None:
+async def _fetch_published_config_version(client: KeboolaClient, data_app: DataApp) -> str | None:
     """The config version of the deployment last asked to be production, or None when none ever was.
 
     - While it rolls out (`state="starting"`), the previous deployment still serves production.
     """
-    deployment_id = data_app.production.desired_deployment_id
-    if deployment_id is None:
+    if data_app.desired_deployment_id is None:
         return None
-    deployment = await client.data_science_client.get_deployment(data_app.id, deployment_id)
+    deployment = await client.data_science_client.get_deployment(data_app.data_app_id, data_app.desired_deployment_id)
     return deployment.config_version
 
 
@@ -2678,8 +2662,11 @@ async def _fetch_data_app_details_task(
             deployment_link=data_app.deployment_url,
             uses_basic_authentication=_uses_basic_authentication(data_app.configuration.get('authorization') or {}),
         )
-        logs = await _fetch_logs(client, data_app.data_app_id)
-        last_run = await _fetch_latest_run(client, data_app.data_app_id)
+        logs, last_run, data_app.published_config_version = await asyncio.gather(
+            _fetch_logs(client, data_app.data_app_id),
+            _fetch_latest_run(client, data_app.data_app_id),
+            _fetch_published_config_version(client, data_app),
+        )
         data_app = data_app.with_links(links).with_deployment_info(logs, last_run=last_run)
         # Drafts of a python-js prod are surfaced inline so the agent can find them in one round-trip
         # — see Scenario C in `modify_python_js_data_app`. Skip for drafts themselves and for Streamlit
@@ -2703,10 +2690,15 @@ def _is_draft_config(configuration: Mapping[str, Any]) -> bool:
     return _data_app_block(configuration).get('isDraft') is True
 
 
+def _parameters_block(configuration: Mapping[str, Any]) -> Mapping[str, Any]:
+    """The `parameters` mapping of a stored configuration; empty when it is missing or malformed."""
+    parameters = configuration.get('parameters')
+    return parameters if isinstance(parameters, Mapping) else {}
+
+
 def _data_app_block(configuration: Mapping[str, Any]) -> Mapping[str, Any]:
     """The `parameters.dataApp` mapping of a stored configuration; empty when it is missing or malformed."""
-    parameters = configuration.get('parameters')
-    data_app = parameters.get('dataApp') if isinstance(parameters, Mapping) else None
+    data_app = _parameters_block(configuration).get('dataApp')
     return data_app if isinstance(data_app, Mapping) else {}
 
 
@@ -2871,24 +2863,9 @@ def _is_never_deployed(data_app: 'DataApp') -> bool:
     return data_app.desired_deployment_id is None
 
 
-def _app_state(api_response: DataAppResponse) -> str:
-    """The state of the app's production, with a rollout reported as `starting`.
-
-    - `/v2` keeps `running` while a new deployment is on its way to production.
-    - A promotion wakes a suspended app, so its rollout is a start too.
-    - A disabled app stays so: its start failed.
-    """
-    production = api_response.production
-    rolling_out = production.desired_deployment_id != production.actual_deployment_id
-    if rolling_out and api_response.state != 'disabled':
-        return 'starting'
-    return api_response.state
-
-
 def _config_auto_suspend(configuration: Mapping[str, Any]) -> int | None:
     """The `parameters.autoSuspendAfterSeconds` of a stored data-app configuration, or None without one."""
-    parameters = configuration.get('parameters')
-    value = parameters.get('autoSuspendAfterSeconds') if isinstance(parameters, Mapping) else None
+    value = _parameters_block(configuration).get('autoSuspendAfterSeconds')
     return value if isinstance(value, int) else None
 
 
@@ -2896,6 +2873,13 @@ def _config_slug(configuration: Mapping[str, Any]) -> str | None:
     """The `parameters.dataApp.slug` of a stored data-app configuration, or None when it has none."""
     slug = _data_app_block(configuration).get('slug')
     return slug if isinstance(slug, str) and slug else None
+
+
+def _update_response(data_app: 'DataApp') -> str:
+    """The response of a config update: a deployed app runs its old config until it is redeployed."""
+    if _is_never_deployed(data_app):
+        return 'updated'
+    return 'updated (redeploy required to apply changes in the running app)'
 
 
 def _app_url(client: KeboolaClient, data_app_id: str, configuration: Mapping[str, Any]) -> str | None:
