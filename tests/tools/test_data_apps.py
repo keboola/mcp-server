@@ -2671,7 +2671,7 @@ async def test_deploy_data_app_publishes_latest_config_version_and_reports_publi
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
     keboola_client.data_science_client.list_runtimes = mocker.AsyncMock(return_value=_RUNTIMES)
-    keboola_client.data_science_client.deploy_data_app.return_value = DeploymentResponse(
+    keboola_client.data_science_client.get_deployment.return_value = DeploymentResponse(
         id='dep-2', config_version=published_after
     )
     keboola_client.storage_client.configuration_version_latest = mocker.AsyncMock(return_value=5)
@@ -2689,6 +2689,7 @@ async def test_deploy_data_app_publishes_latest_config_version_and_reports_publi
             type=app_type,
             configuration={'parameters': {'autoSuspendAfterSeconds': 900, 'dataApp': {'slug': 'x'}}},
             state='running',
+            desired_deployment_id='dep-2',
         )
 
     mocker.patch(
@@ -2701,11 +2702,13 @@ async def test_deploy_data_app_publishes_latest_config_version_and_reports_publi
     result = await deploy_data_app(ctx=mcp_context_client, action='deploy', configuration_id='cfg-1', mode=mode)
 
     keboola_client.storage_client.configuration_version_latest.assert_awaited_once_with(DATA_APP_COMPONENT_ID, 'cfg-1')
-    keboola_client.data_science_client.deploy_data_app.assert_awaited_once_with('app-1', '5')
+    # A mode deploy (a draft in dev mode) goes through /v1, which /v2 has no counterpart of.
     if mode is None:
-        keboola_client.data_science_client.set_data_app_mode.assert_not_awaited()
+        keboola_client.data_science_client.deploy_data_app.assert_awaited_once_with('app-1', '5')
+        keboola_client.data_science_client.deploy_data_app_in_mode.assert_not_awaited()
     else:
-        keboola_client.data_science_client.set_data_app_mode.assert_awaited_once_with('app-1', mode)
+        keboola_client.data_science_client.deploy_data_app_in_mode.assert_awaited_once_with('app-1', '5', mode)
+        keboola_client.data_science_client.deploy_data_app.assert_not_awaited()
     assert result.deployment_info is not None
     assert result.deployment_info.version == published_after
     assert result.deployment_info.latest_config_version == latest_after

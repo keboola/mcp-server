@@ -2131,15 +2131,18 @@ async def deploy_data_app(
             DATA_APP_COMPONENT_ID, data_app.configuration_id
         )
         if mode is not None:
-            await client.data_science_client.set_data_app_mode(data_app.data_app_id, 'dev' if mode == 'dev' else 'prod')
-        try:
-            deployment = await client.data_science_client.deploy_data_app(data_app.data_app_id, str(config_version))
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == HTTPStatus.CONFLICT and _LEGACY_WORKLOAD in _api_error_text(e.response):
-                raise ValueError(_legacy_workload_message(data_app)) from e
-            raise
+            await client.data_science_client.deploy_data_app_in_mode(
+                data_app.data_app_id, str(config_version), 'dev' if mode == 'dev' else 'prod'
+            )
+        else:
+            try:
+                await client.data_science_client.deploy_data_app(data_app.data_app_id, str(config_version))
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == HTTPStatus.CONFLICT and _LEGACY_WORKLOAD in _api_error_text(e.response):
+                    raise ValueError(_legacy_workload_message(data_app)) from e
+                raise
         data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
-        data_app.published_config_version = deployment.config_version
+        data_app.published_config_version = await _fetch_published_config_version(client, data_app)
         logs, last_run, images = await asyncio.gather(
             _fetch_logs(client, data_app.data_app_id),
             _fetch_latest_run(client, data_app.data_app_id),

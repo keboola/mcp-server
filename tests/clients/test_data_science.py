@@ -166,13 +166,16 @@ async def test_deploy_data_app_creates_a_deployment_of_the_config_version() -> N
 
 
 @pytest.mark.asyncio
-async def test_set_data_app_mode_patches_only_the_mode() -> None:
+async def test_deploy_data_app_in_mode_patches_v1() -> None:
     client = DataScienceClient.create('https://api.example.com', token=None)
     client.patch = AsyncMock(return_value=_create_app_response())  # type: ignore[assignment]
 
-    await client.set_data_app_mode('app-123', 'dev')
+    await client.deploy_data_app_in_mode('app-123', '42', 'dev')
 
-    client.patch.assert_awaited_once_with(endpoint='apps/app-123', data={'mode': 'dev', 'restartIfRunning': True})
+    client.patch.assert_awaited_once_with(
+        endpoint='apps/app-123',
+        data={'desiredState': 'running', 'restartIfRunning': True, 'configVersion': '42', 'mode': 'dev'},
+    )
 
 
 @pytest.mark.asyncio

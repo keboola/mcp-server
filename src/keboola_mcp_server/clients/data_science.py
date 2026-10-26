@@ -503,17 +503,18 @@ class DataScienceClient(KeboolaServiceClient):
         )
         return DeploymentResponse.model_validate(response)
 
-    async def set_data_app_mode(self, data_app_id: str, mode: str) -> None:
+    async def deploy_data_app_in_mode(self, data_app_id: str, config_version: str, mode: str) -> None:
         """
-        Set the mode the next deployment of a data app runs in, without starting it.
+        Deploy a data app in the given mode through `/v1`: `/v2` has no mode.
 
-        - `/v2` has no mode; a `/v2` deployment runs in the mode stored on the app.
-        - `restartIfRunning` lets the mode change on an app that is not stopped.
+        - The app keeps the mode for its later deployments.
 
         :param data_app_id: The ID of the data app
+        :param config_version: The config version to deploy (publish)
         :param mode: 'dev' (hot reload + preview links) or 'prod'
         """
-        await self.patch(endpoint=f'apps/{data_app_id}', data={'mode': mode, 'restartIfRunning': True})
+        data = {'desiredState': 'running', 'restartIfRunning': True, 'configVersion': config_version, 'mode': mode}
+        await self.patch(endpoint=f'apps/{data_app_id}', data=data)
 
     async def suspend_data_app(self, data_app_id: str) -> None:
         """
