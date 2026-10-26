@@ -24,7 +24,7 @@ async def test_tail_app_logs_with_lines_calls_get_text_with_lines() -> None:
     result = await client.tail_app_logs('app-123', since=None, lines=5)
 
     assert result == 'LOGS'
-    client.get_text.assert_awaited_once_with(endpoint='apps/app-123/logs/tail', params={'lines': 5})
+    client.get_text.assert_awaited_once_with(endpoint='v2/apps/app-123/logs/tail', params={'lines': 5})
 
 
 @pytest.mark.asyncio
@@ -34,7 +34,7 @@ async def test_tail_app_logs_with_lines_minimum_enforced() -> None:
 
     _ = await client.tail_app_logs('app-123', since=None, lines=0)
 
-    client.get_text.assert_awaited_once_with(endpoint='apps/app-123/logs/tail', params={'lines': 1})
+    client.get_text.assert_awaited_once_with(endpoint='v2/apps/app-123/logs/tail', params={'lines': 1})
 
 
 @pytest.mark.asyncio
@@ -47,7 +47,7 @@ async def test_tail_app_logs_with_since_calls_get_text_with_since_param() -> Non
 
     assert result == 'LOGS'
     client.get_text.assert_awaited_once_with(
-        endpoint='apps/app-xyz/logs/tail', params={'since': since.isoformat(timespec='microseconds')}
+        endpoint='v2/apps/app-xyz/logs/tail', params={'since': since.isoformat(timespec='microseconds')}
     )
 
 
@@ -89,10 +89,11 @@ def _create_app_response(app_id: str = 'app-123', config_id: str = 'cfg-456') ->
         'componentId': 'keboola.data-apps',
         'branchId': None,
         'configId': config_id,
-        'configVersion': '1',
         'type': 'python-js',
-        'state': 'created',
-        'desiredState': 'created',
+        'url': None,
+        'hasManagedGitRepo': True,
+        'production': {'desiredDeploymentId': None, 'actualDeploymentId': None},
+        'state': 'notDeployed',
     }
 
 
@@ -133,7 +134,7 @@ async def test_create_data_app_passes_type_and_managed_repo_flag(
         'config': config.model_dump(exclude_none=True, by_alias=True),
         **expected_extra_payload,
     }
-    client.post.assert_awaited_once_with(endpoint='apps', data=expected_payload)
+    client.post.assert_awaited_once_with(endpoint='v2/apps', data=expected_payload)
 
 
 @pytest.mark.asyncio
@@ -151,33 +152,56 @@ async def test_create_data_app_defaults_to_streamlit_without_managed_repo_flag()
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ('config_version', 'mode', 'expected_extra'),
-    [
-        ('42', None, {'configVersion': '42'}),  # Streamlit
-        (None, 'dev', {'mode': 'dev'}),  # python-js dev preview
-        (None, 'production', {'mode': 'production'}),
-        (None, None, {}),  # bare deploy (python-js without explicit mode)
-        ('5', 'dev', {'configVersion': '5', 'mode': 'dev'}),  # both
-    ],
-)
-async def test_deploy_data_app_payload_with_mode_and_optional_config_version(
-    config_version: str | None,
-    mode: str | None,
-    expected_extra: dict,
-) -> None:
+async def test_deploy_data_app_creates_a_deployment_of_the_config_version() -> None:
+    client = DataScienceClient.create('https://api.example.com', token=None)
+    client.post = AsyncMock(  # type: ignore[assignment]
+        return_value={'id': 'dep-1', 'configVersion': '42', 'createdAt': '2026-10-26T10:00:00+00:00'}
+    )
+
+    deployment = await client.deploy_data_app('app-123', '42')
+
+    client.post.assert_awaited_once_with(endpoint='v2/apps/app-123/deployments', data={'configVersion': '42'})
+    assert deployment.id == 'dep-1'
+    assert deployment.config_version == '42'
+
+
+@pytest.mark.asyncio
+async def test_deploy_data_app_in_mode_patches_v1() -> None:
     client = DataScienceClient.create('https://api.example.com', token=None)
     client.patch = AsyncMock(return_value=_create_app_response())  # type: ignore[assignment]
 
-    _ = await client.deploy_data_app('app-123', config_version, mode=mode)
+    await client.deploy_data_app_in_mode('app-123', '42', 'dev')
 
-    expected_payload = {
-        'desiredState': 'running',
-        'restartIfRunning': True,
-        'updateDependencies': False,
-        **expected_extra,
-    }
-    client.patch.assert_awaited_once_with(endpoint='apps/app-123', data=expected_payload)
+    client.patch.assert_awaited_once_with(
+        endpoint='apps/app-123',
+        data={'desiredState': 'running', 'restartIfRunning': True, 'configVersion': '42', 'mode': 'dev'},
+    )
+
+
+@pytest.mark.asyncio
+async def test_suspend_data_app_posts_to_suspend() -> None:
+    client = DataScienceClient.create('https://api.example.com', token=None)
+    client.post = AsyncMock(return_value=_create_app_response() | {'state': 'suspended'})  # type: ignore[assignment]
+
+    await client.suspend_data_app('app-123')
+
+    client.post.assert_awaited_once_with(endpoint='v2/apps/app-123/suspend', data={})
+
+
+@pytest.mark.asyncio
+async def test_get_data_app_parses_the_v2_record() -> None:
+    client = DataScienceClient.create('https://api.example.com', token=None)
+    client.get = AsyncMock(  # type: ignore[assignment]
+        return_value=_create_app_response()
+        | {'state': 'running', 'production': {'desiredDeploymentId': 'dep-2', 'actualDeploymentId': 'dep-1'}}
+    )
+
+    app = await client.get_data_app('app-123')
+
+    client.get.assert_awaited_once_with(endpoint='v2/apps/app-123')
+    assert app.reported_state == 'starting'
+    assert app.production.desired_deployment_id == 'dep-2'
+    assert app.production.actual_deployment_id == 'dep-1'
 
 
 @pytest.mark.parametrize('permissions', ['readWrite', 'readOnly'])
@@ -204,7 +228,7 @@ async def test_create_app_git_credential_posts_to_expected_endpoint(permissions:
     assert result.permissions == permissions
     assert result.secret == 'one-time-token-xyz'
     client.post.assert_awaited_once_with(
-        endpoint='apps/app-123/git-repo/credentials',
+        endpoint='v2/apps/app-123/git-repo/credentials',
         data={'type': 'http_token', 'permissions': permissions},
     )
 
@@ -226,7 +250,7 @@ async def test_get_app_git_repo_returns_urls() -> None:
     assert result.ssh_url == 'git@managed.repo:org/app.git'
     assert result.https_url == 'https://managed.repo/org/app.git'
     assert result.is_managed_git_repo is True
-    client.get.assert_awaited_once_with(endpoint='apps/app-123/git-repo')
+    client.get.assert_awaited_once_with(endpoint='v2/apps/app-123/git-repo')
 
 
 def test_app_git_repo_response_missing_managed_flag_defaults_to_none() -> None:
@@ -308,13 +332,21 @@ async def test_list_app_runs_gets_expected_endpoint_and_parses_failure_reason() 
                 'failureReason': None,
                 'mode': 'prod',
             },
+            {
+                'id': 'run-0',
+                'appId': 'app-123',
+                'state': None,
+                'createdAt': '2026-06-11T09:00:00+00:00',
+                'stoppedAt': '2026-06-11T09:30:00+00:00',
+            },
         ]
     )
 
     runs = await client.list_app_runs('app-123', limit=2)
 
-    client.get.assert_awaited_once_with(endpoint='apps/app-123/runs', params={'limit': 2, 'offset': 0})
-    assert len(runs) == 2
+    client.get.assert_awaited_once_with(endpoint='v2/apps/app-123/runs', params={'limit': 2, 'offset': 0})
+    assert len(runs) == 3
+    assert runs[2].state == 'finished'
     assert all(isinstance(run, AppRunResponse) for run in runs)
     assert runs[0].state == 'failed'
     assert runs[0].started_at is None

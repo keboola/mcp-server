@@ -83,7 +83,7 @@ async def test_create_and_fetch_data_app(
     created = initial_data_app
     assert isinstance(created, DataAppResponse)
     assert created.id
-    assert created.state == 'created'
+    assert created.state == 'notDeployed'
     assert created.type == 'streamlit'
     assert created.component_id == DATA_APP_COMPONENT_ID
 
@@ -94,7 +94,7 @@ async def test_create_and_fetch_data_app(
     assert fetched_ds.component_id == created.component_id
     assert fetched_ds.project_id == created.project_id
     assert fetched_ds.config_id == created.config_id
-    assert fetched_ds.config_version == created.config_version
+    assert fetched_ds.production == created.production
 
     # Fetch the data app config from storage
     fetched_s = await keboola_client.storage_client.configuration_detail(

@@ -12,10 +12,10 @@ from urllib.parse import quote, urlsplit, urlunsplit
 import httpx
 from fastmcp import Context, FastMCP
 from mcp.types import ToolAnnotations
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PrivateAttr
 
 from keboola_mcp_server.clients.base import JsonDict
-from keboola_mcp_server.clients.client import DATA_APP_COMPONENT_ID, KeboolaClient, get_metadata_property
+from keboola_mcp_server.clients.client import DATA_APP_COMPONENT_ID, KeboolaClient
 from keboola_mcp_server.clients.data_science import (
     AppRunResponse,
     CodeDataAppConfig,
@@ -24,14 +24,14 @@ from keboola_mcp_server.clients.data_science import (
     RuntimeResponse,
 )
 from keboola_mcp_server.clients.storage import ConfigurationAPIResponse
-from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
 from keboola_mcp_server.mcp import PlainFunctionTool as FunctionTool
 from keboola_mcp_server.mcp import ToonCompactFunctionTool, process_concurrently
 from keboola_mcp_server.scope import ProjectIdArg
 from keboola_mcp_server.tools.components.utils import (
-    apply_folder_metadata,
+    apply_configuration_folder,
+    build_folder_preview,
     folder_field_description,
     set_cfg_creation_metadata,
     set_cfg_update_metadata,
@@ -114,8 +114,8 @@ def add_data_app_tools(mcp: FastMCP) -> None:
     LOG.info('Data app tools initialized.')
 
 
-# State of the data app
-State = Literal['created', 'running', 'stopped', 'starting', 'stopping', 'restarting']
+# State of the data app's production: `starting` also covers a deployment on its way to production
+State = Literal['notDeployed', 'starting', 'running', 'suspended', 'disabled']
 # Accepts known states or any string preventing from validation errors when receiving unknown states from the API
 # LLM agent can still understand the state of the data app even if it is different from the known states
 SafeState = State | str
@@ -221,20 +221,34 @@ class DataAppSummary(BaseModel):
             'reaches the running app as the WORKSPACE_ID environment variable. True when the stored '
             'configuration carries `runtime.workspace.enabled = true` (projects with the '
             '`data-apps-storage-workspace` feature) or a `parameters.dataApp.secrets.WORKSPACE_ID` '
-            'entry (projects without it). Only populated by `modify_python_js_data_app` responses; '
-            'left `None` elsewhere, which means "not determined", not "disabled".'
+            'entry (projects without it).\n'
+            '<!-- directory:omit -->\n'
+            'Only populated by `modify_python_js_data_app` responses; '
+            'left `None` elsewhere, which means "not determined", not "disabled".\n'
+            '<!-- /directory:omit -->\n'
+            '<!-- directory:only -->\n'
+            'Left `None` here, which means "not determined", not "disabled".\n'
+            '<!-- /directory:only -->\n'
         ),
     )
     repo_url: str | None = Field(
         default=None,
         description=(
             'HTTPS clone URL of the managed git repo (without embedded credentials). '
-            'Only set for python-js data apps, and only populated by detail-style fetches '
-            '(`get_data_apps(configuration_ids=[...])`) and `modify_python_js_data_app` '
-            'responses. The inventory list path (`get_data_apps` without `configuration_ids`) '
+            'Only set for python-js data apps.\n'
+            '<!-- directory:omit -->\n'
+            'Only populated by detail-style fetches (`get_data_apps(configuration_ids=[...])`) and '
+            '`modify_python_js_data_app` responses.\n'
+            '<!-- /directory:omit -->\n'
+            '<!-- directory:only -->\n'
+            'Only populated by detail-style fetches (`get_data_apps(configuration_ids=[...])`).\n'
+            '<!-- /directory:only -->\n'
+            'The inventory list path (`get_data_apps` without `configuration_ids`) '
             'always leaves this `None` to keep the listing cheap — call the detail path to '
-            'retrieve the URL. Mint a token via `create_python_js_data_app_git_credential` '
-            'to authenticate.'
+            'retrieve the URL.\n'
+            '<!-- directory:omit -->\n'
+            'Mint a token via `create_python_js_data_app_git_credential` to authenticate.\n'
+            '<!-- /directory:omit -->\n'
         ),
     )
     git_branch: str | None = Field(
@@ -243,18 +257,17 @@ class DataAppSummary(BaseModel):
     )
 
     @classmethod
-    def from_api_response(cls, api_response: DataAppResponse) -> 'DataAppSummary':
+    def from_api_response(cls, api_response: DataAppResponse, config_version: str) -> 'DataAppSummary':
         return cls(
             component_id=api_response.component_id,
             configuration_id=api_response.config_id,
             data_app_id=api_response.id,
             project_id=api_response.project_id,
             branch_id=api_response.branch_id or '',
-            config_version=api_response.config_version,
-            state=api_response.state,
-            type=api_response.type,
+            config_version=config_version,
+            state=api_response.reported_state,
+            type=api_response.type or 'unknown',
             deployment_url=api_response.url,
-            auto_suspend_after_seconds=api_response.auto_suspend_after_seconds,
         )
 
 
@@ -300,7 +313,14 @@ class AppRunInfo(BaseModel):
 class RuntimeImage(BaseModel):
     """A backend image a python-js data app can run on, from the platform's runtimes catalog."""
 
-    version: str = Field(description='The image tag, the value `modify_python_js_data_app(image_version=...)` takes.')
+    version: str = Field(
+        description=(
+            'The image tag.\n'
+            '<!-- directory:omit -->\n'
+            'The value `modify_python_js_data_app(image_version=...)` takes.\n'
+            '<!-- /directory:omit -->\n'
+        )
+    )
     description: str | None = Field(
         default=None, description='Human-readable label naming its Python and Node.js versions.'
     )
@@ -317,9 +337,9 @@ class DeploymentInfo(BaseModel):
 
     version: str = Field(
         description=(
-            'The configuration version the data app is actually running (the published version pinned '
-            'by the data-app service). This is NOT necessarily the latest saved configuration version -- '
-            'compare with `latest_config_version`.'
+            'The configuration version deployed to production (the published version pinned by the data-app '
+            'service); while `state` is "starting" it is still rolling out. This is NOT necessarily the latest '
+            'saved configuration version -- compare with `latest_config_version`.'
         )
     )
     latest_config_version: str | None = Field(
@@ -383,7 +403,7 @@ class DataApp(BaseModel):
     published_config_version: str | None = Field(
         default=None,
         description=(
-            'The config version the data app is actually running (published). When it is lower than '
+            'The config version deployed to production (published). When it is lower than '
             '`config_version`, the latest configuration changes are not live yet.'
         ),
     )
@@ -394,8 +414,8 @@ class DataApp(BaseModel):
             'may report other types as well.'
         )
     )
-    desired_state: str | None = Field(
-        description='The state the data app was last asked to reach.', default=None, exclude=True
+    desired_deployment_id: str | None = Field(
+        description='The deployment most recently asked to be production.', default=None, exclude=True
     )
     deployment_url: str | None = Field(
         description='The URL the data app serves on; a draft reports it before its first run.', default=None
@@ -408,8 +428,10 @@ class DataApp(BaseModel):
         default=None,
         description=(
             'HTTPS clone URL of the managed git repo (without embedded credentials). '
-            'Only set for python-js data apps. Mint a token via '
-            '`create_python_js_data_app_git_credential` to authenticate.'
+            'Only set for python-js data apps.\n'
+            '<!-- directory:omit -->\n'
+            'Mint a token via `create_python_js_data_app_git_credential` to authenticate.\n'
+            '<!-- /directory:omit -->\n'
         ),
     )
     is_managed_git_repo: bool | None = Field(
@@ -450,33 +472,41 @@ class DataApp(BaseModel):
     )
     links: list[Link] = Field(description='Navigation links for the web interface.', default_factory=list)
 
+    # Whether the Storage API returned the configuration `folder` field (False on stacks without folder support).
+    _has_folder_field: bool = PrivateAttr(default=False)
+
+    @property
+    def has_folder_field(self) -> bool:
+        return self._has_folder_field
+
     @classmethod
     def from_api_responses(
         cls,
         api_response: DataAppResponse,
         api_configuration: ConfigurationAPIResponse,
     ) -> 'DataApp':
-        return cls(
+        data_app = cls(
             component_id=api_configuration.component_id,
             configuration_id=api_configuration.configuration_id,
             data_app_id=api_response.id,
             project_id=api_response.project_id,
             branch_id=api_response.branch_id or '',
             config_version=str(api_configuration.version),
-            published_config_version=api_response.config_version or None,
-            state=api_response.state,
-            desired_state=api_response.desired_state,
-            type=api_response.type,
+            state=api_response.reported_state,
+            desired_deployment_id=api_response.production.desired_deployment_id,
+            type=api_response.type or 'unknown',
             deployment_url=api_response.url,
-            auto_suspend_after_seconds=api_response.auto_suspend_after_seconds,
+            auto_suspend_after_seconds=_config_auto_suspend(api_configuration.configuration),
             name=api_configuration.name,
             description=api_configuration.description,
-            folder=get_metadata_property(api_configuration.metadata, MetadataField.CONFIGURATION_FOLDER_NAME) or '',
+            folder=api_configuration.folder or '',
             configuration=api_configuration.configuration,
             git_branch=_config_git_branch(api_configuration.configuration),
             deployment_info=None,
             links=[],
         )
+        data_app._has_folder_field = 'folder' in api_configuration.model_fields_set
+        return data_app
 
     def with_links(self, links: list[Link]) -> 'DataApp':
         self.links = links
@@ -646,8 +676,10 @@ class GetDataAppsOutput(BaseModel):
     available_images: list[RuntimeImage] = Field(
         default_factory=list,
         description=(
-            'When the details include a python-js app: every backend image the platform offers — the valid '
-            '`image_version` values for `modify_python_js_data_app`.'
+            'When the details include a python-js app: every backend image the platform offers.\n'
+            '<!-- directory:omit -->\n'
+            'The valid `image_version` values for `modify_python_js_data_app`.\n'
+            '<!-- /directory:omit -->\n'
         ),
     )
     links: list[Link] = Field(description='Navigation links for the web interface.', default_factory=list)
@@ -691,10 +723,16 @@ async def modify_streamlit_data_app(
 ) -> ModifiedDataAppOutput:
     """Creates or updates a Streamlit data app.
 
+    <!-- directory:omit -->
     Python-js is the default type for new data apps when you can run git: create them with
     `modify_python_js_data_app` (python-js source code is delivered only by `git push`). Use this tool to create
     a new app when you cannot run git or when the user asks for Streamlit explicitly, and to update existing
     Streamlit apps.
+    <!-- /directory:omit -->
+    <!-- directory:only -->
+    Use this tool to create new data apps and to update existing Streamlit apps. Other data apps cannot be changed here;
+    tell the user so.
+    <!-- /directory:only -->
 
     Considerations:
     - The `source_code` parameter must be a complete and runnable Streamlit app. It must include a placeholder
@@ -781,7 +819,7 @@ async def modify_streamlit_data_app(
                     configuration_id=configuration_id,
                     configuration_version=int(new_version),
                 )
-            folder_hint = await apply_folder_metadata(
+            folder_hint = await apply_configuration_folder(
                 client, DATA_APP_COMPONENT_ID, configuration_id, folder, 'data apps', 'modify_streamlit_data_app'
             )
             data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
@@ -791,11 +829,7 @@ async def modify_streamlit_data_app(
                 deployment_link=data_app.deployment_url,
                 uses_basic_authentication=_uses_basic_authentication(data_app.configuration.get('authorization') or {}),
             )
-            response = (
-                'updated (redeploy required to apply changes in the running app)'
-                if data_app.state in ('running', 'starting')
-                else 'updated'
-            )
+            response = _update_response(data_app)
             return ModifiedDataAppOutput(
                 response=response,
                 change_summary=folder_hint,
@@ -835,7 +869,7 @@ async def modify_streamlit_data_app(
                 component_id=DATA_APP_COMPONENT_ID,
                 configuration_id=data_app_resp.config_id,
             )
-            folder_hint = await apply_folder_metadata(
+            folder_hint = await apply_configuration_folder(
                 client,
                 DATA_APP_COMPONENT_ID,
                 data_app_resp.config_id,
@@ -853,7 +887,9 @@ async def modify_streamlit_data_app(
             return ModifiedDataAppOutput(
                 response='created',
                 change_summary=folder_hint,
-                data_app=DataAppSummary.from_api_response(data_app_resp),
+                data_app=DataAppSummary.from_api_response(
+                    data_app_resp, await _config_version_or_blank(client, data_app_resp.config_id)
+                ),
                 links=links,
             )
         except Exception:
@@ -906,31 +942,7 @@ async def modify_streamlit_data_app_internal(
         ),
     )
 
-    folder_preview: dict | None = None
-    if folder is not None:
-        normalized_folder = folder.strip()
-        try:
-            current_metadata = await client.storage_client.configuration_metadata_get(
-                component_id=DATA_APP_COMPONENT_ID, configuration_id=configuration_id
-            )
-            current_folder = next(
-                (
-                    m.get('value', '')
-                    for m in current_metadata
-                    if m.get('key') == MetadataField.CONFIGURATION_FOLDER_NAME
-                ),
-                '',
-            )
-            if normalized_folder != current_folder:
-                folder_preview = {'original_folder': current_folder, 'updated_folder': normalized_folder}
-        except Exception as e:
-            LOG.warning(
-                'Failed to fetch configuration metadata for folder preview '
-                '(component_id=%s, configuration_id=%s): %s. Proceeding without folder preview.',
-                DATA_APP_COMPONENT_ID,
-                configuration_id,
-                e,
-            )
+    folder_preview = build_folder_preview({'folder': data_app.folder} if data_app.has_folder_field else {}, folder)
 
     return data_app, updated_config, folder_preview
 
@@ -976,13 +988,9 @@ def _partial_update_output(
         )
     except Exception:
         links = []
-    # Mirror the success-path wording: the redeploy hint only applies to a running/starting app. The pre-update
+    # Mirror the success-path wording: the redeploy hint only applies to a deployed app. The pre-update
     # state is a faithful proxy here -- a config write does not change deployment state on its own.
-    response = (
-        'updated (redeploy required to apply changes in the running app)'
-        if data_app_pre.state in ('running', 'starting')
-        else 'updated'
-    )
+    response = _update_response(data_app_pre)
     return ModifiedDataAppOutput(
         response=response,
         change_summary=(
@@ -1010,7 +1018,7 @@ def _partial_create_output(
     call site) -- the agent-facing message stays stable and free of internal detail.
     """
     try:
-        summary = DataAppSummary.from_api_response(data_app_resp)
+        summary = DataAppSummary.from_api_response(data_app_resp, '')
     except Exception:
         # Defensive: this helper must never raise (the app already exists). SafeState/SafeType accept any
         # string, so building from the create-response primitives cannot fail even if the schema is tightened.
@@ -1427,7 +1435,7 @@ async def modify_python_js_data_app(
             configuration_id=configuration_id,
             configuration_version=int(data_app.config_version),
         )
-        folder_hint = await apply_folder_metadata(
+        folder_hint = await apply_configuration_folder(
             client, DATA_APP_COMPONENT_ID, configuration_id, folder, 'data apps', 'modify_python_js_data_app'
         )
         # Without an explicit `slug`, a new slug is a never-deployed app's slug following its name.
@@ -1478,11 +1486,7 @@ async def modify_python_js_data_app(
             deployment_link=data_app.deployment_url,
             uses_basic_authentication=_uses_basic_authentication(data_app.configuration.get('authorization') or {}),
         )
-        response = (
-            'updated (redeploy required to apply changes in the running app)'
-            if data_app.state in ('running', 'starting')
-            else 'updated'
-        )
+        response = _update_response(data_app)
         data_app_summary = DataAppSummary.model_validate(data_app.model_dump())
         data_app_summary.repo_url = repo_url
         # Read it back off the config we just wrote rather than the re-fetched app, so the answer
@@ -1609,7 +1613,7 @@ async def modify_python_js_data_app(
             component_id=DATA_APP_COMPONENT_ID,
             configuration_id=data_app_resp.config_id,
         )
-        folder_hint = await apply_folder_metadata(
+        folder_hint = await apply_configuration_folder(
             client,
             DATA_APP_COMPONENT_ID,
             data_app_resp.config_id,
@@ -1624,7 +1628,9 @@ async def modify_python_js_data_app(
             deployment_link=data_app_resp.url,
             uses_basic_authentication=uses_basic_auth,
         )
-        data_app_summary = DataAppSummary.from_api_response(data_app_resp)
+        data_app_summary = DataAppSummary.from_api_response(
+            data_app_resp, await _config_version_or_blank(client, data_app_resp.config_id)
+        )
         data_app_summary.repo_url = repo_url
         data_app_summary.storage_access_enabled = wants_storage_access
         data_app_summary.git_branch = draft_branch
@@ -2019,8 +2025,10 @@ async def get_data_apps(
       includes a `drafts: [...]` array of every draft (configs with `isDraft=true` and
       `parentConfigurationId == <prod-cfg>`) currently in the project. Drafts in trash are not
       included. Use this to discover existing drafts when continuing a previously abandoned
-      iteration (Scenario C in `modify_python_js_data_app`). The array is empty for drafts
-      themselves and for Streamlit apps.
+      iteration. The array is empty for drafts themselves and for Streamlit apps.
+    <!-- directory:omit -->
+      Resuming such an iteration is Scenario C in `modify_python_js_data_app`.
+    <!-- /directory:omit -->
     """
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
@@ -2045,12 +2053,19 @@ async def get_data_apps(
         return GetDataAppsOutput(data_apps=found_data_apps, available_images=images if has_python_js and images else [])
     else:
         # List all data apps in the project
-        data_apps: list[DataAppResponse] = await client.data_science_client.list_data_apps(limit=limit, offset=offset)
-        # Filter to only include keboola.data-apps component
-        data_apps = [app for app in data_apps if app.component_id == DATA_APP_COMPONENT_ID]
+        data_apps, configs = await asyncio.gather(
+            client.data_science_client.list_data_apps(limit=limit, offset=offset),
+            client.storage_client.configuration_list(DATA_APP_COMPONENT_ID),
+        )
+        # The /v2 record carries no config version; one Storage listing has them all.
+        versions = {str(cfg.get('id')): str(cfg.get('version', '')) for cfg in configs}
         links = [links_manager.get_data_app_dashboard_link()]
         return GetDataAppsOutput(
-            data_apps=[DataAppSummary.from_api_response(data_app) for data_app in data_apps],
+            data_apps=[
+                DataAppSummary.from_api_response(data_app, versions.get(data_app.config_id, ''))
+                for data_app in data_apps
+                if data_app.component_id == DATA_APP_COMPONENT_ID
+            ],
             links=links,
         )
 
@@ -2085,7 +2100,9 @@ async def deploy_data_app(
       development `setup.sh` (hot reload) and the data-app proxy enables an auto-auth path so an
       iframe preview can render without a manual login. Only meaningful on **draft** configs
       (python-js apps with `isDraft=true`).
+    <!-- directory:omit -->
     - To open a dev-mode draft in your own browser, call `get_data_app_preview_link` once the deploy is running.
+    <!-- /directory:omit -->
     - For prod redeploys (including after merging a draft's branch into `main`), use no `mode` —
       the prod app picks up the current `main`.
     - The branch a draft deploys from is pinned in `parameters.dataApp.git.branch` at create time;
@@ -2105,8 +2122,10 @@ async def deploy_data_app(
     `mode=None` is the expected call shape.
 
     ## General considerations
-    - Redeploying a data app takes some time, and the app may temporarily report status "stopped" during the
-      restart.
+    - Redeploying a data app takes some time; the app reports `state="starting"` until the new deployment serves
+      production.
+    - `state` is `notDeployed` (never deployed), `starting`, `running`, `suspended` (asleep, wakes on the next
+      visit) or `disabled` (failed to start; only a deploy brings it back).
     - After deployment, the deployment info includes the app URL and the latest logs to help diagnose in-app
       errors.
     """
@@ -2114,25 +2133,35 @@ async def deploy_data_app(
     links_manager = await ProjectLinksManager.from_client(client)
     if action == 'deploy':
         data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
-        if data_app.state == 'stopping':
-            raise ValueError('Data app is currently "stopping", could not be started at the moment.')
         # Always pin the latest config version (python-js included): without `configVersion` the data-app
         # service keeps the previously published version, so config-only changes (secrets, Storage access,
         # git branch, ...) would never go live.
         config_version = await client.storage_client.configuration_version_latest(
             DATA_APP_COMPONENT_ID, data_app.configuration_id
         )
-        _ = await client.data_science_client.deploy_data_app(
-            data_app.data_app_id,
-            str(config_version),
-            mode=mode,
-        )
+        if mode is not None:
+            await client.data_science_client.deploy_data_app_in_mode(
+                data_app.data_app_id, str(config_version), 'dev' if mode == 'dev' else 'prod'
+            )
+        else:
+            try:
+                await client.data_science_client.deploy_data_app(data_app.data_app_id, str(config_version))
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == HTTPStatus.CONFLICT and _LEGACY_WORKLOAD in _api_error_text(e.response):
+                    raise ValueError(_legacy_workload_message(data_app)) from e
+                raise
         data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
+        data_app.published_config_version = await _fetch_published_config_version(client, data_app)
         logs, last_run, images = await asyncio.gather(
             _fetch_logs(client, data_app.data_app_id),
             _fetch_latest_run(client, data_app.data_app_id),
             _fetch_app_images(client, data_app),
         )
+        if data_app.state == 'disabled':
+            # The operator picks the new deployment up a moment later; until then the record and its
+            # latest run still describe the start that failed before this deploy.
+            data_app.state = 'starting'
+            last_run = None
         data_app = data_app.with_deployment_info(logs, last_run=last_run).with_image(images)
         links = links_manager.get_data_app_links(
             configuration_id=data_app.configuration_id,
@@ -2143,9 +2172,18 @@ async def deploy_data_app(
         return DeploymentDataAppOutput(state=data_app.state, links=links, deployment_info=data_app.deployment_info)
     elif action == 'stop':
         data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
-        if data_app.state in ('starting', 'restarting'):
+        if data_app.state == 'starting':
             raise ValueError('Data app is currently "starting", could not be stopped at the moment.')
-        _ = await client.data_science_client.suspend_data_app(data_app.data_app_id)
+        if data_app.state != 'suspended':
+            try:
+                await client.data_science_client.suspend_data_app(data_app.data_app_id)
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == HTTPStatus.CONFLICT:
+                    raise ValueError(
+                        f'Data app "{data_app.configuration_id}" has no running deployment to stop '
+                        f'(state "{data_app.state}"). API error: {_api_error_text(e.response)}'
+                    ) from e
+                raise
         data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
         links = links_manager.get_data_app_links(
             configuration_id=data_app.configuration_id,
@@ -2296,6 +2334,7 @@ async def get_data_app_preview_link(
     return DataAppPreviewLinkOutput(url=link.url, link_expires_at=link.link_expires_at)
 
 
+_LEGACY_WORKLOAD = 'still running as a /v1 workload'
 _PREVIEW_LINK_NOT_DEV = 'is not in dev mode'
 _PREVIEW_LINK_NO_URL = 'has no URL yet'
 _PREVIEW_LINK_NOT_AUTHORIZED = 'is not authorized to manage app'
@@ -2348,6 +2387,15 @@ def _preview_link_error(exc: httpx.HTTPStatusError, data_app: DataApp) -> ValueE
             "preview link. Tell the user. Do not try the app's password login instead."
         )
     return None
+
+
+def _legacy_workload_message(data_app: DataApp) -> str:
+    timeout = data_app.auto_suspend_after_seconds
+    after = f'after {timeout} seconds without visitors' if timeout else 'once it has no visitors'
+    return (
+        f'Data app "{data_app.configuration_id}" still runs on the old platform and cannot be redeployed while it '
+        f'runs. It falls asleep on its own {after}; deploy it again then. Tell the user; do not retry in a loop.'
+    )
 
 
 def _not_authorized_error(configuration_id: str, api_error: str) -> ValueError:
@@ -2604,6 +2652,29 @@ async def _build_data_app_with_repo(
     return data_app
 
 
+async def _config_version_or_blank(client: KeboolaClient, configuration_id: str) -> str:
+    """The latest version of a just-created app's configuration; blank when Storage does not answer.
+
+    - A blank version must not fail a create that already committed.
+    """
+    try:
+        return str(await client.storage_client.configuration_version_latest(DATA_APP_COMPONENT_ID, configuration_id))
+    except Exception:
+        LOG.exception(f'Could not read the config version of the created data app {configuration_id}')
+        return ''
+
+
+async def _fetch_published_config_version(client: KeboolaClient, data_app: DataApp) -> str | None:
+    """The config version of the deployment last asked to be production, or None when none ever was.
+
+    - While it rolls out (`state="starting"`), the previous deployment still serves production.
+    """
+    if data_app.desired_deployment_id is None:
+        return None
+    deployment = await client.data_science_client.get_deployment(data_app.data_app_id, data_app.desired_deployment_id)
+    return deployment.config_version
+
+
 async def _fetch_data_app_details_task(
     client: KeboolaClient, links_manager: ProjectLinksManager, configuration_id: str
 ) -> DataApp | str:
@@ -2620,8 +2691,11 @@ async def _fetch_data_app_details_task(
             deployment_link=data_app.deployment_url,
             uses_basic_authentication=_uses_basic_authentication(data_app.configuration.get('authorization') or {}),
         )
-        logs = await _fetch_logs(client, data_app.data_app_id)
-        last_run = await _fetch_latest_run(client, data_app.data_app_id)
+        logs, last_run, data_app.published_config_version = await asyncio.gather(
+            _fetch_logs(client, data_app.data_app_id),
+            _fetch_latest_run(client, data_app.data_app_id),
+            _fetch_published_config_version(client, data_app),
+        )
         data_app = data_app.with_links(links).with_deployment_info(logs, last_run=last_run)
         # Drafts of a python-js prod are surfaced inline so the agent can find them in one round-trip
         # — see Scenario C in `modify_python_js_data_app`. Skip for drafts themselves and for Streamlit
@@ -2645,10 +2719,15 @@ def _is_draft_config(configuration: Mapping[str, Any]) -> bool:
     return _data_app_block(configuration).get('isDraft') is True
 
 
+def _parameters_block(configuration: Mapping[str, Any]) -> Mapping[str, Any]:
+    """The `parameters` mapping of a stored configuration; empty when it is missing or malformed."""
+    parameters = configuration.get('parameters')
+    return parameters if isinstance(parameters, Mapping) else {}
+
+
 def _data_app_block(configuration: Mapping[str, Any]) -> Mapping[str, Any]:
     """The `parameters.dataApp` mapping of a stored configuration; empty when it is missing or malformed."""
-    parameters = configuration.get('parameters')
-    data_app = parameters.get('dataApp') if isinstance(parameters, Mapping) else None
+    data_app = _parameters_block(configuration).get('dataApp')
     return data_app if isinstance(data_app, Mapping) else {}
 
 
@@ -2807,17 +2886,29 @@ def _validate_explicit_slug(slug: str) -> None:
 def _is_never_deployed(data_app: 'DataApp') -> bool:
     """Whether the data app has never been deployed.
 
-    - Every app nobody has deployed rests in `state='created'`.
-    - A first deploy keeps `state='created'` while the app comes up, with `desired_state='running'`;
-      that app counts as deployed.
+    - No deployment was ever asked to be production.
+    - A first deploy names one at once, while the app is still coming up; that app counts as deployed.
     """
-    return data_app.state == 'created' and data_app.desired_state != 'running'
+    return data_app.desired_deployment_id is None
+
+
+def _config_auto_suspend(configuration: Mapping[str, Any]) -> int | None:
+    """The `parameters.autoSuspendAfterSeconds` of a stored data-app configuration, or None without one."""
+    value = _parameters_block(configuration).get('autoSuspendAfterSeconds')
+    return value if isinstance(value, int) else None
 
 
 def _config_slug(configuration: Mapping[str, Any]) -> str | None:
     """The `parameters.dataApp.slug` of a stored data-app configuration, or None when it has none."""
     slug = _data_app_block(configuration).get('slug')
     return slug if isinstance(slug, str) and slug else None
+
+
+def _update_response(data_app: 'DataApp') -> str:
+    """The response of a config update: a deployed app runs its old config until it is redeployed."""
+    if _is_never_deployed(data_app):
+        return 'updated'
+    return 'updated (redeploy required to apply changes in the running app)'
 
 
 def _app_url(client: KeboolaClient, data_app_id: str, configuration: Mapping[str, Any]) -> str | None:

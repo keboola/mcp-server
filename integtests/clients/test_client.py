@@ -1,17 +1,14 @@
 import logging
-from collections.abc import Mapping
-from typing import Any
 
 import pytest
 
 from integtests.conftest import ProjectDef, TableDef
-from keboola_mcp_server.clients.client import KeboolaClient, get_metadata_property
+from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.clients.storage import AsyncStorageClient, GlobalSearchResponse
-from keboola_mcp_server.config import MetadataField
 
 LOG = logging.getLogger(__name__)
 
-# Any component works for the metadata search; a transformation needs no credentials to be created.
+# Any component works for the folder test; a transformation needs no credentials to be created.
 _TEST_COMPONENT_ID = 'keboola.python-transformation-v2'
 
 
@@ -47,45 +44,31 @@ class TestAsyncStorageClient:
         assert all(item.type == 'table' for item in ret.items)
 
     @pytest.mark.asyncio
-    async def test_component_configurations_search_returns_metadata(
-        self, storage_client: AsyncStorageClient, unique_id: str
-    ):
+    async def test_configuration_folder_round_trip(self, storage_client: AsyncStorageClient, unique_id: str):
         """
-        Tests the search endpoint against the live SAPI contract.
-
-        This guards two failure modes that unit tests with a mocked client cannot see, and that
-        together silently disabled the whole folder-hint feature:
-        - a wrong filter name (`componentId` instead of `idComponent`) fails the request with 400;
-        - omitting `include=filteredMetadata` returns rows with no `metadata` key at all, so no
-          folder name is ever found even though the request succeeds.
+        Tests that the configuration `folder` field is written by a folder-only update and read back by the
+        configuration detail and list endpoints, and that an empty folder clears it.
         """
         folder_name = f'Test Folder {unique_id}'
         created = await storage_client.configuration_create(
             component_id=_TEST_COMPONENT_ID,
-            name=f'search-metadata-test-{unique_id}',
-            description='Configuration created by an automated test of the metadata search endpoint',
+            name=f'folder-test-{unique_id}',
+            description='Configuration created by an automated test of the configuration folder',
             configuration={},
         )
         configuration_id = str(created['id'])
         try:
-            await storage_client.configuration_metadata_update(
-                component_id=_TEST_COMPONENT_ID,
-                configuration_id=configuration_id,
-                metadata={MetadataField.CONFIGURATION_FOLDER_NAME: folder_name},
-            )
+            await storage_client.configuration_folder_update(_TEST_COMPONENT_ID, configuration_id, f'  {folder_name}  ')
 
-            results = await storage_client.component_configurations_search(
-                component_id=_TEST_COMPONENT_ID,
-                metadata_keys=[MetadataField.CONFIGURATION_FOLDER_NAME],
-            )
+            detail = await storage_client.configuration_detail(_TEST_COMPONENT_ID, configuration_id)
+            assert detail['folder'] == folder_name
+            assert detail['version'] == created['version'], 'A folder-only update must not create a version.'
+            listed = await storage_client.configuration_list(_TEST_COMPONENT_ID)
+            assert [c['folder'] for c in listed if str(c['id']) == configuration_id] == [folder_name]
 
-            matching = [r for r in results if r.get('configurationId') == configuration_id]
-            assert len(matching) == 1, f'Configuration {configuration_id} not found in search results: {results}'
-            assert matching[0].get('idComponent') == _TEST_COMPONENT_ID
-            raw_metadata = matching[0].get('metadata')
-            assert isinstance(raw_metadata, list), f'Expected a "metadata" list, got: {raw_metadata!r}'
-            metadata: list[Mapping[str, Any]] = [md for md in raw_metadata if isinstance(md, dict)]
-            assert get_metadata_property(metadata, MetadataField.CONFIGURATION_FOLDER_NAME) == folder_name
+            await storage_client.configuration_folder_update(_TEST_COMPONENT_ID, configuration_id, '')
+            detail = await storage_client.configuration_detail(_TEST_COMPONENT_ID, configuration_id)
+            assert detail['folder'] is None
         finally:
             await storage_client.configuration_delete(
                 component_id=_TEST_COMPONENT_ID,

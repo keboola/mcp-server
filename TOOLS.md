@@ -2328,8 +2328,10 @@ Streamlit apps have no managed git repo, so `mode` has no effect on the deployed
 `mode=None` is the expected call shape.
 
 ## General considerations
-- Redeploying a data app takes some time, and the app may temporarily report status "stopped" during the
-  restart.
+- Redeploying a data app takes some time; the app reports `state="starting"` until the new deployment serves
+  production.
+- `state` is `notDeployed` (never deployed), `starting`, `running`, `suspended` (asleep, wakes on the next
+  visit) or `disabled` (failed to start; only a deploy brings it back).
 - After deployment, the deployment info includes the app URL and the latest logs to help diagnose in-app
   errors.
 
@@ -2491,8 +2493,8 @@ data app logs to investigate in-app errors. The logs may be updated after openin
   includes a `drafts: [...]` array of every draft (configs with `isDraft=true` and
   `parentConfigurationId == <prod-cfg>`) currently in the project. Drafts in trash are not
   included. Use this to discover existing drafts when continuing a previously abandoned
-  iteration (Scenario C in `modify_python_js_data_app`). The array is empty for drafts
-  themselves and for Streamlit apps.
+  iteration. The array is empty for drafts themselves and for Streamlit apps.
+  Resuming such an iteration is Scenario C in `modify_python_js_data_app`.
 
 
 **Input JSON Schema**:

@@ -40,10 +40,8 @@ from typing import Annotated, Any, Literal, get_args
 
 from pydantic import AliasChoices, BaseModel, Field, field_validator, model_validator
 
-from keboola_mcp_server.clients.client import get_metadata_property
 from keboola_mcp_server.clients.encryption import redact_secrets
 from keboola_mcp_server.clients.storage import ComponentAPIResponse, ComponentType, ConfigurationAPIResponse
-from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.links import Link
 from keboola_mcp_server.tools.lookup import PartialLookupOutput
 
@@ -288,7 +286,7 @@ class ConfigurationRoot(BaseModel):
             version=api_config.version,
             is_disabled=api_config.is_disabled,
             is_deleted=api_config.is_deleted,
-            folder=get_metadata_property(api_config.metadata, MetadataField.CONFIGURATION_FOLDER_NAME) or '',
+            folder=api_config.folder or '',
             # Plaintext '#'-prefixed secret values are redacted so that they never reach the model's context.
             # 'KBC::' ciphers are kept as they are opaque.
             parameters=redact_secrets(api_config.configuration.get('parameters', {})),
@@ -399,7 +397,7 @@ class ConfigurationRootSummary(BaseModel):
             description=api_config.description,
             is_disabled=api_config.is_disabled,
             is_deleted=api_config.is_deleted,
-            folder=get_metadata_property(api_config.metadata, MetadataField.CONFIGURATION_FOLDER_NAME) or '',
+            folder=api_config.folder or '',
         )
 
 

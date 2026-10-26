@@ -125,6 +125,7 @@ class ConfigurationAPIResponse(BaseModel):
         description='The description of the latest changes',
         validation_alias=AliasChoices('changeDescription', 'change_description', 'change-description'),
     )
+    folder: str | None = Field(default=None, description='The UI folder of the configuration, None if none')
     metadata: list[dict[str, Any]] = Field(
         default_factory=list,
         description='Configuration metadata',

@@ -8,9 +8,8 @@ from typing import Annotated, Any, Literal, Union
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, ValidationError
 
-from keboola_mcp_server.clients.client import ORCHESTRATOR_COMPONENT_ID, FlowType, get_metadata_property
+from keboola_mcp_server.clients.client import ORCHESTRATOR_COMPONENT_ID, FlowType
 from keboola_mcp_server.clients.storage import APIFlowResponse
-from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.links import Link
 from keboola_mcp_server.tools.flow.scheduler_model import SchedulesOutput
 from keboola_mcp_server.tools.lookup import PartialLookupOutput
@@ -507,7 +506,7 @@ class Flow(BaseModel):
             configuration=config,
             change_description=api_config.change_description,
             configuration_metadata=api_config.metadata,
-            folder=get_metadata_property(api_config.metadata, MetadataField.CONFIGURATION_FOLDER_NAME) or '',
+            folder=api_config.folder or '',
             created=api_config.created,
             updated=api_config.updated,
             links=links or [],
@@ -555,7 +554,7 @@ class FlowSummary(BaseModel):
             phases_count=len(config.get('phases', [])),
             tasks_count=len(config.get('tasks', [])),
             schedules_count=n_schedules,
-            folder=get_metadata_property(api_config.metadata, MetadataField.CONFIGURATION_FOLDER_NAME) or '',
+            folder=api_config.folder or '',
             created=api_config.created,
             updated=api_config.updated,
         )

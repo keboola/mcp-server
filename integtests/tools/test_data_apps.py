@@ -291,7 +291,7 @@ def _git(*args: str, cwd: Path) -> None:
 
 
 async def _wait_until_settled(keboola_client: KeboolaClient, data_app_id: str, timeout_s: float = 180) -> None:
-    """Wait until the data app's state matches its desired state, or the timeout passes.
+    """Wait until the data app's production serves the deployment last asked for, or the timeout passes.
 
     - A delete issued while the app still changes state deadlocks in DSAPI against its state watcher (500).
     - Returns on timeout too: the delete that follows reports the real outcome.
@@ -299,7 +299,7 @@ async def _wait_until_settled(keboola_client: KeboolaClient, data_app_id: str, t
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
         app = await keboola_client.data_science_client.get_data_app(data_app_id)
-        if app.state == app.desired_state:
+        if app.production.desired_deployment_id == app.production.actual_deployment_id and app.state != 'starting':
             return
         await asyncio.sleep(5)
     LOG.info(f'data app {data_app_id} did not settle within {timeout_s}s')
@@ -768,7 +768,11 @@ async def test_python_js_data_app_deploy_publishes_config_only_change(
         assert second.deployment_info.version == pending.config_version
         assert second.deployment_info.latest_config_version == pending.config_version
         assert second.deployment_info.has_unpublished_changes is False
-        published = await keboola_client.data_science_client.get_data_app(created.data_app.data_app_id)
+        app = await keboola_client.data_science_client.get_data_app(created.data_app.data_app_id)
+        assert app.production.desired_deployment_id is not None
+        published = await keboola_client.data_science_client.get_deployment(
+            app.id, app.production.desired_deployment_id
+        )
         assert published.config_version == pending.config_version
 
     finally:
