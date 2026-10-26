@@ -26,7 +26,8 @@ from fastmcp.tools import Tool
 from mcp import types as mt
 from starlette.requests import Request
 
-from keboola_mcp_server.mcp import get_http_request_or_none, is_read_only_tool
+from keboola_mcp_server.mcp import get_http_request_or_none, is_read_only_tool, is_strict_workspace_scope
+from keboola_mcp_server.tools.constants import STRICT_WORKSPACE_SCOPE_TOOLS
 
 LOG = logging.getLogger(__name__)
 
@@ -96,6 +97,17 @@ class ToolAuthorizationMiddleware(fmw.Middleware):
         return allowed_tools, disallowed_tools, read_only_mode
 
     @staticmethod
+    def _apply_workspace_scope(allowed_tools: set[str] | None, strict: bool) -> set[str] | None:
+        """Narrows the allowed tools to `STRICT_WORKSPACE_SCOPE_TOOLS` for a session with a strict workspace scope.
+        The scope comes from the session state, not from the authorization headers, so it applies even when the
+        headers are left out."""
+        if not strict:
+            return allowed_tools
+        if allowed_tools is None:
+            return set(STRICT_WORKSPACE_SCOPE_TOOLS)
+        return allowed_tools & STRICT_WORKSPACE_SCOPE_TOOLS
+
+    @staticmethod
     def _is_tool_name_authorized(
         tool_name: str,
         is_read_only: bool,
@@ -121,6 +133,11 @@ class ToolAuthorizationMiddleware(fmw.Middleware):
         return not (allowed_tools is not None and tool_name not in allowed_tools)
 
     @staticmethod
+    def _is_strict(context: MiddlewareContext) -> bool:
+        ctx = context.fastmcp_context
+        return is_strict_workspace_scope(getattr(getattr(ctx, 'session', None), 'state', None))
+
+    @staticmethod
     def _is_tool_authorized(
         tool: Tool, allowed_tools: set[str] | None, disallowed_tools: set[str] | None, read_only_mode: bool
     ) -> bool:
@@ -136,6 +153,7 @@ class ToolAuthorizationMiddleware(fmw.Middleware):
         tools = await call_next(context)
 
         allowed_tools, disallowed_tools, read_only_mode = self._get_authorization_config()
+        allowed_tools = self._apply_workspace_scope(allowed_tools, self._is_strict(context))
         if allowed_tools is None and not disallowed_tools and not read_only_mode:
             return tools
 
@@ -153,12 +171,19 @@ class ToolAuthorizationMiddleware(fmw.Middleware):
         """Blocks calls to unauthorized tools."""
         tool_name = context.message.name
         allowed_tools, disallowed_tools, read_only_mode = self._get_authorization_config()
+        strict = self._is_strict(context)
+        allowed_tools = self._apply_workspace_scope(allowed_tools, strict)
 
         # For on_call_tool, we need to get the tool to check its annotations
         tool = await context.fastmcp_context.fastmcp.get_tool(tool_name)
 
         if not self._is_tool_authorized(tool, allowed_tools, disallowed_tools, read_only_mode):
-            LOG.info(f'Tool authorization denied: {tool_name} not authorized')
+            LOG.info(f'Tool authorization denied: {tool_name} not authorized (strict workspace scope: {strict})')
+            if strict:
+                raise ToolError(
+                    f'Access denied: The tool "{tool_name}" is not available in this session, which is limited to '
+                    f'the data of one workspace.'
+                )
             raise ToolError(
                 f'Access denied: The tool "{tool_name}" is not authorized for this client. '
                 f'Contact your administrator to request access.'

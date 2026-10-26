@@ -222,3 +222,66 @@ async def test_on_call_tool(middleware, mock_middleware_context, tool_name, tool
             assert tool_name in str(exc_info.value)
             assert 'not authorized' in str(exc_info.value)
             call_next.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('headers', 'expected_tools'),
+    [
+        (None, {'get_buckets', 'query_data'}),
+        # The headers can narrow the strict allowlist further, never widen it.
+        ({'X-Allowed-Tools': 'create_config, get_buckets'}, {'get_buckets'}),
+        ({'X-Disallowed-Tools': 'query_data'}, {'get_buckets'}),
+    ],
+    ids=['no_headers', 'allowed_tools_outside_scope', 'disallowed_tools'],
+)
+async def test_on_list_tools_strict_workspace_scope(
+    middleware, mock_middleware_context, sample_tools, headers, expected_tools
+):
+    """A strict workspace scope comes from the session state, so it limits the tools even without any header."""
+    mock_middleware_context.fastmcp_context.session.state = {'workspace_scope': 'strict'}
+    call_next = AsyncMock(return_value=sample_tools)
+    mock_request = MagicMock()
+    mock_request.headers = headers or {}
+    http_request = mock_request if headers is not None else None
+
+    with patch('keboola_mcp_server.authorization.get_http_request_or_none', return_value=http_request):
+        result = await middleware.on_list_tools(mock_middleware_context, call_next)
+
+    assert {t.name for t in result} == expected_tools
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('tool_name', 'tool_read_only', 'headers', 'should_allow'),
+    [
+        ('query_data', True, None, True),
+        ('get_configs', True, None, False),
+        ('create_config', False, None, False),
+        # Allowing a tool by header does not widen the strict allowlist.
+        ('create_config', False, {'X-Allowed-Tools': 'create_config'}, False),
+    ],
+)
+async def test_on_call_tool_strict_workspace_scope(
+    middleware, mock_middleware_context, tool_name, tool_read_only, headers, should_allow
+):
+    """A sandboxed agent that leaves out the authorization headers still cannot call a tool outside the strict
+    allowlist."""
+    mock_middleware_context.fastmcp_context.session.state = {'workspace_scope': 'strict'}
+    mock_middleware_context.message = MagicMock()
+    mock_middleware_context.message.name = tool_name
+    mock_tool = create_mock_tool(tool_name, read_only=tool_read_only)
+    mock_middleware_context.fastmcp_context.fastmcp.get_tool = AsyncMock(return_value=mock_tool)
+    call_next = AsyncMock(return_value=MagicMock())
+    mock_request = MagicMock()
+    mock_request.headers = headers or {}
+    http_request = mock_request if headers is not None else None
+
+    with patch('keboola_mcp_server.authorization.get_http_request_or_none', return_value=http_request):
+        if should_allow:
+            await middleware.on_call_tool(mock_middleware_context, call_next)
+            call_next.assert_called_once_with(mock_middleware_context)
+        else:
+            with pytest.raises(ToolError, match='limited to the data of one workspace'):
+                await middleware.on_call_tool(mock_middleware_context, call_next)
+            call_next.assert_not_called()
