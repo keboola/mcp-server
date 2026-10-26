@@ -4411,3 +4411,36 @@ async def test_deploy_data_app_stop_leaves_a_suspended_app_alone(mocker, mcp_con
 
     keboola_client.data_science_client.suspend_data_app.assert_not_awaited()
     assert result.state == 'suspended'
+
+
+@pytest.mark.asyncio
+async def test_deploy_data_app_reports_a_redeployed_failed_app_as_starting(mocker, mcp_context_client: Context) -> None:
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.data_science_client = mocker.AsyncMock()
+    keboola_client.data_science_client.list_runtimes = mocker.AsyncMock(return_value=_RUNTIMES)
+    keboola_client.data_science_client.get_deployment.return_value = DeploymentResponse(id='dep-2', config_version='5')
+    keboola_client.storage_client.configuration_version_latest = mocker.AsyncMock(return_value=5)
+    app = DataApp(
+        name='app',
+        component_id=DATA_APP_COMPONENT_ID,
+        configuration_id='cfg-1',
+        data_app_id='app-1',
+        project_id='proj-1',
+        branch_id='branch-1',
+        config_version='5',
+        type='python-js',
+        configuration={},
+        state='disabled',
+        desired_deployment_id='dep-2',
+    )
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=app))
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_logs', mocker.AsyncMock(return_value=[]))
+    failed_run = AppRunInfo(state='failed', failure_reason='SandboxBuildFailed')
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_latest_run', mocker.AsyncMock(return_value=failed_run))
+
+    result = await deploy_data_app(ctx=mcp_context_client, action='deploy', configuration_id='cfg-1')
+
+    # The record still shows the start that failed before this deploy; the new one is on its way.
+    assert result.state == 'starting'
+    assert result.deployment_info is not None
+    assert result.deployment_info.last_run is None

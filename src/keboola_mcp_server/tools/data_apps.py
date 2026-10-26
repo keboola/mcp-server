@@ -2157,6 +2157,11 @@ async def deploy_data_app(
             _fetch_latest_run(client, data_app.data_app_id),
             _fetch_app_images(client, data_app),
         )
+        if data_app.state == 'disabled':
+            # The operator picks the new deployment up a moment later; until then the record and its
+            # latest run still describe the start that failed before this deploy.
+            data_app.state = 'starting'
+            last_run = None
         data_app = data_app.with_deployment_info(logs, last_run=last_run).with_image(images)
         links = links_manager.get_data_app_links(
             configuration_id=data_app.configuration_id,
