@@ -24,6 +24,21 @@ class AppProductionResponse(BaseModel):
         default=None,
         description='The deployment serving production traffic right now.',
     )
+    desired_config_version: str | None = Field(
+        validation_alias=AliasChoices('desiredConfigVersion', 'desired_config_version'),
+        default=None,
+        description='The config version of `desired_deployment_id`.',
+    )
+    actual_config_version: str | None = Field(
+        validation_alias=AliasChoices('actualConfigVersion', 'actual_config_version'),
+        default=None,
+        description='The config version of `actual_deployment_id`.',
+    )
+    desired_created_at: datetime | None = Field(
+        validation_alias=AliasChoices('desiredCreatedAt', 'desired_created_at'),
+        default=None,
+        description='When `desired_deployment_id` was created.',
+    )
 
 
 class DataAppResponse(BaseModel):
@@ -478,17 +493,6 @@ class DataScienceClient(KeboolaServiceClient):
         """
         response = await self.get(endpoint=f'v2/apps/{data_app_id}')
         return DataAppResponse.model_validate(response)
-
-    async def get_deployment(self, data_app_id: str, deployment_id: str) -> DeploymentResponse:
-        """
-        Get one deployment of a data app.
-
-        :param data_app_id: The ID of the data app
-        :param deployment_id: The ID of the deployment
-        :return: The deployment, including the configuration version it runs
-        """
-        response = await self.get(endpoint=f'v2/apps/{data_app_id}/deployments/{deployment_id}')
-        return DeploymentResponse.model_validate(response)
 
     async def deploy_data_app(self, data_app_id: str, config_version: str) -> DeploymentResponse:
         """

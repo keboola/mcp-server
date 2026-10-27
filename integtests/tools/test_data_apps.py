@@ -769,11 +769,7 @@ async def test_python_js_data_app_deploy_publishes_config_only_change(
         assert second.deployment_info.latest_config_version == pending.config_version
         assert second.deployment_info.has_unpublished_changes is False
         app = await keboola_client.data_science_client.get_data_app(created.data_app.data_app_id)
-        assert app.production.desired_deployment_id is not None
-        published = await keboola_client.data_science_client.get_deployment(
-            app.id, app.production.desired_deployment_id
-        )
-        assert published.config_version == pending.config_version
+        assert app.production.desired_config_version == pending.config_version
 
     finally:
         if created is not None:
