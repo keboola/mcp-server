@@ -151,7 +151,15 @@ class MultiProjectMiddleware(fmw.Middleware):
             if target == scope.active_project_id and _active_client_honors_scope(state, scope):
                 return await call_next(context)
             try:
-                await self._swap_project(state, server_state, storage_api_url, base_token, target, scope.read_only)
+                await self._swap_project(
+                    state,
+                    server_state,
+                    storage_api_url,
+                    base_token,
+                    target,
+                    scope.read_only,
+                    self._pinned_workspace_id(scope, original_workspace, target),
+                )
                 return await call_next(context)
             finally:
                 state[KeboolaClient.STATE_KEY] = original_client
@@ -161,7 +169,15 @@ class MultiProjectMiddleware(fmw.Middleware):
         errors: list[tuple[int, str]] = []
         try:
             for project_id in targets:
-                await self._swap_project(state, server_state, storage_api_url, base_token, project_id, scope.read_only)
+                await self._swap_project(
+                    state,
+                    server_state,
+                    storage_api_url,
+                    base_token,
+                    project_id,
+                    scope.read_only,
+                    self._pinned_workspace_id(scope, original_workspace, project_id),
+                )
                 # Isolate per-project failures: one project's error (e.g. Queue 401, a transient 5xx)
                 # must not discard the other projects' good results. Collect it and keep going, so the
                 # agent gets a partial response plus a retry hint. CancelledError is BaseException, so
@@ -259,7 +275,15 @@ class MultiProjectMiddleware(fmw.Middleware):
         base_token = scope.scoped_token or (original_client.bearer_token if is_real_client else '')
         storage_api_url = original_client.storage_api_url if is_real_client else server_state.config.storage_api_url
         try:
-            await self._swap_project(state, server_state, storage_api_url, base_token, target, scope.read_only)
+            await self._swap_project(
+                state,
+                server_state,
+                storage_api_url,
+                base_token,
+                target,
+                scope.read_only,
+                self._pinned_workspace_id(scope, original_workspace, target),
+            )
             return await call_next(context)
         finally:
             state[KeboolaClient.STATE_KEY] = original_client
@@ -322,20 +346,36 @@ class MultiProjectMiddleware(fmw.Middleware):
         base_token: str,
         project_id: int,
         read_only: bool,
+        workspace_id: str | int | None = None,
     ) -> None:
         """Points the session state at `project_id` for the duration of one fanned-out tool call.
 
         Swaps in a per-project `KeboolaClient` AND a `WorkspaceManager` built on it, so
         workspace-bound reads (query_data) run against *this* project's workspace rather than the
-        active project's. The workspace is provisioned lazily on first use per project.
+        active project's. `workspace_id` pins that workspace (the session's pin, for the project it
+        belongs to); otherwise it is provisioned lazily on first use per project.
         Note: rebuilt per call; caching across calls would need a store that survives the
         per-request state rebuild — add if provisioning latency shows up in practice.
         """
         client = await cls.client_for_project(server_state, storage_api_url, base_token, project_id, read_only)
         state[KeboolaClient.STATE_KEY] = client
         state[WorkspaceManager.STATE_KEY] = await WorkspaceManager.create(
-            client, server_state.config.workspace_schema, kubernetes_token_path=deployed_sa_token_path()
+            client,
+            server_state.config.workspace_schema,
+            kubernetes_token_path=deployed_sa_token_path(),
+            workspace_id=workspace_id,
         )
+
+    @staticmethod
+    def _pinned_workspace_id(scope: SessionScope, workspace: Any, project_id: int) -> str | int | None:
+        """The workspace pinned for the session (`X-Workspace-Id`), kept only for its own project.
+
+        The pin names a workspace of the active project; every other project keeps its own
+        MCP-managed workspace.
+        """
+        if project_id != scope.active_project_id or not isinstance(workspace, WorkspaceManager):
+            return None
+        return workspace.workspace_id
 
     @staticmethod
     async def client_for_project(
