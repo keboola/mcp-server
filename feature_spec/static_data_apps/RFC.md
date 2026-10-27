@@ -16,19 +16,21 @@ server has no way to publish one. The existing data-app tools deploy Storage con
 
 ## Required Behavior
 
-Five new tools, tag `data-apps`, main branch only (added to `DATA_APP_BRANCH_GATED_TOOLS`), not available to
-read-only roles except `static_app_status`. All call sandboxes-service `/v2/apps/{appId}/static/…` through
-`DataScienceClient` (the `/v2` client of AJDA-3631).
+Six new tools, tag `data-apps`, main branch only (added to `DATA_APP_BRANCH_GATED_TOOLS`), not available to
+read-only roles except `static_app_status`. All call sandboxes-service through `DataScienceClient` (the `/v2`
+client of AJDA-3631) and address the app by its `/v2` **`app_id`**. A static app also has a Storage configuration,
+so it shows in data-app lists, but no static endpoint uses the configuration ID (contract 06).
 
 | Tool | Parameters | Backend calls | Output |
 |---|---|---|---|
+| `static_app_create` | `name`, `description` (optional), `project_id` | `POST /v2/apps` `{name, type: "static", description?}` — no `branchId`, `config` or `useManagedGitRepo` (contract 06 rejects them with 400) | `app_id`, `configuration_id`, `name`, `state` (`notDeployed`) |
 | `static_app_deploy` | `app_id`, `files` (see below), `project_id` | `POST …/static/deployments` (multipart `bundle`), then `GET …/static/deployments/{id}` until `status ≠ validating` (≤ 60 s) | `deployment_id`, `status`, `exposure`, `exposure_hash`, `exposure_changed`, `validation_errors`, `next_step` |
 | `static_app_confirm` | `app_id`, `deployment_id`, `exposure_hash`, `project_id` | `POST …/deployments/{id}/confirm` `{exposureHash}` | `deployment_id`, `status` |
 | `static_app_promote` | `app_id`, `deployment_id`, `project_id` | `POST …/deployments/{id}/promote` | `promoted`, `refresh_id`, `status`, `url` |
 | `static_app_refresh` | `app_id`, `project_id` | `POST …/static/refresh`, then `GET …/static/refreshes/{id}` until done (≤ 60 s) | `refresh_id`, `coalesced`, `status`, per-query rows/bytes, `error` |
 | `static_app_status` | `app_id`, optional `deployment_id`, `project_id` | `GET …/static/status` (+ `GET …/deployments/{id}` when given) | status fields of contract 06; the deployment when asked |
 
-Annotations: `static_app_deploy`, `static_app_confirm`, `static_app_promote` and `static_app_refresh` are not
+Annotations: `static_app_create`, `static_app_deploy`, `static_app_confirm`, `static_app_promote` and `static_app_refresh` are not
 read-only and not idempotent; `static_app_promote` is destructive (it replaces what viewers see);
 `static_app_status` is read-only.
 
@@ -40,7 +42,14 @@ The MCP server usually runs remotely and cannot read the agent's disk, so the ag
 files: list[{path: str, content: str, encoding: 'utf-8' | 'base64' = 'utf-8'}]
 ```
 
-- Must contain `index.html` and `queries.yml` at the root; ≤ 500 entries, ≤ 10 MB decoded (contract 01).
+- Must contain `index.html` and `queries.yml` at the root; ≤ 500 entries (contract 01).
+- **Size: the effective limit is about 3 MB of files, not the 10 MB of contract 01.** The MCP endpoint caps a
+  request body at 4 MB (`DEFAULT_MAX_REQUEST_BODY_SIZE` of `mcp` 2.3.0, applied in `router/app.py`), and the files
+  travel inside the JSON-RPC `tools/call` body: text is JSON-escaped and binary is base64 (+33 %). The tool checks
+  the 10 MB contract limit on the **decoded** total (base64 does not count against the author); a call over 4 MB is
+  refused by the transport with 413 before the tool runs. Typical static apps (HTML, JS, CSS, a few icons) are
+  10–500 KB. Larger bundles are deployed with `kbc-static deploy`. Raising the MCP body limit for all tools is out
+  of scope.
 - Paths follow contract 01 (relative, ASCII, no `..`/`//`/dot segments, served extensions only); the tool rejects
   a bad path before uploading, with the same messages as the server.
 - The tool packs a `tar.gz` (regular files only) and uploads it. All other checks (SQL guard, dry-run, inline
@@ -91,30 +100,30 @@ Contract 06: *"The MCP tool must show `exposure` to the user before calling conf
 
 ## Scope
 
-In scope: the five tools, client methods, packer, tests, docs.
+In scope: the six tools, client methods, packer, tests, docs.
 
-Out of scope: creating the static app and its settings (`PATCH …/static/settings`, the refresh interval);
-`unpublish`; parquet; UI.
+Out of scope: the app's settings (`PATCH …/static/settings`, the refresh interval); deleting the app (the existing
+data-app delete paths); `unpublish`; parquet; UI; raising the MCP request body limit.
+
+## Decided
+
+- **Identifier:** the `/v2` `app_id` (contract 06; consistent with AJDA-3631).
+- **Creation:** `static_app_create`, body as in contract 06 (implemented by sandboxes-service in AJDA-3665).
+- **Bundle input:** inline `files[]`; the 10 MB contract limit applies to the decoded total.
 
 ## Open questions
 
-1. **Identifier.** The other data-app tools take the Storage `configuration_id`. Does a static app have a Storage
-   configuration (contract 06 creates it with `POST /v2/apps` `type: static`), or should these tools take the
-   `/v2` `app_id`? This RFC assumes `app_id`, matching contract 06.
-2. **Creation.** The issue says "the existing create tool with `type: static`", but the existing create paths
-   (`modify_streamlit_data_app`, `modify_python_js_data_app`) build container configurations. Proposal: a sixth tool
-   `static_app_create(name, description)` → `POST /v2/apps {type: static, name, description}`. Needs the create
-   body for `static` from AJDA-3674.
-3. **Elicitation in Kai.** Does Kai's MCP client support form elicitation? If not, the description is the only
-   control there until GA (contract 06 known limitation).
+1. **Elicitation in Kai.** Does Kai's MCP client support form elicitation? If not, the `static_app_confirm`
+   description is the only control there until GA (the known canary limitation of contract 06). To be confirmed by
+   the owner or the Kai team.
 
 ## Testing / Verification
 
 - Unit tests per tool against an in-memory implementation of contract 06; every response it sends is validated
   against `06-management-api.openapi.yaml` (copied into `tests/resources/`), so the tests cannot drift from the
   contract.
-- Parametrized cases: unchanged exposure; changed exposure with confirm via elicitation yes / no / unsupported;
+- Parametrized cases: create (body has no `branchId`/`config`); unchanged exposure; changed exposure with confirm via elicitation yes / no / unsupported;
   wrong hash → 409; invalid deployment; 400 `invalid_archive`; promote with snapshot / waiting / failed; refresh
-  coalesced / 429 / failed; local path rejection; binary file round-trip through the packer.
+  coalesced / 429 / failed; local path rejection; decoded-size limit with base64 input; binary file round-trip through the packer.
 - Tool description test: `static_app_confirm` mentions showing the exposure and explicit user approval.
 - Integration test on canary-orion after AJDA-3674 is deployed: create → deploy → confirm → promote → status.
