@@ -474,22 +474,10 @@ class DataApp(BaseModel):
 
     # Whether the Storage API returned the configuration `folder` field (False on stacks without folder support).
     _has_folder_field: bool = PrivateAttr(default=False)
-    # The config version of `desired_deployment_id` as the /v2 App record names it; stacks that predate
-    # `desiredConfigVersion` leave `_has_desired_config_version` False.
-    _desired_config_version: str | None = PrivateAttr(default=None)
-    _has_desired_config_version: bool = PrivateAttr(default=False)
 
     @property
     def has_folder_field(self) -> bool:
         return self._has_folder_field
-
-    @property
-    def desired_config_version(self) -> str | None:
-        return self._desired_config_version
-
-    @property
-    def has_desired_config_version(self) -> bool:
-        return self._has_desired_config_version
 
     @classmethod
     def from_api_responses(
@@ -506,6 +494,7 @@ class DataApp(BaseModel):
             config_version=str(api_configuration.version),
             state=api_response.reported_state,
             desired_deployment_id=api_response.production.desired_deployment_id,
+            published_config_version=api_response.production.desired_config_version,
             type=api_response.type or 'unknown',
             deployment_url=api_response.url,
             auto_suspend_after_seconds=_config_auto_suspend(api_configuration.configuration),
@@ -518,8 +507,6 @@ class DataApp(BaseModel):
             links=[],
         )
         data_app._has_folder_field = 'folder' in api_configuration.model_fields_set
-        data_app._desired_config_version = api_response.production.desired_config_version
-        data_app._has_desired_config_version = 'desired_config_version' in api_response.production.model_fields_set
         return data_app
 
     def with_links(self, links: list[Link]) -> 'DataApp':
@@ -2165,7 +2152,6 @@ async def deploy_data_app(
                     raise ValueError(_legacy_workload_message(data_app)) from e
                 raise
         data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
-        data_app.published_config_version = await _fetch_published_config_version(client, data_app)
         logs, last_run, images = await asyncio.gather(
             _fetch_logs(client, data_app.data_app_id),
             _fetch_latest_run(client, data_app.data_app_id),
@@ -2678,20 +2664,6 @@ async def _config_version_or_blank(client: KeboolaClient, configuration_id: str)
         return ''
 
 
-async def _fetch_published_config_version(client: KeboolaClient, data_app: DataApp) -> str | None:
-    """The config version of the deployment last asked to be production, or None when none ever was.
-
-    - While it rolls out (`state="starting"`), the previous deployment still serves production.
-    - The /v2 App record names it; stacks that predate `desiredConfigVersion` need the deployment fetched.
-    """
-    if data_app.has_desired_config_version:
-        return data_app.desired_config_version
-    if data_app.desired_deployment_id is None:
-        return None
-    deployment = await client.data_science_client.get_deployment(data_app.data_app_id, data_app.desired_deployment_id)
-    return deployment.config_version
-
-
 async def _fetch_data_app_details_task(
     client: KeboolaClient, links_manager: ProjectLinksManager, configuration_id: str
 ) -> DataApp | str:
@@ -2708,10 +2680,9 @@ async def _fetch_data_app_details_task(
             deployment_link=data_app.deployment_url,
             uses_basic_authentication=_uses_basic_authentication(data_app.configuration.get('authorization') or {}),
         )
-        logs, last_run, data_app.published_config_version = await asyncio.gather(
+        logs, last_run = await asyncio.gather(
             _fetch_logs(client, data_app.data_app_id),
             _fetch_latest_run(client, data_app.data_app_id),
-            _fetch_published_config_version(client, data_app),
         )
         data_app = data_app.with_links(links).with_deployment_info(logs, last_run=last_run)
         # Drafts of a python-js prod are surfaced inline so the agent can find them in one round-trip

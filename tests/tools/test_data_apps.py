@@ -13,7 +13,6 @@ from keboola_mcp_server.clients.data_science import (
     AppRunResponse,
     DataAppConfig,
     DataAppResponse,
-    DeploymentResponse,
     RuntimeResponse,
 )
 from keboola_mcp_server.clients.storage import ConfigurationAPIResponse
@@ -33,7 +32,6 @@ from keboola_mcp_server.tools.data_apps import (
     _build_data_app_config,
     _fetch_data_app,
     _fetch_latest_run,
-    _fetch_published_config_version,
     _get_authorization,
     _get_data_app_slug,
     _get_query_function_code,
@@ -793,7 +791,7 @@ class TestFetchDataAppValidation:
         assert result.config_version == '2'
         assert result.desired_deployment_id == 'dep-2'
         assert result.state == 'starting'
-        assert await _fetch_published_config_version(keboola_client, result) == '3'
+        assert result.published_config_version == '3'
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -2681,9 +2679,6 @@ async def test_deploy_data_app_publishes_latest_config_version_and_reports_publi
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
     keboola_client.data_science_client.list_runtimes = mocker.AsyncMock(return_value=_RUNTIMES)
-    keboola_client.data_science_client.get_deployment.return_value = DeploymentResponse(
-        id='dep-2', config_version=published_after
-    )
     keboola_client.storage_client.configuration_version_latest = mocker.AsyncMock(return_value=5)
 
     def make_app(config_version: str, published_config_version: str) -> DataApp:
@@ -2755,41 +2750,6 @@ def test_with_deployment_info_reports_published_version(
     assert info.version == expected_version
     assert info.latest_config_version == config_version
     assert info.has_unpublished_changes is expected_unpublished
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ('desired_deployment_id', 'has_desired_config_version', 'desired_config_version', 'expected', 'fetches_deployment'),
-    [
-        pytest.param('dep-2', False, None, '3', True, id='old_stack_fetches_the_deployment_on_its_way'),
-        pytest.param(None, False, None, None, False, id='old_stack_never_deployed'),
-        pytest.param('dep-2', True, '4', '4', False, id='record_names_the_version'),
-        pytest.param(None, True, None, None, False, id='record_never_deployed'),
-    ],
-)
-async def test_fetch_published_config_version_reads_the_desired_deployment(
-    mocker,
-    data_app: DataApp,
-    desired_deployment_id: str | None,
-    has_desired_config_version: bool,
-    desired_config_version: str | None,
-    expected: str | None,
-    fetches_deployment: bool,
-) -> None:
-    client = mocker.Mock()
-    client.data_science_client.get_deployment = mocker.AsyncMock(
-        return_value=DeploymentResponse(id='dep-2', config_version='3')
-    )
-    data_app.desired_deployment_id = desired_deployment_id
-    data_app._has_desired_config_version = has_desired_config_version
-    data_app._desired_config_version = desired_config_version
-
-    assert await _fetch_published_config_version(client, data_app) == expected
-
-    if fetches_deployment:
-        client.data_science_client.get_deployment.assert_awaited_once_with(data_app.data_app_id, 'dep-2')
-    else:
-        client.data_science_client.get_deployment.assert_not_awaited()
 
 
 @pytest.mark.parametrize(
@@ -4433,7 +4393,6 @@ async def test_deploy_data_app_reports_a_redeployed_failed_app_as_starting(mocke
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
     keboola_client.data_science_client.list_runtimes = mocker.AsyncMock(return_value=_RUNTIMES)
-    keboola_client.data_science_client.get_deployment.return_value = DeploymentResponse(id='dep-2', config_version='5')
     keboola_client.storage_client.configuration_version_latest = mocker.AsyncMock(return_value=5)
     app = DataApp(
         name='app',
