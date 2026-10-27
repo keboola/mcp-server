@@ -652,6 +652,11 @@ class WorkspaceManager:
         self._managed_workspace: _Workspace | None = None
         self._table_info_cache: dict[str, DbTableInfo] = {}
 
+    @property
+    def workspace_id(self) -> str | int | None:
+        """The workspace this manager is pinned to, or None when it uses the MCP-managed one."""
+        return self._workspace_id
+
     async def _provisioning_storage_client(self) -> AsyncStorageClient:
         """
         Returns the Storage client used for workspace provisioning (configuration and
