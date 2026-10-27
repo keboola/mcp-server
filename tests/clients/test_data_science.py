@@ -193,7 +193,16 @@ async def test_get_data_app_parses_the_v2_record() -> None:
     client = DataScienceClient.create('https://api.example.com', token=None)
     client.get = AsyncMock(  # type: ignore[assignment]
         return_value=_create_app_response()
-        | {'state': 'running', 'production': {'desiredDeploymentId': 'dep-2', 'actualDeploymentId': 'dep-1'}}
+        | {
+            'state': 'running',
+            'production': {
+                'desiredDeploymentId': 'dep-2',
+                'actualDeploymentId': 'dep-1',
+                'desiredConfigVersion': '3',
+                'actualConfigVersion': '2',
+                'desiredCreatedAt': '2026-10-27T10:00:00Z',
+            },
+        }
     )
 
     app = await client.get_data_app('app-123')
@@ -202,6 +211,9 @@ async def test_get_data_app_parses_the_v2_record() -> None:
     assert app.reported_state == 'starting'
     assert app.production.desired_deployment_id == 'dep-2'
     assert app.production.actual_deployment_id == 'dep-1'
+    assert app.production.desired_config_version == '3'
+    assert app.production.actual_config_version == '2'
+    assert app.production.desired_created_at == datetime(2026, 10, 27, 10, tzinfo=timezone.utc)
 
 
 @pytest.mark.parametrize('permissions', ['readWrite', 'readOnly'])
