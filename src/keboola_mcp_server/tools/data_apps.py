@@ -474,10 +474,22 @@ class DataApp(BaseModel):
 
     # Whether the Storage API returned the configuration `folder` field (False on stacks without folder support).
     _has_folder_field: bool = PrivateAttr(default=False)
+    # The config version of `desired_deployment_id` as the /v2 App record names it; stacks that predate
+    # `desiredConfigVersion` leave `_has_desired_config_version` False.
+    _desired_config_version: str | None = PrivateAttr(default=None)
+    _has_desired_config_version: bool = PrivateAttr(default=False)
 
     @property
     def has_folder_field(self) -> bool:
         return self._has_folder_field
+
+    @property
+    def desired_config_version(self) -> str | None:
+        return self._desired_config_version
+
+    @property
+    def has_desired_config_version(self) -> bool:
+        return self._has_desired_config_version
 
     @classmethod
     def from_api_responses(
@@ -506,6 +518,8 @@ class DataApp(BaseModel):
             links=[],
         )
         data_app._has_folder_field = 'folder' in api_configuration.model_fields_set
+        data_app._desired_config_version = api_response.production.desired_config_version
+        data_app._has_desired_config_version = 'desired_config_version' in api_response.production.model_fields_set
         return data_app
 
     def with_links(self, links: list[Link]) -> 'DataApp':
@@ -2668,7 +2682,10 @@ async def _fetch_published_config_version(client: KeboolaClient, data_app: DataA
     """The config version of the deployment last asked to be production, or None when none ever was.
 
     - While it rolls out (`state="starting"`), the previous deployment still serves production.
+    - The /v2 App record names it; stacks that predate `desiredConfigVersion` need the deployment fetched.
     """
+    if data_app.has_desired_config_version:
+        return data_app.desired_config_version
     if data_app.desired_deployment_id is None:
         return None
     deployment = await client.data_science_client.get_deployment(data_app.data_app_id, data_app.desired_deployment_id)

@@ -24,6 +24,21 @@ class AppProductionResponse(BaseModel):
         default=None,
         description='The deployment serving production traffic right now.',
     )
+    desired_config_version: str | None = Field(
+        validation_alias=AliasChoices('desiredConfigVersion', 'desired_config_version'),
+        default=None,
+        description='The config version of `desired_deployment_id`; absent on stacks that predate it.',
+    )
+    actual_config_version: str | None = Field(
+        validation_alias=AliasChoices('actualConfigVersion', 'actual_config_version'),
+        default=None,
+        description='The config version of `actual_deployment_id`.',
+    )
+    desired_created_at: datetime | None = Field(
+        validation_alias=AliasChoices('desiredCreatedAt', 'desired_created_at'),
+        default=None,
+        description='When `desired_deployment_id` was created.',
+    )
 
 
 class DataAppResponse(BaseModel):

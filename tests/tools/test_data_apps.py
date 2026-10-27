@@ -768,7 +768,11 @@ class TestFetchDataAppValidation:
         data_app_response = _make_data_app_response(
             component_id=DATA_APP_COMPONENT_ID, data_app_id=data_app_id, config_id=config_id
         ).model_copy(
-            update={'production': AppProductionResponse(desired_deployment_id='dep-2', actual_deployment_id='dep-1')}
+            update={
+                'production': AppProductionResponse(
+                    desired_deployment_id='dep-2', actual_deployment_id='dep-1', desired_config_version='3'
+                )
+            }
         )
 
         keboola_client.data_science_client.get_data_app = mocker.AsyncMock(return_value=data_app_response)
@@ -789,6 +793,7 @@ class TestFetchDataAppValidation:
         assert result.config_version == '2'
         assert result.desired_deployment_id == 'dep-2'
         assert result.state == 'starting'
+        assert await _fetch_published_config_version(keboola_client, result) == '3'
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -2754,24 +2759,34 @@ def test_with_deployment_info_reports_published_version(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ('desired_deployment_id', 'expected'),
+    ('desired_deployment_id', 'has_desired_config_version', 'desired_config_version', 'expected', 'fetches_deployment'),
     [
-        pytest.param('dep-2', '3', id='deployment_on_its_way_is_published'),
-        pytest.param(None, None, id='never_deployed'),
+        pytest.param('dep-2', False, None, '3', True, id='old_stack_fetches_the_deployment_on_its_way'),
+        pytest.param(None, False, None, None, False, id='old_stack_never_deployed'),
+        pytest.param('dep-2', True, '4', '4', False, id='record_names_the_version'),
+        pytest.param(None, True, None, None, False, id='record_never_deployed'),
     ],
 )
 async def test_fetch_published_config_version_reads_the_desired_deployment(
-    mocker, data_app: DataApp, desired_deployment_id: str | None, expected: str | None
+    mocker,
+    data_app: DataApp,
+    desired_deployment_id: str | None,
+    has_desired_config_version: bool,
+    desired_config_version: str | None,
+    expected: str | None,
+    fetches_deployment: bool,
 ) -> None:
     client = mocker.Mock()
     client.data_science_client.get_deployment = mocker.AsyncMock(
         return_value=DeploymentResponse(id='dep-2', config_version='3')
     )
     data_app.desired_deployment_id = desired_deployment_id
+    data_app._has_desired_config_version = has_desired_config_version
+    data_app._desired_config_version = desired_config_version
 
     assert await _fetch_published_config_version(client, data_app) == expected
 
-    if desired_deployment_id:
+    if fetches_deployment:
         client.data_science_client.get_deployment.assert_awaited_once_with(data_app.data_app_id, 'dep-2')
     else:
         client.data_science_client.get_deployment.assert_not_awaited()
