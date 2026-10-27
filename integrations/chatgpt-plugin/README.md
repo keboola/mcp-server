@@ -12,9 +12,9 @@ Keboola MCP server. Design and rollout: RFC "Keboola as a ChatGPT Plugin" (keboo
 | `skills/*/SKILL.md` | Workflows that name the server's tools in order |
 | `assets/icon.png` | Listing logo and composer icon |
 
-`mcp.json` points at the US AWS server `https://mcp.keboola.com/mcp`, so only US AWS projects work. That is
-enough for the internal workspace plugin; the public listing switches to the global router URL (RFC Phase 4),
-because a published plugin's MCP URL cannot change.
+`mcp.json` points at the global router `https://mcp-router.keboola.com/mcp`. On login the user picks their Keboola
+stack, and the router sends every request to that stack's MCP server. A published plugin's MCP URL cannot change, so
+the listing must use this one URL for all stacks.
 
 Every skill starts with `get_accessible_projects` and `set_project_scope`, and no skill writes before the
 session is scoped to the project the user confirmed. This is a prompt-level rule: the server lets a write tool
@@ -51,6 +51,5 @@ write tool without `project_id`.
    ```
 
    `source.path` is resolved relative to the marketplace root (your home directory here).
-3. Restart the ChatGPT desktop app (or Codex), install "Keboola" from the local marketplace and log in with a
-   Keboola account on US AWS. Until ChatGPT is pre-registered on the stack, the login shows the client approval
-   screen once.
+3. Restart the ChatGPT desktop app (or Codex), install "Keboola" from the local marketplace, pick your Keboola stack
+   on the router's page and log in with your Keboola account.
