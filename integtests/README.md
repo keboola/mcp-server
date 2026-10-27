@@ -314,7 +314,7 @@ repository's GitHub Secrets/Variables:
 
 ### Concurrency
 
-- **Within a single CI run** — the matrix covers Python 3.10, 3.11, and 3.12 with
+- **Within a single CI run** — the matrix covers Python 3.11, 3.12, and 3.13 with
   `max-parallel: 1`, so the three versions run sequentially. This is intentional: a
   single run only needs one project slot, not three.
 - **Across concurrent CI runs** — the project-pool locking protocol (described in

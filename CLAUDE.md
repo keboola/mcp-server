@@ -48,7 +48,7 @@ Notes:
 - Auto-fix formatting and lint issues: `tox -m cs-fix` (runs `ruff format` + `ruff check --fix`; replaces the old black + isort envs)
 - It's OK to use pytest directly for running individual tests during development
 - Activate the virtual environment first (e.g., `source <venv>/bin/activate`)
-- Run specific tests: `tox -e py310 -- tests/test_file.py -v`
+- Run specific tests: `tox -e py311 -- tests/test_file.py -v`
 - Run all checks: `tox`
 - **Write parameterized tests** (`@pytest.mark.parametrize`) to reduce boilerplate; declare parameter names as a tuple of strings, not a single comma-separated string (e.g. `('a', 'b')` not `'a, b'`)
 - **Be careful with mocking** - don't mock too much or tests will just test the mocks, not the real code
@@ -56,18 +56,18 @@ Notes:
 - **Only test what's necessary** - add test cases that cover genuinely new behavior, not duplicates of cases already covered by existing parametrize entries
 
 ## Virtual Environments
-- Look for a venv folder in the project root (e.g., `3.10.venv/`, `.venv/`) that contains an editable install of the project, or ask the user which venv to use
+- Look for a venv folder in the project root (e.g., `3.11.venv/`, `.venv/`) that contains an editable install of the project, or ask the user which venv to use
 - Activate the venv before running tox or uv commands
 - After version bump in `pyproject.toml`, sync lock file: `uv lock` (no `--active` flag — unlike `uv sync`, `uv lock` does not accept it)
 
 ## Setting Up a Fresh Clone
 Run these steps once after cloning the repository:
 ```bash
-# 1. Create virtual environment (requires Python 3.10)
-python3.10 -m venv 3.10.venv
+# 1. Create virtual environment (requires Python 3.11)
+python3.11 -m venv 3.11.venv
 
 # 2. Activate and install uv
-source 3.10.venv/bin/activate
+source 3.11.venv/bin/activate
 pip install --upgrade pip uv
 
 # 3. Sync all dependencies from the lock file
