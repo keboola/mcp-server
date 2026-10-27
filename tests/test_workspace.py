@@ -403,6 +403,38 @@ async def test_get_workspace_warns_when_pinned_workspace_is_not_readonly(caplog:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(('readonly', 'allowed'), [(False, True), (True, False), (None, False)])
+async def test_strict_scope_requires_a_direct_grant_workspace(readonly: bool | None, allowed: bool) -> None:
+    """A strict workspace scope may use its pinned workspace only when that workspace cannot read the whole
+    Storage; an unknown access level is refused too."""
+    mock_client = Mock(spec=KeboolaClient)
+    manager = WorkspaceManager(mock_client, workspace_id='123', strict=True)
+    info = _WspInfo(id=123, schema='APP_SCHEMA', backend='snowflake', credentials=None, readonly=readonly)
+    manager._find_ws_by_id = AsyncMock(return_value=(info, mock_client))  # type: ignore[method-assign]
+
+    if allowed:
+        assert (await manager._get_workspace()).id == 123
+    else:
+        with pytest.raises(ValueError, match='strict workspace scope'):
+            await manager._get_workspace()
+
+
+@pytest.mark.asyncio
+async def test_strict_scope_never_uses_the_managed_workspace() -> None:
+    """The data app helpers fall back to the MCP-managed workspace, which reads the whole project; a strict
+    session must not even look it up."""
+    mock_client = Mock(spec=KeboolaClient)
+    manager = WorkspaceManager(mock_client, workspace_id='999', strict=True)
+    manager._find_ws_in_branch = AsyncMock()  # type: ignore[method-assign]
+    manager._create_ws = AsyncMock()  # type: ignore[method-assign]
+
+    with pytest.raises(ValueError, match='not available in a strict workspace scope'):
+        await manager.get_data_app_workspace_id()
+    manager._find_ws_in_branch.assert_not_called()
+    manager._create_ws.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_get_data_app_workspace_id_ignores_the_pin():
     """`get_data_app_workspace_id()`/`get_data_app_branch_id()`/`get_data_app_sql_dialect()` must
     resolve the *managed* workspace even when a session is pinned via `workspace_id` -- they feed

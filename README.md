@@ -225,6 +225,16 @@ Pins queries to one specific, already-existing workspace by its ID instead of th
 
 Set via the `KBC_WORKSPACE_ID` environment variable, the `--workspace-id` CLI flag, or (per-request, for multi-user deployments) the `X-Workspace-Id` header.
 
+### KBC_WORKSPACE_SCOPE
+
+`strict` limits a session to its pinned workspace, for Kai in a Data App whose workspace has direct-grant input mapping. The session then:
+
+- offers only `query_data`, `get_buckets`, `get_tables`, `get_project_info` and `docs_query`, whatever the authorization headers say (they can narrow this list further, not widen it);
+- never looks up or creates the MCP-managed workspace and never fans out across projects;
+- refuses a workspace with read-only access to the whole Storage, and refuses configuration previews.
+
+It requires a workspace pin (`KBC_WORKSPACE_ID` / `X-Workspace-Id`). `strict` is the only accepted value, so a request can tighten a session but never loosen a server-side `strict`. Set via the `KBC_WORKSPACE_SCOPE` environment variable or, per request, the `X-Workspace-Scope` header.
+
 ### KBC_STORAGE_API_URL (Keboola Region)
 
 Your Keboola Region API URL depends on your deployment region. You can determine your region by looking at the URL in your browser when logged into your Keboola project:

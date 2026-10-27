@@ -16,6 +16,7 @@ from keboola_mcp_server.mcp import (
     ServerState,
     SessionStateMiddleware,
     ToolsFilteringMiddleware,
+    WorkspaceScopeError,
     project_has_semantic_models,
 )
 from keboola_mcp_server.tools import data_apps as data_app_tools
@@ -25,7 +26,11 @@ from keboola_mcp_server.tools.components.utils import (
     build_folder_preview,
     get_sql_transformation_id_from_sql_dialect,
 )
-from keboola_mcp_server.tools.constants import MODIFY_FLOW_TOOL_NAME, UPDATE_FLOW_TOOL_NAME
+from keboola_mcp_server.tools.constants import (
+    MODIFY_FLOW_TOOL_NAME,
+    STRICT_WORKSPACE_SCOPE_TOOLS,
+    UPDATE_FLOW_TOOL_NAME,
+)
 from keboola_mcp_server.tools.flow import tools as flow_tools
 from keboola_mcp_server.tools.flow.scheduler_model import ScheduleRequest
 from keboola_mcp_server.workspace import WorkspaceManager
@@ -288,9 +293,18 @@ async def preview_config_diff(rq: Request) -> Response:
     # This route builds its own session state, so it must pin the Storage API URL to the server's
     # own stack the same way the MCP middleware chain does.
     own_stack_storage_api_url = server_state.own_stack_storage_api_url
-    config = SessionStateMiddleware.apply_request_config(
-        rq, server_state.config, own_stack_storage_api_url=own_stack_storage_api_url
-    )
+    try:
+        config = SessionStateMiddleware.apply_request_config(
+            rq, server_state.config, own_stack_storage_api_url=own_stack_storage_api_url
+        )
+    except WorkspaceScopeError as e:
+        return JSONResponse(status_code=403, content={'message': str(e)})
+    if config.is_strict_workspace_scope and preview_rq.tool_name not in STRICT_WORKSPACE_SCOPE_TOOLS:
+        LOG.info(f'[preview_config_diff] Tool authorization denied (strict workspace scope): {preview_rq.tool_name}')
+        return JSONResponse(
+            status_code=403,
+            content={'message': f'The tool "{preview_rq.tool_name}" is not available in a strict workspace scope.'},
+        )
     state = await SessionStateMiddleware.create_session_state(
         config,
         server_state.runtime_info,

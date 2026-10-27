@@ -603,6 +603,7 @@ class WorkspaceManager:
         workspace_schema: str | None = None,
         kubernetes_token_path: str | None = None,
         workspace_id: str | int | None = None,
+        strict: bool = False,
     ) -> 'WorkspaceManager':
         # On projects with the `storage-branches` feature, each dev branch needs its own
         # workspace so the agent's queries (FQN paths, `query_data`) see that branch's
@@ -613,10 +614,20 @@ class WorkspaceManager:
         # `has_storage_branches` already requires `branch_id is not None`, so the default
         # branch always takes the prod-client path.
         if await has_storage_branches(client):
-            return cls(client, workspace_schema, kubernetes_token_path=kubernetes_token_path, workspace_id=workspace_id)
+            return cls(
+                client,
+                workspace_schema,
+                kubernetes_token_path=kubernetes_token_path,
+                workspace_id=workspace_id,
+                strict=strict,
+            )
         prod_client = await client.with_branch_id(None)
         return cls(
-            prod_client, workspace_schema, kubernetes_token_path=kubernetes_token_path, workspace_id=workspace_id
+            prod_client,
+            workspace_schema,
+            kubernetes_token_path=kubernetes_token_path,
+            workspace_id=workspace_id,
+            strict=strict,
         )
 
     def __init__(
@@ -625,6 +636,7 @@ class WorkspaceManager:
         workspace_schema: str | None = None,
         kubernetes_token_path: str | None = None,
         workspace_id: str | int | None = None,
+        strict: bool = False,
     ):
         """
         Initializes the WorkspaceManager.
@@ -641,10 +653,14 @@ class WorkspaceManager:
             (e.g. read-only users).
         :param workspace_id: The ID of the workspace to use (e.g. a Data App's own workspace).
             Takes precedence over `workspace_schema` when both are set.
+        :param strict: True for a session with a strict workspace scope (see `Config.workspace_scope`): the
+            pinned `workspace_id` is the only workspace this manager ever uses, and it must not have read-only
+            access to the whole Storage.
         """
         self._client = client
         self._workspace_schema = workspace_schema
         self._workspace_id = workspace_id
+        self._strict = strict
         self._kubernetes_token_path = kubernetes_token_path
         self._provisioning_client: AsyncStorageClient | None = None
         self._workspace: _Workspace | None = None
@@ -958,7 +974,13 @@ class WorkspaceManager:
                     f'Pinned workspace {self._workspace_id} resolved via the production-branch '
                     f'fallback; other lookups for this session still use branch_id={self._client.branch_id!r}.'
                 )
-            if not info.readonly:
+            if self._strict and info.readonly is not False:
+                # A workspace that reads the whole Storage gives the strict scope nothing to enforce.
+                raise ValueError(
+                    f'Workspace {self._workspace_id} has read-only access to the whole Storage, so it cannot be used '
+                    f'in a strict workspace scope. Use a workspace with direct-grant input mapping.'
+                )
+            if not info.readonly and not self._strict:
                 # Every other resolution path enforces read-only storage access; this is a
                 # caller-supplied id, so it *could* widen `query_data` from read-only to
                 # read-write. Not hard-enforced here -- whether a Data App's platform-provisioned
@@ -985,6 +1007,13 @@ class WorkspaceManager:
         """
         if self._managed_workspace:
             return self._managed_workspace
+
+        if self._strict:
+            # The MCP-managed workspace reads the whole project; a strict session may use its pinned one only.
+            raise ValueError(
+                f'The MCP-managed workspace is not available in a strict workspace scope '
+                f'pinned to workspace_id={self._workspace_id}.'
+            )
 
         if self._workspace_schema:
             # use the workspace that was explicitly requested

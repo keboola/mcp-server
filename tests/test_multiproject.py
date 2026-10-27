@@ -14,7 +14,7 @@ from pydantic import ValidationError as PydanticValidationError
 from keboola_mcp_server.clients.auth_bridge import StorageTokenResolver
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
-from keboola_mcp_server.mcp import ServerState
+from keboola_mcp_server.mcp import WORKSPACE_SCOPE, ServerState
 from keboola_mcp_server.multiproject import MultiProjectMiddleware
 from keboola_mcp_server.scope import SCOPE_KEY, SessionScope
 from keboola_mcp_server.workspace import WorkspaceManager
@@ -35,8 +35,14 @@ class TestMultiProjectMiddleware:
     """Read tools fan out across the scoped projects; writes and single-project scope do not."""
 
     @staticmethod
-    def _ctx(scope: SessionScope | None, tool_name: str, read_only: bool, arguments: dict | None = None):
-        state: dict = {KeboolaClient.STATE_KEY: 'orig-client'}
+    def _ctx(
+        scope: SessionScope | None,
+        tool_name: str,
+        read_only: bool,
+        arguments: dict | None = None,
+        workspace_scope: str | None = None,
+    ):
+        state: dict = {KeboolaClient.STATE_KEY: 'orig-client', WORKSPACE_SCOPE: workspace_scope}
         if scope is not None:
             state[SCOPE_KEY] = scope
         ctx = MagicMock(spec=Context)
@@ -65,18 +71,28 @@ class TestMultiProjectMiddleware:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ('scope', 'tool_name', 'read_only'),
+        ('scope', 'tool_name', 'read_only', 'workspace_scope'),
         [
-            (None, 'get_tables', True),
-            (SessionScope(project_ids=[11], confirmed=True), 'get_tables', True),
+            (None, 'get_tables', True, None),
+            (SessionScope(project_ids=[11], confirmed=True), 'get_tables', True, None),
             # write, single scoped project: project_id is optional, defaults to the active project.
-            (SessionScope(project_ids=[11], confirmed=True), 'update_config', False),
-            (SessionScope(project_ids=[11, 22], confirmed=True), 'get_accessible_projects', True),  # excluded tool
+            (SessionScope(project_ids=[11], confirmed=True), 'update_config', False, None),
+            (SessionScope(project_ids=[11, 22], confirmed=True), 'get_accessible_projects', True, None),  # excluded
+            # A strict workspace scope stays on its pinned workspace: no fan-out and no ask-first gate.
+            (SessionScope(project_ids=[11, 22], confirmed=True), 'get_tables', True, 'strict'),
+            (SessionScope(project_ids=[11, 22], confirmed=False), 'query_data', True, 'strict'),
         ],
-        ids=['no_scope', 'single_project', 'write_tool_single_project', 'excluded_tool'],
+        ids=[
+            'no_scope',
+            'single_project',
+            'write_tool_single_project',
+            'excluded_tool',
+            'strict_workspace_scope',
+            'strict_workspace_scope_unconfirmed',
+        ],
     )
-    async def test_passthrough_calls_once(self, scope, tool_name, read_only) -> None:
-        context, _ = self._ctx(scope, tool_name, read_only)
+    async def test_passthrough_calls_once(self, scope, tool_name, read_only, workspace_scope) -> None:
+        context, _ = self._ctx(scope, tool_name, read_only, workspace_scope=workspace_scope)
         calls = []
 
         async def call_next(_):
@@ -517,9 +533,15 @@ class TestMultiProjectMiddleware:
         }
 
     @pytest.mark.asyncio
-    async def test_on_list_tools_no_scope_is_passthrough(self) -> None:
-        # Legacy Storage-token session (no SessionScope): every tool stays advertised, unchanged.
-        context, _ = self._ctx(None, 'x', read_only=True)
+    @pytest.mark.parametrize(
+        ('scope', 'workspace_scope'),
+        [(None, None), (SessionScope(project_ids=[11, 22], confirmed=True), 'strict')],
+        ids=['no_scope', 'strict_workspace_scope'],
+    )
+    async def test_on_list_tools_is_passthrough(self, scope, workspace_scope) -> None:
+        # Legacy Storage-token session (no SessionScope) or a strict workspace scope: every tool stays advertised,
+        # unchanged -- a strict session never fans out, so it gets no project filter either.
+        context, _ = self._ctx(scope, 'x', read_only=True, workspace_scope=workspace_scope)
 
         async def call_next(_):
             return [_tool('get_tables', read_only=True), _tool('update_config', read_only=False)]

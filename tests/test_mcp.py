@@ -18,6 +18,7 @@ from fastmcp.server.middleware import MiddlewareContext
 from fastmcp.tools import Tool
 from mcp.server.auth.middleware.bearer_auth import AuthenticatedUser
 from pydantic import BaseModel, Field
+from starlette.datastructures import Headers
 from starlette.requests import Request
 
 from keboola_mcp_server import auth_login
@@ -39,10 +40,12 @@ from keboola_mcp_server.mcp import (
     SessionStateMiddleware,
     ToolsFilteringMiddleware,
     ToonCompactFunctionTool,
+    WorkspaceScopeError,
     _exclude_none_serializer,
     _filter_toon_nulls,
     _is_unauthorized,
     install_project_id_log_field,
+    is_strict_workspace_scope,
     process_concurrently,
     toon_serializer,
     unwrap_results,
@@ -1206,6 +1209,61 @@ class TestSessionStateMiddleware:
         warned = any('is pinned' in r.message for r in caplog.records)
         assert warned is expect_warning
 
+    @pytest.mark.parametrize(
+        ('server_kwargs', 'headers', 'expected_workspace_id', 'error'),
+        [
+            ({}, [('X-Workspace-Scope', 'strict'), ('X-Workspace-Id', '222')], '222', None),
+            ({'workspace_id': '111'}, [('X-Workspace-Scope', 'strict')], '111', None),
+            # An empty header does not loosen a strict server.
+            ({'workspace_scope': 'strict'}, [('X-Workspace-Scope', ''), ('X-Workspace-Id', '222')], '222', None),
+            # Without a pin the session would fall back to the MCP-managed workspace.
+            ({}, [('X-Workspace-Scope', 'strict')], None, 'requires a workspace pin'),
+            ({'workspace_scope': 'strict'}, [], None, 'requires a workspace pin'),
+            # The pin set by a broker in front of this server must not be overridden by another spelling or a
+            # repeated header the caller adds (`KBC_` wins over `X-`, and a repeated header's last value wins).
+            (
+                {},
+                [('X-Workspace-Scope', 'strict'), ('X-Workspace-Id', '222'), ('KBC-Workspace-Id', '999')],
+                None,
+                'more than one header',
+            ),
+            (
+                {},
+                [('X-Workspace-Scope', 'strict'), ('X-Workspace-Id', '222'), ('x-workspace-id', '999')],
+                None,
+                'more than one header',
+            ),
+        ],
+        ids=[
+            'header_scope_and_pin',
+            'server_pin',
+            'server_scope',
+            'no_pin',
+            'server_scope_no_pin',
+            'pin_in_two_spellings',
+            'repeated_pin_header',
+        ],
+    )
+    def test_apply_request_config_strict_workspace_scope(
+        self,
+        server_kwargs: dict[str, str],
+        headers: list[tuple[str, str]],
+        expected_workspace_id: str | None,
+        error: str | None,
+    ):
+        config = Config(storage_token='server-token', **server_kwargs)
+        http_rq = MagicMock(spec=Request)
+        http_rq.headers = Headers(raw=[(k.lower().encode(), v.encode()) for k, v in headers])
+        http_rq.scope = {}
+
+        if error:
+            with pytest.raises(WorkspaceScopeError, match=error):
+                SessionStateMiddleware.apply_request_config(http_rq, config, own_stack_storage_api_url=None)
+        else:
+            applied = SessionStateMiddleware.apply_request_config(http_rq, config, own_stack_storage_api_url=None)
+            assert applied.is_strict_workspace_scope
+            assert applied.workspace_id == expected_workspace_id
+
     def test_apply_request_config_injects_exchanged_session_token(self):
         from mcp.server.auth.middleware.bearer_auth import AuthenticatedUser
         from starlette.requests import Request
@@ -1550,6 +1608,39 @@ class TestCreateSessionStateTokenResolutionWiring:
             )
 
         assert create.await_args.kwargs['token_resolver'] is resolver
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ('workspace_scope', 'workspace_id', 'expected_strict'),
+        [(None, '5', False), ('strict', '5', True), ('strict', None, None)],
+        ids=['no_scope', 'strict', 'strict_without_pin'],
+    )
+    async def test_forwards_the_workspace_scope(
+        self, workspace_scope: str | None, workspace_id: str | None, expected_strict: bool | None
+    ) -> None:
+        # The WorkspaceManager guards of a strict scope hang on this flag. A strict scope without a pin is refused
+        # here too, for transports (stdio) that never go through `apply_request_config`.
+        config = Config(
+            storage_api_url='https://connection.keboola.com',
+            storage_token='sapi_token_456',
+            workspace_id=workspace_id,
+            workspace_scope=workspace_scope,
+        )
+        runtime_info = ServerRuntimeInfo(transport='stdio')
+
+        with patch.object(WorkspaceManager, 'create', AsyncMock(return_value='wsm')) as create:
+            if expected_strict is None:
+                with pytest.raises(WorkspaceScopeError, match='requires a workspace pin'):
+                    await SessionStateMiddleware.create_session_state(
+                        config, runtime_info, own_stack_storage_api_url=None
+                    )
+                create.assert_not_called()
+            else:
+                state = await SessionStateMiddleware.create_session_state(
+                    config, runtime_info, own_stack_storage_api_url=None
+                )
+                assert create.await_args.kwargs['strict'] is expected_strict
+                assert is_strict_workspace_scope(state) is expected_strict
 
     @pytest.mark.asyncio
     async def test_end_to_end_resolves_legacy_token_when_a_resolver_is_given(self) -> None:
@@ -2208,7 +2299,12 @@ class TestBootstrapSessionState:
 
     @pytest.mark.asyncio
     async def test_no_token_creates_a_state_without_a_client(self) -> None:
-        config = Config(storage_api_url='https://connection.keboola.com', conversation_id='convo-1')
+        config = Config(
+            storage_api_url='https://connection.keboola.com',
+            conversation_id='convo-1',
+            workspace_id='5',
+            workspace_scope='strict',
+        )
 
         state = await SessionStateMiddleware.create_session_state(
             config, ServerRuntimeInfo(transport='stdio'), own_stack_storage_api_url=None
@@ -2218,6 +2314,8 @@ class TestBootstrapSessionState:
         assert WorkspaceManager.STATE_KEY not in state
         assert state[STORAGE_API_URL] == 'https://connection.keboola.com'
         assert state[CONVERSATION_ID] == 'convo-1'
+        # The tool limits of a strict workspace scope must hold without a WorkspaceManager too.
+        assert is_strict_workspace_scope(state)
 
     def test_from_state_explains_how_to_get_credentials(self) -> None:
         with pytest.raises(ValueError, match='create_project'):
