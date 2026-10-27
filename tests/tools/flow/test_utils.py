@@ -1,3 +1,4 @@
+import copy
 from typing import Any
 
 import pytest
@@ -815,7 +816,12 @@ async def test_resolve_flow_by_id_reports_server_failure_over_caller_failure(
 
 
 def _data_app_task(task: dict[str, Any]) -> dict[str, Any]:
-    return {'id': 't1', 'name': 'Dashboard', 'phase': 'p1', 'task': {'type': 'job', 'mode': 'run', **task}}
+    return {
+        'id': 't1',
+        'name': 'Dashboard',
+        'phase': 'p1',
+        'task': {'type': 'job', 'mode': 'run', **copy.deepcopy(task)},
+    }
 
 
 _LEGACY_DATA_APP_TASK = {'componentId': 'keboola.data-apps', 'configId': 'cfg-1'}
