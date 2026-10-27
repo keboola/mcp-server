@@ -345,6 +345,53 @@ class TestUpdateFlowTool:
         keboola_client.storage_client.configuration_update.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_modify_flow_writes_data_app_control_task(
+        self,
+        mocker: MockerFixture,
+        mcp_context_client: Context,
+        mock_legacy_flow_create_update: dict[str, Any],
+    ):
+        """A data app task passed in the legacy keboola.data-apps shape is saved as keboola.data-app-control."""
+        mock_project_info = mocker.Mock()
+        mock_project_info.conditional_flows = True
+        mocker.patch('keboola_mcp_server.tools.flow.tools.get_project_info', return_value=mock_project_info)
+
+        async def configuration_detail(component_id: str, configuration_id: str) -> dict[str, Any]:
+            if component_id == 'keboola.data-apps':
+                return {'id': configuration_id, 'configuration': {'parameters': {'id': 'app-1'}}}
+            return {}
+
+        keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+        keboola_client.storage_client.configuration_detail = mocker.AsyncMock(side_effect=configuration_detail)
+        keboola_client.storage_client.component_detail = mocker.AsyncMock(return_value={})
+        keboola_client.storage_client.configuration_update = mocker.AsyncMock(
+            return_value=mock_legacy_flow_create_update
+        )
+
+        await modify_flow(
+            ctx=mcp_context_client,
+            configuration_id='legacy_flow_123',
+            flow_type=ORCHESTRATOR_COMPONENT_ID,
+            change_description='Refresh the dashboard after the load',
+            phases=[{'id': 1, 'name': 'Refresh', 'dependsOn': []}],
+            tasks=[
+                {
+                    'id': 20001,
+                    'name': 'Dashboard',
+                    'phase': 1,
+                    'task': {'componentId': 'keboola.data-apps', 'configId': 'cfg-1', 'mode': 'run'},
+                }
+            ],
+        )
+
+        saved_task = keboola_client.storage_client.configuration_update.call_args.kwargs['configuration']['tasks'][0]
+        assert saved_task['task'] == {
+            'componentId': 'keboola.data-app-control',
+            'configData': {'parameters': {'appId': 'app-1'}},
+            'mode': 'run',
+        }
+
+    @pytest.mark.asyncio
     async def test_update_conditional_flow(
         self,
         mocker: MockerFixture,

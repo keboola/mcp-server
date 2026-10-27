@@ -31,7 +31,9 @@ or ID.
    (`item_types=["configuration", "transformation"]`) and confirm the list with the user. Each task needs a
    component ID and a configuration ID; use `get_configs` with `configs=[...]` when a search hit does not show
    them. Do not create the configurations here; a missing SQL transformation is built with the
-   `build-sql-transformation` skill first.
+   `build-sql-transformation` skill first. A data app is the exception: find it with `get_data_apps` and add it
+   as a `keboola.data-app-control` task with `configData: {"parameters": {"appId": "<data_app_id>"}}` and no
+   configuration ID.
 5. **Load the schema.** Call `get_flow_schema` with `flow_type="keboola.flow"` when conditional flows are enabled,
    otherwise `flow_type="keboola.orchestrator"`. Call `get_flow_examples` with the same type if you have not seen
    one in this conversation.

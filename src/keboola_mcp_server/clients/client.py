@@ -36,6 +36,7 @@ BranchType = Literal['production', 'development']
 ORCHESTRATOR_COMPONENT_ID = 'keboola.orchestrator'
 CONDITIONAL_FLOW_COMPONENT_ID = 'keboola.flow'
 DATA_APP_COMPONENT_ID = 'keboola.data-apps'
+DATA_APP_CONTROL_COMPONENT_ID = 'keboola.data-app-control'
 FlowType = Literal['keboola.flow', 'keboola.orchestrator']
 FLOW_TYPES: Sequence[FlowType] = (CONDITIONAL_FLOW_COMPONENT_ID, ORCHESTRATOR_COMPONENT_ID)
 

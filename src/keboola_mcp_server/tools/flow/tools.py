@@ -56,6 +56,7 @@ from keboola_mcp_server.tools.flow.utils import (
     get_all_flows,
     get_flow_configuration,
     get_schema_as_markdown,
+    normalize_data_app_tasks,
     resolve_flow_by_id,
     resolve_flow_schema,
     validate_flow_structure,
@@ -185,13 +186,16 @@ async def create_flow(
 
     PRE-REQUISITES:
     - Always use `get_flow_schema` with flow_type="keboola.orchestrator" and review `get_flow_examples` if unknown
-    - Collect component configuration IDs for every task you include
+    - Collect component configuration IDs for every task you include (for data apps, their `data_app_id`)
 
     RULES:
     - `phases` and `tasks` must follow the orchestrator schema; each entry must include `id` and `name`
     - Phases run sequentially; tasks inside a phase run in parallel
     - Use `dependsOn` on phases to sequence them; reference other phase ids
     - Always share the returned links with the user
+    - Run a data app from a flow with a `keboola.data-app-control` task whose `configData` is
+    `{"parameters": {"appId": "<data_app_id>"}}` (`data_app_id` from `get_data_apps`), with no `configId`; never use
+    `keboola.data-apps` + `configId`. Add `"redeploy": true` to the parameters only if the user wants the app rebuilt
 
     WHEN TO USE:
     - Simple/linear orchestrations without branching or conditions
@@ -202,6 +206,7 @@ async def create_flow(
 
     LOG.info(f'Creating new flow: {name} (type: {ORCHESTRATOR_COMPONENT_ID})')
     client = KeboolaClient.from_state(ctx.session.state)
+    await normalize_data_app_tasks(client, flow_configuration)
 
     # Validate flow structure before to catch semantic errors in the structure
     validate_flow_structure(cast(JsonDict, flow_configuration), flow_type=flow_type)
@@ -279,7 +284,7 @@ async def create_conditional_flow(
 
     PRE-REQUISITES:
     - Always use `get_flow_schema` with flow_type="keboola.flow" and review `get_flow_examples` if unknown
-    - Gather component configuration IDs for all tasks you include
+    - Gather component configuration IDs for all tasks you include (for data apps, their `data_app_id`)
 
     RULES:
     - `phases` and `tasks` must follow the keboola.flow schema; each entry needs `id` and `name`
@@ -287,6 +292,9 @@ async def create_conditional_flow(
     - Connect phases via `next` transitions; no cycles or dangling phases; empty `next` means flow end
     - Task/phase failures already stop the flow; add retries/conditions only if the user requests them
     - Always share the returned links with the user
+    - Run a data app from a flow with a `keboola.data-app-control` task whose `configData` is
+    `{"parameters": {"appId": "<data_app_id>"}}` (`data_app_id` from `get_data_apps`), with no `configId`; never use
+    `keboola.data-apps` + `configId`. Add `"redeploy": true` to the parameters only if the user wants the app rebuilt
 
     WHEN TO USE:
     - Flows needing branching, conditions, retries, or notifications
@@ -297,6 +305,7 @@ async def create_conditional_flow(
 
     LOG.info(f'Creating flow: {name} (type: {flow_type})')
     client = KeboolaClient.from_state(ctx.session.state)
+    await normalize_data_app_tasks(client, flow_configuration)
 
     # Validate flow structure to catch semantic errors in the structure
     validate_flow_structure(flow_configuration=flow_configuration, flow_type=flow_type)
@@ -402,7 +411,11 @@ async def update_flow(
     RULES (ALL FLOWS):
     - `flow_type` must match the stored component id of the flow; do not switch flow types during update
     - `phases` and `tasks` must follow the schema for the selected flow type; include at least `id` and `name`
-    - Tasks must reference existing component configurations; keep dependencies consistent
+    - Tasks must reference existing component configurations (data app tasks an existing `data_app_id`); keep
+    dependencies consistent
+    - Run a data app from a flow with a `keboola.data-app-control` task whose `configData` is
+    `{"parameters": {"appId": "<data_app_id>"}}` (`data_app_id` from `get_data_apps`), with no `configId`; never use
+    `keboola.data-apps` + `configId`. Add `"redeploy": true` to the parameters only if the user wants the app rebuilt
     - Always provide a clear `change_description` and surface any links returned in the response to the user
 
     CONDITIONAL FLOWS (`keboola.flow`):
@@ -490,7 +503,11 @@ async def modify_flow(
     RULES (ALL FLOWS):
     - `flow_type` must match the stored component id of the flow; do not switch flow types during update
     - `phases` and `tasks` must follow the schema for the selected flow type; include at least `id` and `name`
-    - Tasks must reference existing component configurations; keep dependencies consistent
+    - Tasks must reference existing component configurations (data app tasks an existing `data_app_id`); keep
+    dependencies consistent
+    - Run a data app from a flow with a `keboola.data-app-control` task whose `configData` is
+    `{"parameters": {"appId": "<data_app_id>"}}` (`data_app_id` from `get_data_apps`), with no `configId`; never use
+    `keboola.data-apps` + `configId`. Add `"redeploy": true` to the parameters only if the user wants the app rebuilt
     - Always provide a clear `change_description` and surface any links returned in the response to the user
     - A flow can have multiple schedules for automation runs. Add/update/remove schedules only if requested.
     - When updating a flow or a schedule, specify only the fields you want to update, others will be kept unchanged.
@@ -634,6 +651,7 @@ async def update_flow_internal(
     flow_configuration = copy.deepcopy(flow_configuration)
 
     updated_configuration = get_flow_configuration(phases=phases, tasks=tasks, flow_type=flow_type)
+    await normalize_data_app_tasks(client, updated_configuration)
     if updated_configuration.get('phases'):
         flow_configuration['phases'] = updated_configuration['phases']
     if updated_configuration.get('tasks'):

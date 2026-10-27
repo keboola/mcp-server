@@ -2334,6 +2334,8 @@ Streamlit apps have no managed git repo, so `mode` has no effect on the deployed
   visit) or `disabled` (failed to start; only a deploy brings it back).
 - After deployment, the deployment info includes the app URL and the latest logs to help diagnose in-app
   errors.
+- To start or redeploy an app on a schedule or after other jobs, add it to a flow as a `keboola.data-app-control`
+  task (see the flow tools) instead of calling this tool.
 
 
 **Input JSON Schema**:
@@ -3000,7 +3002,7 @@ Creates a new conditional flow configuration using `keboola.flow`.
 
 PRE-REQUISITES:
 - Always use `get_flow_schema` with flow_type="keboola.flow" and review `get_flow_examples` if unknown
-- Gather component configuration IDs for all tasks you include
+- Gather component configuration IDs for all tasks you include (for data apps, their `data_app_id`)
 
 RULES:
 - `phases` and `tasks` must follow the keboola.flow schema; each entry needs `id` and `name`
@@ -3008,6 +3010,9 @@ RULES:
 - Connect phases via `next` transitions; no cycles or dangling phases; empty `next` means flow end
 - Task/phase failures already stop the flow; add retries/conditions only if the user requests them
 - Always share the returned links with the user
+- Run a data app from a flow with a `keboola.data-app-control` task whose `configData` is
+`{"parameters": {"appId": "<data_app_id>"}}` (`data_app_id` from `get_data_apps`), with no `configId`; never use
+`keboola.data-apps` + `configId`. Add `"redeploy": true` to the parameters only if the user wants the app rebuilt
 
 WHEN TO USE:
 - Flows needing branching, conditions, retries, or notifications
@@ -3084,13 +3089,16 @@ Creates a new legacy (non-conditional) flow using `keboola.orchestrator`.
 
 PRE-REQUISITES:
 - Always use `get_flow_schema` with flow_type="keboola.orchestrator" and review `get_flow_examples` if unknown
-- Collect component configuration IDs for every task you include
+- Collect component configuration IDs for every task you include (for data apps, their `data_app_id`)
 
 RULES:
 - `phases` and `tasks` must follow the orchestrator schema; each entry must include `id` and `name`
 - Phases run sequentially; tasks inside a phase run in parallel
 - Use `dependsOn` on phases to sequence them; reference other phase ids
 - Always share the returned links with the user
+- Run a data app from a flow with a `keboola.data-app-control` task whose `configData` is
+`{"parameters": {"appId": "<data_app_id>"}}` (`data_app_id` from `get_data_apps`), with no `configId`; never use
+`keboola.data-apps` + `configId`. Add `"redeploy": true` to the parameters only if the user wants the app rebuilt
 
 WHEN TO USE:
 - Simple/linear orchestrations without branching or conditions
@@ -3298,7 +3306,11 @@ required structure and see the examples if unknown
 RULES (ALL FLOWS):
 - `flow_type` must match the stored component id of the flow; do not switch flow types during update
 - `phases` and `tasks` must follow the schema for the selected flow type; include at least `id` and `name`
-- Tasks must reference existing component configurations; keep dependencies consistent
+- Tasks must reference existing component configurations (data app tasks an existing `data_app_id`); keep
+dependencies consistent
+- Run a data app from a flow with a `keboola.data-app-control` task whose `configData` is
+`{"parameters": {"appId": "<data_app_id>"}}` (`data_app_id` from `get_data_apps`), with no `configId`; never use
+`keboola.data-apps` + `configId`. Add `"redeploy": true` to the parameters only if the user wants the app rebuilt
 - Always provide a clear `change_description` and surface any links returned in the response to the user
 - A flow can have multiple schedules for automation runs. Add/update/remove schedules only if requested.
 - When updating a flow or a schedule, specify only the fields you want to update, others will be kept unchanged.
@@ -3523,7 +3535,11 @@ required structure and see the examples if unknown
 RULES (ALL FLOWS):
 - `flow_type` must match the stored component id of the flow; do not switch flow types during update
 - `phases` and `tasks` must follow the schema for the selected flow type; include at least `id` and `name`
-- Tasks must reference existing component configurations; keep dependencies consistent
+- Tasks must reference existing component configurations (data app tasks an existing `data_app_id`); keep
+dependencies consistent
+- Run a data app from a flow with a `keboola.data-app-control` task whose `configData` is
+`{"parameters": {"appId": "<data_app_id>"}}` (`data_app_id` from `get_data_apps`), with no `configId`; never use
+`keboola.data-apps` + `configId`. Add `"redeploy": true` to the parameters only if the user wants the app rebuilt
 - Always provide a clear `change_description` and surface any links returned in the response to the user
 
 CONDITIONAL FLOWS (`keboola.flow`):
