@@ -136,11 +136,11 @@ def test_plugin_manifest() -> None:
 def test_mcp_config() -> None:
     config = _load_json('mcp.json')
     assert config['$schema'] == 'https://agent-plugins.org/schemas/1.0.0/mcp.schema.json'
-    # A plugin has exactly one MCP server; the public listing freezes its URL (RFC Phase 4 switches it).
+    # A plugin has exactly one MCP server, and the public listing freezes its URL: the global router serves every stack.
     assert list(config['mcpServers']) == ['keboola']
     server = config['mcpServers']['keboola']
     assert server['type'] == 'streamable-http'
-    assert server['url'] == 'https://mcp.keboola.com/mcp'
+    assert server['url'] == 'https://mcp-router.keboola.com/mcp'
     assert server['extensions']['com.openai']['auth'] == {'type': 'oauth', 'client': {'mode': 'dcr'}}
 
 
