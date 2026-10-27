@@ -310,9 +310,7 @@ class TestMultiProjectMiddleware:
             patch.object(
                 WorkspaceManager,
                 'create',
-                AsyncMock(
-                    side_effect=lambda client, _schema, kubernetes_token_path=None, workspace_id=None: f'wsm-{client}'
-                ),
+                AsyncMock(side_effect=lambda client, *_args, **_kwargs: f'wsm-{client}'),
             ) as ws_create,
         ):
             result = await MultiProjectMiddleware().on_call_tool(context, call_next)
@@ -445,9 +443,7 @@ class TestMultiProjectMiddleware:
             patch.object(
                 WorkspaceManager,
                 'create',
-                AsyncMock(
-                    side_effect=lambda client, _schema, kubernetes_token_path=None, workspace_id=None: f'wsm-{client}'
-                ),
+                AsyncMock(side_effect=lambda client, *_args, **_kwargs: f'wsm-{client}'),
             ),
         ):
             result = await MultiProjectMiddleware().on_call_tool(context, call_next)
@@ -461,6 +457,8 @@ class TestMultiProjectMiddleware:
         # client, and the filter is stripped from the arguments the tool receives.
         scope = SessionScope(project_ids=[11, 22, 33], scoped_token='kbc_at_s', confirmed=True)
         context, state = self._ctx(scope, 'get_tables', read_only=True, arguments={'project_ids': [22]})
+        # A pin of the active project (11) must not leak into project 22.
+        state[WorkspaceManager.STATE_KEY] = WorkspaceManager(MagicMock(spec=KeboolaClient), workspace_id='77')
         seen_clients: list = []
         seen_workspaces: list = []
 
@@ -478,15 +476,14 @@ class TestMultiProjectMiddleware:
             patch.object(
                 WorkspaceManager,
                 'create',
-                AsyncMock(
-                    side_effect=lambda client, _schema, kubernetes_token_path=None, workspace_id=None: f'wsm-{client}'
-                ),
-            ),
+                AsyncMock(side_effect=lambda client, *_args, **_kwargs: f'wsm-{client}'),
+            ) as ws_create,
         ):
             result = await MultiProjectMiddleware().on_call_tool(context, call_next)
 
         assert seen_clients == ['client-22']  # ran once, against project 22 only
         assert seen_workspaces == ['wsm-client-22']  # its own workspace
+        assert ws_create.await_args.kwargs['workspace_id'] is None
         assert state[KeboolaClient.STATE_KEY] == 'orig-client'  # restored
         assert 'project_ids' not in context.message.arguments  # stripped before the tool
         assert result.content[0].text == 't'  # raw single-project result, not an envelope
@@ -510,9 +507,7 @@ class TestMultiProjectMiddleware:
             patch.object(
                 WorkspaceManager,
                 'create',
-                AsyncMock(
-                    side_effect=lambda client, _schema, kubernetes_token_path=None, workspace_id=None: f'wsm-{client}'
-                ),
+                AsyncMock(side_effect=lambda client, *_args, **_kwargs: f'wsm-{client}'),
             ),
         ):
             await MultiProjectMiddleware().on_call_tool(context, call_next)
@@ -657,9 +652,7 @@ class TestMultiProjectMiddleware:
             patch.object(
                 WorkspaceManager,
                 'create',
-                AsyncMock(
-                    side_effect=lambda client, _schema, kubernetes_token_path=None, workspace_id=None: f'wsm-{client}'
-                ),
+                AsyncMock(side_effect=lambda client, *_args, **_kwargs: f'wsm-{client}'),
             ),
         ):
             result = await MultiProjectMiddleware().on_call_tool(context, call_next)
@@ -697,9 +690,7 @@ class TestMultiProjectMiddleware:
             patch.object(
                 WorkspaceManager,
                 'create',
-                AsyncMock(
-                    side_effect=lambda client, _schema, kubernetes_token_path=None, workspace_id=None: f'wsm-{client}'
-                ),
+                AsyncMock(side_effect=lambda client, *_args, **_kwargs: f'wsm-{client}'),
             ),
         ):
             await MultiProjectMiddleware().on_call_tool(context, call_next)
@@ -728,9 +719,7 @@ class TestMultiProjectMiddleware:
             patch.object(
                 WorkspaceManager,
                 'create',
-                AsyncMock(
-                    side_effect=lambda client, _schema, kubernetes_token_path=None, workspace_id=None: f'wsm-{client}'
-                ),
+                AsyncMock(side_effect=lambda client, *_args, **_kwargs: f'wsm-{client}'),
             ),
             pytest.raises(ToolError, match='failed for all 2 scoped'),
         ):
@@ -757,9 +746,7 @@ class TestMultiProjectMiddleware:
             patch.object(
                 WorkspaceManager,
                 'create',
-                AsyncMock(
-                    side_effect=lambda client, _schema, kubernetes_token_path=None, workspace_id=None: f'wsm-{client}'
-                ),
+                AsyncMock(side_effect=lambda client, *_args, **_kwargs: f'wsm-{client}'),
             ),
             pytest.raises(PydanticValidationError),
         ):
@@ -798,9 +785,7 @@ class TestMultiProjectMiddleware:
             patch.object(
                 WorkspaceManager,
                 'create',
-                AsyncMock(
-                    side_effect=lambda client, _schema, kubernetes_token_path=None, workspace_id=None: f'wsm-{client}'
-                ),
+                AsyncMock(side_effect=lambda client, *_args, **_kwargs: f'wsm-{client}'),
             ),
             pytest.raises(ToolError, match=r'^Found 2 validation error\(s\) for call\[get_configs\]$'),
         ):
@@ -870,11 +855,14 @@ class TestActiveProjectReadOnlyGuard:
         # a real per-project swap, which enforces read_only itself.
         scope = SessionScope(project_ids=[11], read_only=True, confirmed=True)
         context, state, _ = self._ctx_with_client(scope, 'get_tables', read_only_tool=True, client_readonly=None)
+        state[WorkspaceManager.STATE_KEY] = WorkspaceManager(MagicMock(spec=KeboolaClient), workspace_id='77')
+        swapped_workspace_ids = []
 
         async def fake_swap(state_, server_state, storage_api_url, base_token, project_id, read_only, workspace_id):
             new_client = MagicMock(spec=KeboolaClient)
             new_client.readonly = read_only or None
             state_[KeboolaClient.STATE_KEY] = new_client
+            swapped_workspace_ids.append(workspace_id)
 
         mocker.patch.object(MultiProjectMiddleware, '_swap_project', new=AsyncMock(side_effect=fake_swap))
         mocker.patch.object(WorkspaceManager, 'create', new=AsyncMock(return_value='wsm'))
@@ -887,6 +875,8 @@ class TestActiveProjectReadOnlyGuard:
 
         await MultiProjectMiddleware().on_call_tool(context, call_next)
         assert captured_readonly == [True]
+        # The active project keeps the session's workspace pin.
+        assert swapped_workspace_ids == ['77']
 
 
 class TestClientForProject:
