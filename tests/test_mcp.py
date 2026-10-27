@@ -34,9 +34,11 @@ from keboola_mcp_server.mcp import (
     AggregateError,
     DirectoryProfileMiddleware,
     KeboolaMcpServer,
+    PlainFunctionTool,
     ServerState,
     SessionStateMiddleware,
     ToolsFilteringMiddleware,
+    ToonCompactFunctionTool,
     _exclude_none_serializer,
     _filter_toon_nulls,
     _is_unauthorized,
@@ -2751,3 +2753,20 @@ async def test_session_state_project_id_is_stamped_on_log_records(caplog):
     logging.getLogger('keboola_mcp_server.test').warning('something failed')
 
     assert [r.project_id for r in caplog.records if r.getMessage() == 'something failed'] == ['451']
+
+
+@pytest.mark.parametrize('tool_cls', [PlainFunctionTool, ToonCompactFunctionTool])
+def test_function_tool_keeps_whole_docstring(tool_cls: type) -> None:
+    """Sections such as `EXAMPLES:` must stay in the description (fastmcp >= 4.1.2 would cut them)."""
+
+    async def my_tool() -> str:
+        """Does a thing.
+
+        EXAMPLES:
+        - do it
+        """
+        return 'ok'
+
+    description = tool_cls.from_function(my_tool).description
+
+    assert description == 'Does a thing.\n\nEXAMPLES:\n- do it'

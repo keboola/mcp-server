@@ -7,6 +7,7 @@ and other utilities for the MCP server.
 
 import asyncio
 import dataclasses
+import inspect
 import logging
 import textwrap
 from collections.abc import Awaitable, Callable, Iterable, Sequence
@@ -1777,6 +1778,17 @@ class _SerializingFunctionTool(FunctionTool):
     untouched. A tool function that already returns a `ToolResult`/`CallToolResult`, or raw bytes,
     is passed through as-is -- those shapes carry meaning our text encoders aren't meant to touch.
     """
+
+    @classmethod
+    def from_function(cls, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> FunctionTool:
+        """Uses the whole docstring as the tool description.
+
+        fastmcp >= 4.1.2 parses docstrings and cuts the description at the first section it recognizes
+        (e.g. `EXAMPLES:`), which would drop it from what the LLM sees.
+        """
+        if kwargs.get('description') is None and kwargs.get('metadata') is None:
+            kwargs['description'] = inspect.getdoc(fn)
+        return super().from_function(fn, *args, **kwargs)
 
     def _serialize(self, data: Any) -> str:
         raise NotImplementedError
