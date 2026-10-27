@@ -56,7 +56,7 @@ through the MCP client, the server or the model — the property this design is 
 
 | Client / protocol | Behavior after the skeleton is written |
 | --- | --- |
-| URL-capable, 2026-07-28 | The call returns an `InputRequiredResult` keyed `open_url`. The client opens the page after consent and retries; the retry re-runs the same update — safe, because writing the same skeleton is idempotent and the merge keeps any `#client_secret` already saved — and returns the normal output. |
+| URL-capable, 2026-07-28 | The call returns an `InputRequiredResult` keyed `open_url`. The client opens the page after consent and retries; the retry re-runs the same update — safe, because writing the same skeleton is idempotent and the merge keeps any `#client_secret` already saved — and returns the normal output. This only holds for updates, which is one reason OIDC is rejected on create (see *Rejections*): a repeated create would make a second app. |
 | URL-capable, older protocol with a back-channel | `open_url_in_client()` during the call, then the normal output. |
 | Not URL-capable, or no way to ask | The normal output only; `change_summary` carries the link. |
 
@@ -91,9 +91,10 @@ Rejections, each with a message naming the fix:
 | `authentication_type='oidc'` without `oidc` | `ValueError` |
 | `oidc` passed with any other `authentication_type` | `ValueError` — never silently ignored |
 | `allowed_roles=[]` (empty list) | `ValueError` — rejected on both sides downstream; pass `None` for "no role requirement" |
+| `authentication_type='oidc'` on create (no `configuration_id`) | `ValueError` — create with `'basic-auth'` first. The callback URL needs the app id, so the IdP cannot be set up before the app exists, and a create repeated after URL elicitation would make a second app |
 | `authentication_type='oidc'` on a python-js **draft** | `ValueError` — a draft has its own slug *and* its own app id, therefore its own callback URL; OIDC belongs on the prod app |
 
-Streamlit apps have no draft concept, so the last check is python-js only.
+Streamlit apps have no draft concept, so the draft check is python-js only.
 
 ### `allowed_roles` and the UI round trip
 
@@ -103,12 +104,14 @@ roles input — it writes exactly `id`, `type`, `client_id`, `#client_secret`, `
 
 So **any `allowed_roles` the MCP writes is discarded the moment a human saves the form** — including
 the mandatory save that enters the secret. Roles must therefore be applied *after* the secret, as a
-second `authentication_type='oidc'` update, and any later UI save drops them again.
+second `authentication_type='oidc'` update, and any later UI save drops them again. The deploy must
+come after that update: `deploy_data_app` publishes the latest saved config version, so a deploy
+before it would run the app without the role check.
 
 This is documented rather than designed around because the alternative is worse: silently dropping
 `allowed_roles` from the tool surface would remove a capability the ticket asks for (ČS role
 gating), and there is no way for the MCP to prevent a UI save. The tool docstring states the
-ordering, and the create/update output repeats it whenever `allowed_roles` is set.
+ordering, and the update output repeats it whenever `allowed_roles` is set.
 
 ### Stored shape
 
@@ -186,8 +189,9 @@ than stacking on it, matching the UI.
 
 Both output models gain:
 
-- `oidc_callback_url: str | None` — `f'{deployment_url}/_proxy/callback'`, whenever the app uses
-  OIDC, on update as well as create.
+- `oidc_callback_url: str | None` — `f'{deployment_url}/_proxy/callback'`, on every create and
+  update of a prod app, whatever its `authentication_type`. Step 2 below needs it right after the
+  `'basic-auth'` create, before OIDC is set. `None` for python-js drafts, which cannot use OIDC.
 - `oidc_setup_required: bool` — true when the stored provider has no `#client_secret`. The agent
   must not report success without relaying this; an app in that state deploys and then fails every
   login, which is otherwise indistinguishable from a misconfigured IdP.
@@ -203,8 +207,8 @@ The docstrings document the full sequence:
 3. Update with `authentication_type='oidc'` and the `oidc` block → skeleton written; URL-capable
    clients are asked to open the app's configuration page.
 4. **Human opens the app's Authentication section in the UI, types the client secret, saves.**
-5. `deploy_data_app`.
-6. Only if using `allowed_roles`: a second `authentication_type='oidc'` update to reapply them.
+5. Only if using `allowed_roles`: a second `authentication_type='oidc'` update to reapply them.
+6. `deploy_data_app` — always last, so the published config version has the secret and the roles.
 
 ## Resolution Strategy
 
@@ -213,18 +217,20 @@ The docstrings document the full sequence:
 - `AuthenticationType` gains `'oidc'`.
 - New `OidcAuthConfig(BaseModel)`: the fields above, a validator rejecting an empty `allowed_roles`,
   and no secret field.
-- `_get_authorization(auth_with_password: bool)` (`:2755`) is replaced by
+- `_get_authorization(auth_with_password: bool)` (`:2834`) is replaced by
   `_build_authorization(authentication_type, oidc=None, existing=None)`. The two existing branches
   are preserved unchanged; the OIDC branch builds the skeleton and performs the
   secret-preserving merge against `existing`, upholding the two coupling rules above. All four call
-  sites are updated: python-js create (`:1509`), python-js update via
-  `_update_existing_code_data_app_config` (`:1941`), streamlit create via `_build_data_app_config`
-  (`:2405`), streamlit update via `_update_existing_data_app_config` (`:2439`).
-- `_uses_basic_authentication()` (`:2980`) needs no change — it matches `simpleAuth` and already
+  sites are updated: python-js create (`:1513`), python-js update via
+  `_update_existing_code_data_app_config` (`:1947`), streamlit create via `_build_data_app_config`
+  (`:2453`), streamlit update via `_update_existing_data_app_config` (`:2487`). The create sites
+  never reach the OIDC branch.
+- `_uses_basic_authentication()` (`:3071`) needs no change — it matches `simpleAuth` and already
   returns `False` for an OIDC app, the correct input to `get_data_app_links`.
 - New `_reject_oidc_on_draft()` beside `_reject_no_auth_on_draft()` (`:182`), called at the same two
-  python-js draft checkpoints (`:1365`, `:1388`).
-- `ModifiedDataAppOutput` (`:518`) and `ModifiedPythonJsDataAppOutput` (`:528`) gain
+  python-js draft checkpoints (`:1373`, `:1396`).
+- OIDC on create is rejected at the start of both tools, before anything is written.
+- `ModifiedDataAppOutput` (`:548`) and `ModifiedPythonJsDataAppOutput` (`:558`) gain
   `oidc_callback_url` and `oidc_setup_required`.
 
 ### `elicitation.py`
@@ -236,9 +242,9 @@ The docstrings document the full sequence:
 ### Independent hygiene fix (splittable)
 
 python-js prod create posts to the data-science API and bypasses Storage, and its
-`encryption_client.encrypt` call sits inside `if git_block is not None:` (`:1576`) — so it only runs
-for drafts. Streamlit create, on the same DSAPI route, encrypts unconditionally (`:824`); both
-update paths are covered fail-closed by `StorageClient._encrypt_secrets` (`clients/storage.py:360`).
+`encryption_client.encrypt` call sits inside `if git_block is not None:` (`:1580`) — so it only runs
+for drafts. Streamlit create, on the same DSAPI route, encrypts unconditionally (`:858`); both
+update paths are covered fail-closed by `StorageClient._encrypt_secrets` (`clients/storage.py:363`).
 Dedenting that call closes the gap.
 
 **This is no longer load-bearing for OIDC** — under skeleton + UI the MCP never writes a `#` key on
@@ -248,7 +254,7 @@ in the function. It can be split into its own PR without affecting the rest.
 
 ### `clients/data_science.py`
 
-`DataAppConfig.Authorization.AppProxy.auth_providers` is already `list[dict[str, Any]]` (`:88`), so
+`DataAppConfig.Authorization.AppProxy.auth_providers` is already `list[dict[str, Any]]` (`:109`), so
 no client model change is required. A typed `OidcProvider` model is deliberately **not** introduced:
 the provider dict is a platform contract owned by the platform's config validator, and mirroring it here
 would add a second place to update whenever the platform adds a field, with no validation benefit
@@ -278,8 +284,8 @@ would add a second place to update whenever the platform adds a field, with no v
 
 **In scope** (`keboola/mcp-server`):
 
-- `oidc` on `modify_streamlit_data_app` and `modify_python_js_data_app`, with secret-preserving
-  merge on update.
+- `oidc` on updates in `modify_streamlit_data_app` and `modify_python_js_data_app`, with
+  secret-preserving merge.
 - `oidc_callback_url` and `oidc_setup_required` on both output models.
 - URL elicitation of the app's configuration page while the secret is missing.
 - The python-js prod-create encryption fix (splittable — see above).
@@ -307,8 +313,8 @@ adding parallel functions, per the project's testing conventions:
 
 | Case | Assertion |
 | --- | --- |
-| Create with `oidc` (both tools) | Stored block equals the documented skeleton; `provider_id` defaults to `'oidc-1'`; no `#client_secret` key present |
-| `basic-auth` → `oidc` update | `simpleAuth` gone, OIDC provider and rule present |
+| `basic-auth` → `oidc` update (both tools) | `simpleAuth` gone; stored block equals the documented skeleton; `provider_id` defaults to `'oidc-1'`; no `#client_secret` key present |
+| `oidc_callback_url` | Set on a `basic-auth` create and on every prod update, whatever the auth type; `None` for a python-js draft |
 | **`oidc` → `oidc` update with a stored `#client_secret`** | **Cipher preserved verbatim; other supplied fields overwritten** — the critical invariant |
 | `default` on an app with OIDC | `authorization` unchanged — explicit AI-1848 regression |
 | `allowed_roles` set | Written to the provider; `change_summary` carries the UI-round-trip warning |
@@ -317,7 +323,7 @@ adding parallel functions, per the project's testing conventions:
 | Golden fixture | Generated provider matches the platform validator's OIDC fixture and the UI writer's field set, field for field |
 | `oidc_setup_required` | True while no `#client_secret` is stored, false once one is |
 | URL elicitation (in `tests/test_elicitation.py` style, real in-memory server) | Secret missing: URL-capable client asked once to open the config link, retry returns the normal output; secret stored: not asked; plain client: not asked, link in `change_summary` |
-| Four rejection conditions | `ValueError`, each message naming the remedy |
+| Five rejection conditions | `ValueError`, each message naming the remedy; OIDC on create writes nothing and calls no API |
 | Encryption hygiene fix | `contains_plaintext_secrets()` is `False` on the payload handed to `create_data_app` — fails today on python-js prod create |
 
 `tox` must pass in full (pytest, ruff, check-tools-docs).
@@ -333,7 +339,10 @@ Manual verification on a dev stack, since neither unit tests nor CI can exercise
    preset preselected, `client_id` / `issuer_url` prefilled, and Save disabled until the secret is
    typed. Enter the secret and save.
 5. `deploy_data_app`; confirm the browser is redirected to the IdP and login succeeds.
-6. Re-run the update with `authentication_type='oidc'`, changing only `issuer_url`; confirm login
-   still works — i.e. the stored cipher survived the merge.
-7. Re-run with `authentication_type='default'`; confirm the whole block survives.
-8. Repeat 1–5 for a streamlit app.
+6. Update with `allowed_roles` set to a role the test user lacks, then `deploy_data_app`; confirm
+   login is refused. Add the role at the IdP; confirm login succeeds.
+7. Re-run the update with `authentication_type='oidc'`, changing only `issuer_url`, then deploy;
+   confirm login still works — i.e. the stored cipher survived the merge.
+8. Re-run with `authentication_type='default'`; confirm the whole block survives.
+9. Try `authentication_type='oidc'` on create; confirm the `ValueError` and that no app was made.
+10. Repeat 1–5 for a streamlit app.
