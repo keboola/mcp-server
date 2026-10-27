@@ -1,5 +1,5 @@
 # Use a Python image with uv pre-installed
-FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS uv
+FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim AS uv
 
 # Install the project into /app
 WORKDIR /app
@@ -20,7 +20,7 @@ ADD src /app/src
 RUN --mount=type=cache,target=/root/.cache/uv     uv sync --frozen --no-dev --no-editable
 RUN --mount=type=cache,target=/root/.cache/uv     uv pip install ddtrace~=3.0
 
-FROM python:3.12-slim-bookworm
+FROM python:3.13-slim-bookworm
 
 ARG APP_USER_NAME=app
 ARG APP_USER_UID=1000
