@@ -512,7 +512,7 @@ class _BigQueryWorkspace(_Workspace):
     # Extract the human-readable `Message: "..."` part so the error reads like Snowflake's plain text.
     _BQ_ERROR_MESSAGE_RE = re.compile(r'Message:\s*"((?:[^"\\]|\\.)*)"')
 
-    def __init__(self, workspace_id: int, dataset_id: str, project_id: str, client: KeboolaClient):
+    def __init__(self, workspace_id: int, dataset_id: str, project_id: str | None, client: KeboolaClient):
         super().__init__(workspace_id, client)
         self._dataset_id = dataset_id  # default dataset created for the workspace
         self._project_id = project_id
@@ -747,9 +747,9 @@ class WorkspaceManager:
 
     async def _is_governed(self, backend: str | None) -> bool:
         """Whether the MCP workspace of this backend is governed: Query Service enforces the RLS policies in it and
-        nobody else can obtain its credentials. That is the case on Snowflake in a project with the RLS feature;
-        BigQuery has no governed login type yet (the Connection support is open)."""
-        return backend == 'snowflake' and await self._client.has_feature(RLS_FEATURE)
+        nobody else can obtain its credentials. That is the case on Snowflake and BigQuery in a project with the RLS
+        feature."""
+        return backend in ('snowflake', 'bigquery') and await self._client.has_feature(RLS_FEATURE)
 
     async def _require_governed_pin(self, info: _WspInfo, pin: str) -> None:
         """Refuses a pinned workspace that is not governed when the project enforces row-level security: an ordinary
@@ -811,7 +811,7 @@ class WorkspaceManager:
         if default_backend == 'snowflake':
             login_type = GOVERNED_LOGIN_TYPE if await self._is_governed(default_backend) else 'snowflake-person-sso'
         elif default_backend == 'bigquery':
-            login_type = 'default'
+            login_type = GOVERNED_LOGIN_TYPE if await self._is_governed(default_backend) else 'default'
         else:
             raise ValueError(f'Unexpected default backend: {default_backend}')
 
@@ -921,7 +921,9 @@ class WorkspaceManager:
 
         elif info.backend == 'bigquery':
             credentials = json.loads(info.credentials or '{}')
-            if project_id := credentials.get('project_id'):
+            project_id = credentials.get('project_id')
+            # A governed workspace has no credentials of its own: its queries go through Query Service.
+            if project_id or info.login_type == GOVERNED_LOGIN_TYPE:
                 return _BigQueryWorkspace(
                     workspace_id=info.id,
                     dataset_id=info.schema,

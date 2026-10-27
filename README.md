@@ -138,9 +138,9 @@ policies of the project. There is no rewriting in this server and no fallback: w
 `query_data` returns as an error.
 
 - **What turns it on.** The project feature is checked by this server only; Connection needs no feature or role to
-  create a governed workspace (Snowflake, no public key). The stack's Connection must accept the login type
-  `governed`: a stack that does not refuses the create, and then every tool that needs the workspace fails (there is
-  no fallback to an ordinary workspace). BigQuery projects keep an ordinary, unfiltered workspace. An older ordinary
+  create a governed workspace (Snowflake or BigQuery, no public key). The stack's Connection must accept the login type
+  `governed` for the project's backend: a stack that does not refuses the create, and then every tool that needs the workspace fails (there is
+  no fallback to an ordinary workspace). An older ordinary
   MCP workspace is not deleted: it is skipped as soon as the feature is on. With the feature on, a `workspace_schema`
   or `X-Workspace-Id` pin is accepted only for a governed workspace (an ordinary one would read around the
   policies), so a pin to the old workspace, or to a data app's own ordinary workspace, is refused; delete the old one.
