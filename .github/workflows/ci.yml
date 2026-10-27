@@ -30,7 +30,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.10", "3.11", "3.12"]
+        python-version: ["3.11", "3.12", "3.13"]
     outputs:
       is_semantic_tag: ${{ steps.get_package_version.outputs.is_semantic_tag }}
       tag: ${{ steps.get_package_version.outputs.tag }}
@@ -92,7 +92,7 @@ jobs:
 
       - name: Get package version
         id: get_package_version
-        if: matrix.python-version == '3.10'
+        if: matrix.python-version == '3.11'
         run: |
           VERSION=`uv run python3 -c 'import importlib.metadata; print(importlib.metadata.version("keboola_mcp_server"))'`
           TAG="${GITHUB_REF##*/}"
@@ -105,7 +105,7 @@ jobs:
       - name: Upload wheel package
         id: wheel_artifact_upload
         # run this step only for push events or pull requests from the same repo
-        if: matrix.python-version == '3.10' && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)
+        if: matrix.python-version == '3.11' && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)
         uses: actions/upload-artifact@v7
         with:
           name: keboola_mcp_server-${{ steps.get_package_version.outputs.version }}-py3-none-any.whl
@@ -125,7 +125,7 @@ jobs:
 
       # Integration tests hit the real Storage API and are Python-version-agnostic in behavior,
       # so we only run them once (matching the interpreter used in production) rather than across
-      # the full unit-test matrix — unit tests in the `build` job already cover 3.10/3.11/3.12.
+      # the full unit-test matrix — unit tests in the `build` job already cover 3.11/3.12/3.13.
       - name: Set up Python
         uses: actions/setup-python@v7
         with:

@@ -250,7 +250,7 @@ To operate on a specific [Keboola development branch](https://help.keboola.com/c
 
 Make sure you have:
 
-- [ ] Python 3.10+ installed
+- [ ] Python 3.11+ installed
 - [ ] Access to a Keboola project with admin rights
 - [ ] Your preferred MCP client (Claude, Cursor, etc.)
 

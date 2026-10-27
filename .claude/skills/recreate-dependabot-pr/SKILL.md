@@ -88,10 +88,10 @@ mention it in the PR body).
 ### Step 6: Verify with tox
 
 CI runs the same checks, so they must pass before pushing. If no venv exists, create one
-(see project CLAUDE.md — Python 3.10):
+(see project CLAUDE.md — Python 3.11):
 
 ```bash
-python3.10 -m venv 3.10.venv && source 3.10.venv/bin/activate
+python3.11 -m venv 3.11.venv && source 3.11.venv/bin/activate
 pip install -q --upgrade pip uv && uv sync --active --extra dev --extra tests
 tox    # pytest, ruff, check-tools-docs — all must exit 0
 ```
