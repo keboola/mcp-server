@@ -50,6 +50,9 @@ files: list[{path: str, content: str, encoding: 'utf-8' | 'base64' = 'utf-8'}]
   refused by the transport with 413 before the tool runs. Typical static apps (HTML, JS, CSS, a few icons) are
   10–500 KB. Larger bundles are deployed with `kbc-static deploy`. Raising the MCP body limit for all tools is out
   of scope.
+- So that the agent never meets the transport's bare 413, the tool description states the limit ("keep the files
+  under 3 MB in total; for larger bundles use `kbc-static deploy`"), and the tool rejects a decoded total over
+  3 MB with that message before packing or uploading.
 - Paths follow contract 01 (relative, ASCII, no `..`/`//`/dot segments, served extensions only); the tool rejects
   a bad path before uploading, with the same messages as the server.
 - The tool packs a `tar.gz` (regular files only) and uploads it. All other checks (SQL guard, dry-run, inline
@@ -124,6 +127,6 @@ data-app delete paths); `unpublish`; parquet; UI; raising the MCP request body l
   contract.
 - Parametrized cases: create (body has no `branchId`/`config`); unchanged exposure; changed exposure with confirm via elicitation yes / no / unsupported;
   wrong hash → 409; invalid deployment; 400 `invalid_archive`; promote with snapshot / waiting / failed; refresh
-  coalesced / 429 / failed; local path rejection; decoded-size limit with base64 input; binary file round-trip through the packer.
+  coalesced / 429 / failed; local path rejection; decoded-size limit with base64 input and the 3 MB message; binary file round-trip through the packer.
 - Tool description test: `static_app_confirm` mentions showing the exposure and explicit user approval.
 - Integration test on canary-orion after AJDA-3674 is deployed: create → deploy → confirm → promote → status.
