@@ -368,10 +368,12 @@ class MultiProjectMiddleware(fmw.Middleware):
 
     @staticmethod
     def _pinned_workspace_id(scope: SessionScope, workspace: Any, project_id: int) -> str | int | None:
-        """The workspace pinned for the session (`X-Workspace-Id`), kept only for its own project.
+        """The workspace pinned for the session (`X-Workspace-Id`), kept only for the active project.
 
-        The pin names a workspace of the active project; every other project keeps its own
-        MCP-managed workspace.
+        The session's own client and workspace manager are built for the active project, so a pin
+        is taken to name a workspace of that project; every other project keeps its own MCP-managed
+        workspace. The swapped-in client is bound to the production branch, so a pinned workspace
+        that exists only in a dev branch is not found there.
         """
         if project_id != scope.active_project_id or not isinstance(workspace, WorkspaceManager):
             return None
