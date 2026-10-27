@@ -60,9 +60,14 @@ through the MCP client, the server or the model — the property this design is 
 | URL-capable, older protocol with a back-channel | `open_url_in_client()` during the call, then the normal output. |
 | Not URL-capable, or no way to ask | The normal output only; `change_summary` carries the link. |
 
-Unlike the Data Streams unlock, the tool call succeeds, so this is not a `UrlActionRequiredError`.
-A small success-path helper sits next to the middleware and shares `open_url_input_request()` and
-`open_url_in_client()`. Like the unlock flow, it does not wait for the user to finish
+Unlike the Data Streams unlock, the tool call succeeds, so this is not a `UrlActionRequiredError`,
+and the tool's return type stays as it is. Instead, `UrlElicitationMiddleware` puts a fresh list in
+a `ContextVar` before calling the tool; the tool adds a `(message, url)` entry to it through a new
+`offer_url()` helper after the committed write; after a successful call the middleware asks the
+client, using the existing `open_url_input_request()` / `open_url_in_client()`. A mutable list (not
+`ContextVar.set` from the tool) keeps the entry visible to the middleware even if the tool runs in
+a copied context. On 2026-07-28 clients the repeated call costs one extra config version per OIDC
+update; that is accepted. Like the unlock flow, it does not wait for the user to finish
 (`URLElicitationRequiredError` / -32042 is not used): the agent cannot know when the secret is
 saved, so `oidc_setup_required` in the next tool output is the source of truth.
 
@@ -80,9 +85,14 @@ Both `modify_streamlit_data_app` and `modify_python_js_data_app` accept `'oidc'`
 | --- | --- | --- |
 | `client_id` | yes | Written verbatim. |
 | `issuer_url` | yes | Written verbatim. No IdP presets — see *Rejected alternatives*. |
-| `logout_url` | no | Key omitted when `None`. (The UI writes `''` rather than omitting; both are accepted downstream.) |
-| `allowed_roles` | no | Written when set — but read the ordering constraint below, it is sharp. |
-| `provider_id` | no | Defaults to **`'oidc-1'`**, the literal the UI hardcodes. Matching it is what keeps the MCP and the UI operating on the same provider instead of overwriting each other. |
+| `logout_url` | no | Omitted: the stored value is kept (none on a fresh skeleton). Explicit `null`: the key is removed. (The UI writes `''` rather than omitting; both are accepted downstream.) |
+| `allowed_roles` | no | Same omitted / `null` rule as `logout_url` — but read the ordering constraint below, it is sharp. |
+
+There is no provider-id argument. The provider id is always **`'oidc-1'`**, the literal the UI
+hardcodes: the UI rebuilds the provider with that id on every save, including the required secret
+save, so any other id would be overwritten anyway.
+
+"Omitted" and "`null`" are told apart with pydantic `model_fields_set`.
 
 Rejections, each with a message naming the fix:
 
@@ -90,7 +100,7 @@ Rejections, each with a message naming the fix:
 | --- | --- |
 | `authentication_type='oidc'` without `oidc` | `ValueError` |
 | `oidc` passed with any other `authentication_type` | `ValueError` — never silently ignored |
-| `allowed_roles=[]` (empty list) | `ValueError` — rejected on both sides downstream; pass `None` for "no role requirement" |
+| `allowed_roles=[]` (empty list) | `ValueError` — rejected on both sides downstream; pass `null` for "no role requirement" |
 | `authentication_type='oidc'` on create (no `configuration_id`) | `ValueError` — create with `'basic-auth'` first. The callback URL needs the app id, so the IdP cannot be set up before the app exists, and a create repeated after URL elicitation would make a second app |
 | `authentication_type='oidc'` on a python-js **draft** | `ValueError` — a draft has its own slug *and* its own app id, therefore its own callback URL; OIDC belongs on the prod app |
 
@@ -175,7 +185,10 @@ function that produces them.
 | `'default'` | Preserved verbatim, including OIDC configured in the UI (AI-1848). Unchanged from today. |
 | `'basic-auth'` / `'no-auth'` | Overwritten, as today. |
 | `'oidc'`, no existing OIDC provider | Fresh skeleton written. |
-| `'oidc'`, existing provider with the same `provider_id` | Merged field-by-field: only keys present in the new `oidc` param overwrite. |
+| `'oidc'`, existing OIDC provider | Merged into the first provider with `type == 'oidc'`, whatever its id: `client_id` / `issuer_url` overwritten, `logout_url` / `allowed_roles` per the omitted / `null` rule, every other key kept, id set to `'oidc-1'`. |
+
+Matching on `type` rather than id matters: older or hand-made configs use other ids (`'oidc'` is
+common), and matching on id would drop their stored secret.
 
 **The merge must preserve `#client_secret` verbatim.** In this design the UI is the only writer of
 that key, so a merge that dropped it would destroy the one thing the human was asked to supply and
@@ -189,16 +202,34 @@ than stacking on it, matching the UI.
 
 Both output models gain:
 
-- `oidc_callback_url: str | None` — `f'{deployment_url}/_proxy/callback'`, on every create and
-  update of a prod app, whatever its `authentication_type`. Step 2 below needs it right after the
+- `oidc_callback_url: str | None` — `https://{slug}-{data_app_id}.hub.{hostname_suffix}/_proxy/callback`,
+  built from the stored slug and app id (the operator's URL formula), on every create and update of
+  a prod app, whatever its `authentication_type`. It is not derived from `deployment_url`: the
+  data-science API reports no URL until the app's first run, and the setup flow runs before it. Step 2 below needs it right after the
   `'basic-auth'` create, before OIDC is set. `None` for python-js drafts, which cannot use OIDC.
-- `oidc_setup_required: bool` — true when the stored provider has no `#client_secret`. The agent
+- `oidc_setup_required: bool` — true when the stored OIDC provider has no `#client_secret`, or a
+  blank one. The agent
   must not report success without relaying this; an app in that state deploys and then fails every
   login, which is otherwise indistinguishable from a misconfigured IdP.
 
 `change_summary` carries the human-readable next step, including the app's UI link (the links
 manager already produces it, and it is the page offered via URL elicitation) and, when
 `allowed_roles` was set, the ordering warning above.
+
+### The slug stays fixed on OIDC apps
+
+The callback URL contains the slug, so moving the slug breaks every login with a redirect-URI
+mismatch until the IdP is updated. Two paths move it implicitly today:
+
+- Streamlit updates rewrite the slug from `name` on every call, and `name` is required.
+- python-js updates move the slug with the name while the app was never deployed — and the whole
+  OIDC setup happens before the first deploy.
+
+While the config being written has an OIDC provider, neither happens: the stored slug is kept. An
+explicit python-js `slug` is still allowed; `change_summary` then tells the agent to register the
+new `oidc_callback_url` at the IdP before redeploying.
+
+### Setup sequence
 
 The docstrings document the full sequence:
 
@@ -231,26 +262,18 @@ The docstrings document the full sequence:
   python-js draft checkpoints (`:1373`, `:1396`).
 - OIDC on create is rejected at the start of both tools, before anything is written.
 - `ModifiedDataAppOutput` (`:548`) and `ModifiedPythonJsDataAppOutput` (`:558`) gain
-  `oidc_callback_url` and `oidc_setup_required`.
+  `oidc_callback_url` and `oidc_setup_required`, both computed from the config just written, not
+  from a re-fetch.
+- `_resolve_slug_update()` (`:2933`) and the slug line of `_update_existing_data_app_config()`
+  (`:2468`) keep the stored slug while the written config has an OIDC provider.
 
 ### `elicitation.py`
 
-- A success-path helper that offers the app's configuration page while `oidc_setup_required` is
-  true, built on the existing `open_url_input_request()` / `open_url_in_client()`. On the
-  2026-07-28 retry (`open_url` in `ctx.input_responses`) it does not ask again.
-
-### Independent hygiene fix (splittable)
-
-python-js prod create posts to the data-science API and bypasses Storage, and its
-`encryption_client.encrypt` call sits inside `if git_block is not None:` (`:1580`) — so it only runs
-for drafts. Streamlit create, on the same DSAPI route, encrypts unconditionally (`:858`); both
-update paths are covered fail-closed by `StorageClient._encrypt_secrets` (`clients/storage.py:363`).
-Dedenting that call closes the gap.
-
-**This is no longer load-bearing for OIDC** — under skeleton + UI the MCP never writes a `#` key on
-that path, and the UI's secret entry goes through Storage, which encrypts fail-closed. It is a
-latent bug that would bite the next `#` field anyone adds, kept here because this change is already
-in the function. It can be split into its own PR without affecting the rest.
+- `offer_url(message, url)` adds an entry to the request's list; `UrlElicitationMiddleware` sets
+  the list before the tool runs and, after a successful call, asks the client as described in
+  *Opening the UI form*. On the 2026-07-28 retry (`open_url` in `ctx.input_responses`) it does not
+  ask again. `open_url_input_request()` / `open_url_in_client()` take a message and URL instead of
+  the error, so both paths share them.
 
 ### `clients/data_science.py`
 
@@ -274,6 +297,12 @@ would add a second place to update whenever the platform adds a field, with no v
   mainstream provider. Note the UI *does* carry presets, so an agent-written
   `issuer_url` still preselects the right one when the human opens the form — the ergonomics are
   had without the maintenance.
+- **A `provider_id` argument.** The UI writes `'oidc-1'` on every save, so any other id is
+  overwritten by the required secret save. The argument could only create a mismatch.
+- **Encrypting the python-js prod-create payload** (moving the `encryption_client.encrypt` call out
+  of `if git_block is not None:`). That path writes no `#` key today — the git block with
+  `#password` exists only on drafts — and this change adds none, so it fixes nothing yet. Worth its
+  own PR if a `#` field is ever added there.
 - **A `client_secret_env` reference resolved by the MCP process.** Works for a locally run stdio
   server and for kbagent, but not for the hosted remote server, whose environment is Keboola's, not
   the user's. A parameter that silently does nothing for most users is worse than no parameter.
@@ -288,7 +317,6 @@ would add a second place to update whenever the platform adds a field, with no v
   secret-preserving merge.
 - `oidc_callback_url` and `oidc_setup_required` on both output models.
 - URL elicitation of the app's configuration page while the secret is missing.
-- The python-js prod-create encryption fix (splittable — see above).
 - Tool docstrings and regenerated `TOOLS.md`.
 
 **Out of scope:**
@@ -313,18 +341,20 @@ adding parallel functions, per the project's testing conventions:
 
 | Case | Assertion |
 | --- | --- |
-| `basic-auth` → `oidc` update (both tools) | `simpleAuth` gone; stored block equals the documented skeleton; `provider_id` defaults to `'oidc-1'`; no `#client_secret` key present |
+| `basic-auth` → `oidc` update (both tools) | `simpleAuth` gone; stored block equals the documented skeleton; provider id is `'oidc-1'`; no `#client_secret` key present |
 | `oidc_callback_url` | Set on a `basic-auth` create and on every prod update, whatever the auth type; `None` for a python-js draft |
 | **`oidc` → `oidc` update with a stored `#client_secret`** | **Cipher preserved verbatim; other supplied fields overwritten** — the critical invariant |
 | `default` on an app with OIDC | `authorization` unchanged — explicit AI-1848 regression |
 | `allowed_roles` set | Written to the provider; `change_summary` carries the UI-round-trip warning |
-| Optional fields omitted | `logout_url` / `allowed_roles` keys absent, not null |
+| Optional fields | Fresh skeleton: `logout_url` / `allowed_roles` keys absent, not null. Merge: omitted keeps the stored value, explicit `null` removes the key |
+| Merge with a differently-named OIDC provider | Existing provider id `'oidc'` with a stored cipher: cipher kept, id becomes `'oidc-1'`, rule points at `'oidc-1'` |
+| Slug on an OIDC app | Rename of a never-deployed python-js app or of a Streamlit app keeps the slug and the callback URL; an explicit python-js `slug` moves it and `change_summary` says to re-register |
+| `oidc_callback_url` | Set right after a `basic-auth` create, before any deploy; `None` for a python-js draft |
 | Generated `auth_rules` | `auth_required: true` ⇒ `auth` present; `false` ⇒ `auth` absent; every id in `auth` exists in `auth_providers` |
 | Golden fixture | Generated provider matches the platform validator's OIDC fixture and the UI writer's field set, field for field |
-| `oidc_setup_required` | True while no `#client_secret` is stored, false once one is |
+| `oidc_setup_required` | True while no `#client_secret` is stored or it is blank, false once one is |
 | URL elicitation (in `tests/test_elicitation.py` style, real in-memory server) | Secret missing: URL-capable client asked once to open the config link, retry returns the normal output; secret stored: not asked; plain client: not asked, link in `change_summary` |
 | Five rejection conditions | `ValueError`, each message naming the remedy; OIDC on create writes nothing and calls no API |
-| Encryption hygiene fix | `contains_plaintext_secrets()` is `False` on the payload handed to `create_data_app` — fails today on python-js prod create |
 
 `tox` must pass in full (pytest, ruff, check-tools-docs).
 
@@ -332,7 +362,8 @@ Manual verification on a dev stack, since neither unit tests nor CI can exercise
 
 1. Create a python-js app with `basic-auth`; note `oidc_callback_url`.
 2. Register the callback URL at an Entra test tenant; obtain `client_id`.
-3. Update with `authentication_type='oidc'`; confirm `oidc_setup_required` is true and the stored
+3. Update with `authentication_type='oidc'` and a new `name`; confirm the slug and
+   `oidc_callback_url` did not change, `oidc_setup_required` is true and the stored
    block matches the skeleton.
 4. In Claude Code, confirm the "wants to open a URL" prompt appears and opens the app's
    configuration page. In its Authentication section confirm the form opens in OIDC mode with the
