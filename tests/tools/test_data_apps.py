@@ -3762,19 +3762,29 @@ async def test_get_data_apps_detail_for_streamlit_returns_empty_drafts(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('dsapi_deadlocks', [0, 1], ids=['no_deadlock', 'deadlock_then_success'])
 async def test_delete_python_js_data_app_draft_success(
     mocker,
     mcp_context_client: Context,
+    dsapi_deadlocks: int,
 ) -> None:
     """Happy path: deletes the data app via DSAPI only and returns the parent configuration_id so
     the agent can pivot back. The Storage config must NOT be deleted by the tool — DSAPI already
-    moves it to the trash, and a second delete would purge it from the trash permanently."""
+    moves it to the trash, and a second delete would purge it from the trash permanently.
+    A DSAPI 500 on the delete (typically a deadlock, code 1213) is retried and still ends as `deleted`."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     draft = _make_python_js_draft_data_app(
         configuration_id='cfg-draft-1', data_app_id='app-draft-1', parent_configuration_id='cfg-prod-1'
     )
     mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=draft))
-    keboola_client.data_science_client.delete_data_app = mocker.AsyncMock(return_value=None)
+    deadlock = httpx.HTTPStatusError(
+        'deadlock',
+        request=httpx.Request('DELETE', 'https://api.example.com/v2/apps/app-draft-1'),
+        response=httpx.Response(500, json={'error': 'Deadlock found', 'code': 1213}),
+    )
+    keboola_client.data_science_client = DataScienceClient.create('https://api.example.com', token=None)
+    keboola_client.data_science_client.delete = mocker.AsyncMock(side_effect=[deadlock] * dsapi_deadlocks + [None])
+    mocker.patch('keboola_mcp_server.clients.data_science.asyncio.sleep', new=mocker.AsyncMock())
     keboola_client.storage_client.configuration_delete = mocker.AsyncMock()
 
     result = await delete_python_js_data_app_draft(ctx=mcp_context_client, configuration_id='cfg-draft-1')
@@ -3784,7 +3794,8 @@ async def test_delete_python_js_data_app_draft_success(
     assert result.configuration_id == 'cfg-draft-1'
     assert result.data_app_id == 'app-draft-1'
     assert result.parent_configuration_id == 'cfg-prod-1'
-    keboola_client.data_science_client.delete_data_app.assert_awaited_once_with('app-draft-1')
+    assert keboola_client.data_science_client.delete.await_count == dsapi_deadlocks + 1
+    keboola_client.data_science_client.delete.assert_awaited_with(endpoint='v2/apps/app-draft-1')
     keboola_client.storage_client.configuration_delete.assert_not_called()
     # The config link pivots to the parent prod and is labelled as such — not with the draft's name,
     # which would mislabel a link pointing at a different configuration.
