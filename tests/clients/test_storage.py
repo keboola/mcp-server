@@ -285,3 +285,61 @@ class TestSharedBuckets:
         await client.bucket_link(name='linked', stage='in', source_project_id='proj-1', source_bucket_id='in.c-foo')
 
         assert 'displayName' not in raw_client.post.call_args.kwargs['data']
+
+
+class TestTableDefinitionUpdate:
+    """The native definition update is an asynchronous Storage job that the client waits for."""
+
+    @pytest.mark.parametrize(
+        ('kwargs', 'expected_payload'),
+        [
+            (
+                {'description': 'Table desc'},
+                {'description': 'Table desc', 'isDescriptionSystemManaged': False},
+            ),
+            (
+                {'description': '', 'column_descriptions': {'a': 'A desc'}},
+                {
+                    'description': '',
+                    'isDescriptionSystemManaged': False,
+                    'columns': [{'name': 'a', 'description': 'A desc'}],
+                },
+            ),
+            (
+                {'column_descriptions': {'a': 'A desc', 'b': 'B desc'}},
+                {'columns': [{'name': 'a', 'description': 'A desc'}, {'name': 'b', 'description': 'B desc'}]},
+            ),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_payload_and_polling(
+        self, mocker: MockerFixture, raw_client: RawKeboolaClient, kwargs: dict[str, Any], expected_payload: dict
+    ) -> None:
+        mocker.patch('keboola_mcp_server.clients.storage.asyncio.sleep', new=mocker.AsyncMock())
+        raw_client.put.return_value = {'id': 7, 'status': 'waiting'}
+        raw_client.get.side_effect = [{'id': 7, 'status': 'processing'}, {'id': 7, 'status': 'success'}]
+        client = AsyncStorageClient(raw_client=raw_client, branch_id='123')
+
+        job = await client.table_definition_update('in.c-b.t', **kwargs)
+
+        assert job['status'] == 'success'
+        raw_client.put.assert_called_once_with(
+            endpoint='branch/123/tables/in.c-b.t/definition', data=expected_payload, params=None
+        )
+        assert raw_client.get.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_failed_job_raises(self, raw_client: RawKeboolaClient) -> None:
+        raw_client.put.return_value = {'id': 7, 'status': 'error', 'error': {'message': 'Backend failed'}}
+        client = AsyncStorageClient(raw_client=raw_client)
+
+        with pytest.raises(RuntimeError, match='Backend failed'):
+            await client.table_definition_update('in.c-b.t', description='x')
+
+    @pytest.mark.asyncio
+    async def test_nothing_to_update_raises(self, raw_client: RawKeboolaClient) -> None:
+        client = AsyncStorageClient(raw_client=raw_client)
+
+        with pytest.raises(ValueError, match='At least one'):
+            await client.table_definition_update('in.c-b.t')
+        raw_client.put.assert_not_called()

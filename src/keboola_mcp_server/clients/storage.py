@@ -1,5 +1,7 @@
+import asyncio
 import logging
 import math
+import time
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime
 from typing import Any, Literal, cast
@@ -305,6 +307,11 @@ class CreateConfigurationAPIResponse(BaseModel):
 
 
 class AsyncStorageClient(KeboolaServiceClient):
+    JOB_TIMEOUT_SECONDS = 120.0
+    JOB_POLL_INTERVAL_SECONDS = 0.5
+    JOB_FINAL_STATUSES = frozenset({'success', 'warning', 'error', 'cancelled'})
+    JOB_SUCCESS_STATUSES = frozenset({'success', 'warning'})
+
     def __init__(
         self,
         raw_client: RawKeboolaClient,
@@ -982,6 +989,56 @@ class AsyncStorageClient(KeboolaServiceClient):
             payload['columnsMetadata'] = columns_metadata
 
         return cast(JsonDict, await self.post(endpoint=f'tables/{table_id}/metadata', data=payload))
+
+    async def table_definition_update(
+        self,
+        table_id: str,
+        description: str | None = None,
+        column_descriptions: Mapping[str, str] | None = None,
+        is_description_system_managed: bool = False,
+    ) -> JsonDict:
+        """
+        Updates the native description of a table and/or its columns and waits for the Storage job to finish.
+
+        :param table_id: The id of the table
+        :param description: The new table description; None leaves it unchanged.
+        :param column_descriptions: Mapping of column names to their new descriptions.
+        :param is_description_system_managed: Whether the table description is managed by the system. User edits
+            keep it False so that Output Mapping never overwrites them.
+        :return: The finished Storage job as a dictionary.
+        """
+        if description is None and not column_descriptions:
+            raise ValueError('At least one of the `description` or `column_descriptions` arguments must be provided.')
+
+        payload: dict[str, Any] = {}
+        if description is not None:
+            payload['description'] = description
+            payload['isDescriptionSystemManaged'] = is_description_system_managed
+        if column_descriptions:
+            payload['columns'] = [{'name': name, 'description': desc} for name, desc in column_descriptions.items()]
+
+        job = cast(
+            JsonDict,
+            await self.put(endpoint=f'branch/{self._branch_id}/tables/{table_id}/definition', data=payload),
+        )
+        return await self._wait_for_job(job)
+
+    async def _wait_for_job(self, job: JsonDict) -> JsonDict:
+        """Polls an asynchronous Storage job until it reaches a final status; raises if it did not succeed."""
+        job_id = job['id']
+        deadline = time.monotonic() + self.JOB_TIMEOUT_SECONDS
+        while job.get('status') not in self.JOB_FINAL_STATUSES:
+            if time.monotonic() > deadline:
+                raise TimeoutError(f'Storage job "{job_id}" did not finish in time.')
+            await asyncio.sleep(self.JOB_POLL_INTERVAL_SECONDS)
+            job = await self.job_detail(job_id)
+        if job.get('status') not in self.JOB_SUCCESS_STATUSES:
+            error = cast(JsonDict, job.get('error') or {})
+            raise RuntimeError(
+                f'Storage job "{job_id}" ended with status "{job.get("status")}": '
+                f'{error.get("message") or "unknown error"}'
+            )
+        return job
 
     # TODO: no branch support
     async def trigger_event(

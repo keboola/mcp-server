@@ -72,6 +72,13 @@ def _get_sapi_tables(details: bool | None = None) -> list[dict[str, Any]]:
                     {'id': '1234', 'key': 'KBC.datatype.type', 'value': 'VARCHAR'},
                 ],
             },
+            'definition': {
+                'columns': [
+                    {'name': 'user_id', 'definition': {}},
+                    {'name': 'name', 'definition': {'description': 'Name of the user.'}},
+                    {'name': 'surname', 'definition': {}},
+                ],
+            },
             'bucket': {'id': 'in.c-foo', 'name': 'c-foo'},
         },
         # emails table in c-foo bucket in the production branch
@@ -112,6 +119,13 @@ def _get_sapi_tables(details: bool | None = None) -> list[dict[str, Any]]:
                     {'id': '1234', 'key': 'KBC.datatype.type', 'value': 'INT'},
                 ],
             },
+            'definition': {
+                'columns': [
+                    {'name': 'email_id', 'definition': {}},
+                    {'name': 'address', 'definition': {'description': 'Email address. 1'}},
+                    {'name': 'user_id', 'definition': {}},
+                ],
+            },
             'bucket': {'id': 'in.c-foo', 'name': 'c-foo'},
         },
         # emails table in c-foo bucket in the dev branch
@@ -150,6 +164,13 @@ def _get_sapi_tables(details: bool | None = None) -> list[dict[str, Any]]:
                 ],
                 'user_id': [
                     {'id': '1234', 'key': 'KBC.datatype.type', 'value': 'INT'},
+                ],
+            },
+            'definition': {
+                'columns': [
+                    {'name': 'email_id', 'definition': {}},
+                    {'name': 'address', 'definition': {'description': 'Email address. 2'}},
+                    {'name': 'user_id', 'definition': {}},
                 ],
             },
             'bucket': {'id': 'in.c-1246948-foo', 'name': 'c-1246948-foo'},
@@ -393,60 +414,6 @@ def mock_update_bucket_description_response() -> Sequence[Mapping[str, Any]]:
             'timestamp': '2024-01-01T00:00:00Z',
         }
     ]
-
-
-@pytest.fixture
-def mock_update_table_description_response() -> Mapping[str, Any]:
-    """Mock valid response from the Keboola API for table description update."""
-    return {
-        'metadata': [
-            {
-                'id': '1724427984',
-                'key': 'KBC.description',
-                'value': 'Updated table description',
-                'provider': 'user',
-                'timestamp': '2024-01-01T00:00:00Z',
-            }
-        ],
-        'columnsMetadata': {
-            'text': [
-                {
-                    'id': '1725066342',
-                    'key': 'KBC.description',
-                    'value': 'Updated column description',
-                    'provider': 'user',
-                    'timestamp': '2024-01-01T00:00:00Z',
-                }
-            ]
-        },
-    }
-
-
-@pytest.fixture
-def mock_update_column_description_response() -> Mapping[str, Any]:
-    """Mock valid response from the Keboola API for column description update."""
-    return {
-        'metadata': [
-            {
-                'id': '1724427984',
-                'key': 'KBC.description',
-                'value': 'Updated table description',
-                'provider': 'user',
-                'timestamp': '2024-01-01T00:00:00Z',
-            }
-        ],
-        'columnsMetadata': {
-            'column_name': [
-                {
-                    'id': '1725066342',
-                    'key': 'KBC.description',
-                    'value': 'Updated column description',
-                    'provider': 'user',
-                    'timestamp': '2024-01-01T00:00:00Z',
-                }
-            ]
-        },
-    }
 
 
 @pytest.mark.asyncio
@@ -1243,10 +1210,34 @@ def test_bucket_detail_description_fallback(raw_data: dict[str, Any], expected_d
 
 
 @pytest.mark.parametrize(
-    ('raw_data', 'expected_description'),
+    ('model', 'raw_data', 'expected_description'),
     [
-        # AI-3423: curated KBC.description wins over the stale legacy `description` field
+        # the detail reads the native definition, even when stale KBC.description metadata and the legacy
+        # `description` field disagree
         (
+            TableDetail,
+            {
+                'description': 'Table created by Transformation API',
+                'metadata': [{'key': 'KBC.description', 'value': 'Stale meta desc'}],
+                'definition': {'description': 'Native desc'},
+            },
+            'Native desc',
+        ),
+        # the detail does not fall back to KBC.description metadata, source table metadata or the legacy field
+        (
+            TableDetail,
+            {
+                'description': 'Direct desc',
+                'metadata': [{'key': 'KBC.description', 'value': 'Meta desc'}],
+                'sourceTable': {'metadata': [{'key': 'KBC.description', 'value': 'Source desc'}]},
+                'definition': {'columns': []},
+            },
+            None,
+        ),
+        (TableDetail, {'description': '', 'metadata': []}, None),
+        # the listing still reads the KBC.description metadata until it can use the native definition
+        (
+            TableSummary,
             {
                 'description': 'Table created by Transformation API',
                 'metadata': [{'key': 'KBC.description', 'value': 'Meta desc'}],
@@ -1254,44 +1245,28 @@ def test_bucket_detail_description_fallback(raw_data: dict[str, Any], expected_d
             },
             'Meta desc',
         ),
-        # legacy `description` field used only when no KBC metadata is present
         (
-            {'description': 'Direct desc', 'metadata': []},
-            'Direct desc',
-        ),
-        # own KBC.description is preferred over sourceTable metadata
-        (
-            {
-                'description': '',
-                'metadata': [{'key': 'KBC.description', 'value': 'Meta desc'}],
-                'sourceTable': {'metadata': [{'key': 'KBC.description', 'value': 'Source desc'}]},
-            },
-            'Meta desc',
-        ),
-        # sourceTable.metadata used as final fallback
-        (
+            TableSummary,
             {
                 'description': '',
                 'metadata': [],
-                'sourceTable': {'metadata': [{'key': 'KBC.description', 'value': 'Source desc'}]},
+                'sourceTable': {'metadata': [{'key': 'KBC.description', 'value': 'S'}]},
             },
-            'Source desc',
+            'S',
         ),
-        # None when nothing is available
-        (
-            {'description': '', 'metadata': []},
-            None,
-        ),
+        (TableSummary, {'description': 'Direct desc', 'metadata': []}, 'Direct desc'),
     ],
 )
-def test_table_detail_description_fallback(raw_data: dict[str, Any], expected_description: str | None) -> None:
-    """Test TableDetail description resolution priority."""
+def test_table_description_resolution(
+    model: type[TableSummary], raw_data: dict[str, Any], expected_description: str | None
+) -> None:
+    """Test the table description resolution of the detail (native) and of the listing (metadata)."""
     base = {
         'id': 'in.c-test.table1',
         'name': 'table1',
         'displayName': 'table1',
     }
-    table = TableDetail.model_validate(base | raw_data)
+    table = model.model_validate(base | raw_data)
     assert table.description == expected_description
 
 
@@ -1388,56 +1363,85 @@ def test_bucket_detail_updated_resolution(raw_data: dict[str, Any], expected_upd
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ('column_metadata', 'source_column_metadata', 'expected_description', 'expected_base_type'),
+    (
+        'is_typed',
+        'definition_column',
+        'column_metadata',
+        'source_column_metadata',
+        'expected_description',
+        'expected_base_type',
+        'expected_native_type',
+        'expected_nullable',
+    ),
     [
-        # own column metadata takes priority over source
+        # typed table: description and types come from the native definition, stale metadata is ignored
         (
+            True,
+            {
+                'name': 'col1',
+                'definition': {'type': 'NUMBER', 'nullable': True, 'description': 'Native desc'},
+                'basetype': 'NUMERIC',
+            },
             [
-                {'key': 'KBC.description', 'value': 'Own desc'},
+                {'key': 'KBC.description', 'value': 'Stale desc'},
                 {'key': 'KBC.datatype.basetype', 'value': 'STRING'},
+                {'key': 'KBC.datatype.type', 'value': 'VARCHAR'},
+                {'key': 'KBC.datatype.nullable', 'value': '0'},
             ],
-            [
-                {'key': 'KBC.description', 'value': 'Source desc'},
-                {'key': 'KBC.datatype.basetype', 'value': 'INTEGER'},
-            ],
-            'Own desc',
-            'STRING',
-        ),
-        # falls back to source column metadata when own is empty
-        (
             [],
-            [
-                {'key': 'KBC.description', 'value': 'Source desc'},
-                {'key': 'KBC.datatype.basetype', 'value': 'INTEGER'},
-            ],
-            'Source desc',
-            'INTEGER',
+            'Native desc',
+            'NUMERIC',
+            'NUMBER',
+            True,
         ),
-        # mixed: own description, source base type
+        # typed table without a definition column falls back to the default type
+        (True, None, [{'key': 'KBC.datatype.type', 'value': 'NUMBER'}], [], None, None, 'VARCHAR', False),
+        # non-typed table: description from the definition, types from KBC.datatype.* (own metadata first)
         (
-            [{'key': 'KBC.description', 'value': 'Own desc'}],
+            False,
+            {'name': 'col1', 'definition': {'description': 'Native desc'}},
+            [
+                {'key': 'KBC.description', 'value': 'Stale desc'},
+                {'key': 'KBC.datatype.basetype', 'value': 'STRING'},
+                {'key': 'KBC.datatype.type', 'value': 'VARCHAR'},
+                {'key': 'KBC.datatype.nullable', 'value': '1'},
+            ],
             [{'key': 'KBC.datatype.basetype', 'value': 'INTEGER'}],
-            'Own desc',
-            'INTEGER',
+            'Native desc',
+            'STRING',
+            'VARCHAR',
+            True,
         ),
-        # neither has metadata
+        # non-typed table: types fall back to the source column metadata, no description anywhere
         (
+            False,
+            {'name': 'col1', 'definition': {}},
             [],
-            [],
+            [
+                {'key': 'KBC.description', 'value': 'Source desc'},
+                {'key': 'KBC.datatype.basetype', 'value': 'INTEGER'},
+                {'key': 'KBC.datatype.type', 'value': 'INT'},
+            ],
             None,
-            None,
+            'INTEGER',
+            'INT',
+            False,
         ),
     ],
 )
-async def test_get_table_column_metadata_fallback(
+async def test_get_table_column_definition(
+    is_typed: bool,
+    definition_column: dict[str, Any] | None,
     column_metadata: list[dict[str, Any]],
     source_column_metadata: list[dict[str, Any]],
     expected_description: str | None,
     expected_base_type: str | None,
+    expected_native_type: str,
+    expected_nullable: bool,
     mocker: MockerFixture,
     mcp_context_client: Context,
 ) -> None:
-    """Test column description and base type fallback from sourceTable.columnMetadata."""
+    """Test column description and type resolution from the native definition and the legacy metadata."""
     raw_table = {
         'id': 'in.c-test.t1',
         'name': 't1',
@@ -1451,6 +1455,8 @@ async def test_get_table_column_metadata_fallback(
         'metadata': [],
         'bucket': {'id': 'in.c-test', 'name': 'c-test'},
         'sourceTable': {'columnMetadata': {'col1': source_column_metadata}},
+        'isTyped': is_typed,
+        'definition': {'columns': [definition_column] if definition_column else []},
     }
 
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
@@ -1484,6 +1490,8 @@ async def test_get_table_column_metadata_fallback(
     assert len(columns) == 1
     assert columns[0].description == expected_description
     assert columns[0].keboola_base_type == expected_base_type
+    assert columns[0].database_native_type == expected_native_type
+    assert columns[0].nullable is expected_nullable
 
 
 @pytest.mark.asyncio
@@ -1520,14 +1528,13 @@ async def test_update_descriptions_bucket_success(
 
 
 @pytest.mark.asyncio
-async def test_update_descriptions_table_success(
-    mocker: MockerFixture, mcp_context_client, mock_update_table_description_response
-) -> None:
-    """Test successful update of table description using update_descriptions."""
+async def test_update_descriptions_table_success(mocker: MockerFixture, mcp_context_client) -> None:
+    """Test successful update of table description through the native table definition."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-    keboola_client.storage_client.table_metadata_update = mocker.AsyncMock(
-        return_value=mock_update_table_description_response,
+    keboola_client.storage_client.table_definition_update = mocker.AsyncMock(
+        return_value={'id': '1', 'status': 'success', 'endTime': '2024-01-01T00:00:00Z'},
     )
+    keboola_client.storage_client.table_metadata_update = mocker.AsyncMock()
 
     result = await update_descriptions(
         ctx=mcp_context_client,
@@ -1546,22 +1553,20 @@ async def test_update_descriptions_table_success(
     assert table_result.error is None
     assert table_result.timestamp == parse_iso_timestamp('2024-01-01T00:00:00Z')
 
-    keboola_client.storage_client.table_metadata_update.assert_called_once_with(
-        table_id='in.c-test.test-table',
-        metadata={MetadataField.DESCRIPTION: 'Updated table description'},
-        columns_metadata={},
+    keboola_client.storage_client.table_definition_update.assert_called_once_with(
+        table_id='in.c-test.test-table', description='Updated table description'
     )
+    keboola_client.storage_client.table_metadata_update.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_update_descriptions_column_success(
-    mocker: MockerFixture, mcp_context_client, mock_update_column_description_response
-) -> None:
-    """Test successful update of column description using update_descriptions."""
+async def test_update_descriptions_column_success(mocker: MockerFixture, mcp_context_client) -> None:
+    """Test successful update of column description through the native table definition."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-    keboola_client.storage_client.table_metadata_update = mocker.AsyncMock(
-        return_value=mock_update_column_description_response,
+    keboola_client.storage_client.table_definition_update = mocker.AsyncMock(
+        return_value={'id': '1', 'status': 'success', 'endTime': '2024-01-01T00:00:00Z'},
     )
+    keboola_client.storage_client.table_metadata_update = mocker.AsyncMock()
 
     result = await update_descriptions(
         ctx=mcp_context_client,
@@ -1582,14 +1587,10 @@ async def test_update_descriptions_column_success(
     assert column_result.error is None
     assert column_result.timestamp == parse_iso_timestamp('2024-01-01T00:00:00Z')
 
-    keboola_client.storage_client.table_metadata_update.assert_called_once_with(
-        table_id='in.c-test.test-table',
-        columns_metadata={
-            'column_name': [
-                {'key': MetadataField.DESCRIPTION, 'value': 'Updated column description', 'columnName': 'column_name'}
-            ]
-        },
+    keboola_client.storage_client.table_definition_update.assert_called_once_with(
+        table_id='in.c-test.test-table', column_descriptions={'column_name': 'Updated column description'}
     )
+    keboola_client.storage_client.table_metadata_update.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -1597,15 +1598,14 @@ async def test_update_descriptions_mixed_types_success(
     mocker: MockerFixture,
     mcp_context_client,
     mock_update_bucket_description_response,
-    mock_update_table_description_response,
 ) -> None:
     """Test successful update of mixed types using update_descriptions."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.storage_client.bucket_metadata_update = mocker.AsyncMock(
         return_value=mock_update_bucket_description_response,
     )
-    keboola_client.storage_client.table_metadata_update = mocker.AsyncMock(
-        return_value=mock_update_table_description_response,
+    keboola_client.storage_client.table_definition_update = mocker.AsyncMock(
+        return_value={'id': '1', 'status': 'success', 'endTime': '2024-01-01T00:00:00Z'},
     )
 
     result = await update_descriptions(
@@ -1637,10 +1637,8 @@ async def test_update_descriptions_mixed_types_success(
         bucket_id='in.c-test-bucket',
         metadata={MetadataField.DESCRIPTION: 'Updated bucket description'},
     )
-    keboola_client.storage_client.table_metadata_update.assert_called_once_with(
-        table_id='in.c-test.test-table',
-        metadata={MetadataField.DESCRIPTION: 'Updated table description'},
-        columns_metadata={},
+    keboola_client.storage_client.table_definition_update.assert_called_once_with(
+        table_id='in.c-test.test-table', description='Updated table description'
     )
 
 

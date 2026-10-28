@@ -416,6 +416,13 @@ class TableDetail(TableSummary):
         default=None, description='Configuration that last updated the table (component/config ID and timestamp).'
     )
 
+    @model_validator(mode='before')
+    @classmethod
+    def set_description(cls, values: dict[str, Any]) -> dict[str, Any]:
+        # The native table definition is the source the UI shows; Storage resolves alias inheritance there.
+        values['description'] = get_nested(values, 'definition.description') or None
+        return values
+
     def with_lineage_metadata(self, values: dict[str, Any]) -> 'TableDetail':
         metadata = values.get('metadata', [])
         if not metadata or not isinstance(metadata, list):
@@ -787,44 +794,55 @@ async def _get_table(
     raw_source_column_metadata = cast(
         dict[str, list[dict[str, Any]]], get_nested(raw_table, 'sourceTable.columnMetadata', default={})
     )
+    is_typed = bool(raw_table.get('isTyped'))
+    definition_columns = {
+        cast(str, col['name']): cast(dict[str, Any], col)
+        for col in cast(list[dict[str, Any]], get_nested(raw_table, 'definition.columns', default=[]) or [])
+        if 'name' in col
+    }
 
     sql_dialect = await workspace_manager.get_sql_dialect()
     db_table_info = await workspace_manager.get_table_info(raw_table)
 
     column_info = []
     for col_name in raw_columns:
-        col_meta = raw_column_metadata.get(col_name, [])
-        source_col_meta = raw_source_column_metadata.get(col_name, [])
+        definition_column = definition_columns.get(col_name, {})
+        column_definition = cast(dict[str, Any], definition_column.get('definition') or {})
 
-        description: str | None = get_metadata_property(col_meta, MetadataField.DESCRIPTION)
-        if not description:
-            description = get_metadata_property(source_col_meta, MetadataField.DESCRIPTION)
+        description: str | None = column_definition.get('description') or None
 
-        base_type: str | None = get_metadata_property(
-            col_meta, MetadataField.DATATYPE_BASETYPE, preferred_providers=['user']
-        )
-        if not base_type:
-            base_type = get_metadata_property(
-                source_col_meta, MetadataField.DATATYPE_BASETYPE, preferred_providers=['user']
-            )
+        if is_typed:
+            base_type: str | None = definition_column.get('basetype')
+            native_type: str | None = column_definition.get('type')
+            nullable = bool(column_definition.get('nullable', False))
+        else:
+            # Non-typed tables carry no types in the native definition, only the KBC.datatype.* metadata.
+            col_meta = raw_column_metadata.get(col_name, [])
+            source_col_meta = raw_source_column_metadata.get(col_name, [])
 
-        native_type: str | None = get_metadata_property(col_meta, MetadataField.DATATYPE_TYPE)
-        if not native_type:
-            native_type = get_metadata_property(source_col_meta, MetadataField.DATATYPE_TYPE)
+            base_type = get_metadata_property(col_meta, MetadataField.DATATYPE_BASETYPE, preferred_providers=['user'])
+            if not base_type:
+                base_type = get_metadata_property(
+                    source_col_meta, MetadataField.DATATYPE_BASETYPE, preferred_providers=['user']
+                )
 
-        nullable_str: str | None = get_metadata_property(col_meta, MetadataField.DATATYPE_NULLABLE)
-        if not nullable_str:
-            nullable_str = get_metadata_property(source_col_meta, MetadataField.DATATYPE_NULLABLE)
+            native_type = get_metadata_property(col_meta, MetadataField.DATATYPE_TYPE)
+            if not native_type:
+                native_type = get_metadata_property(source_col_meta, MetadataField.DATATYPE_TYPE)
+
+            nullable_str: str | None = get_metadata_property(col_meta, MetadataField.DATATYPE_NULLABLE)
+            if not nullable_str:
+                nullable_str = get_metadata_property(source_col_meta, MetadataField.DATATYPE_NULLABLE)
+
+            # KBC.datatype.nullable is stored as '1'/'true' for nullable, '0'/'false' (or absent) for non-nullable
+            nullable = str(nullable_str).lower() in ('1', 'true') if nullable_str is not None else False
 
         if native_type is None:
             native_type = 'STRING' if sql_dialect == 'BigQuery' else 'VARCHAR'
             LOG.warning(
-                f'No KBC.datatype.type in columnMetadata: '
-                f'col_name={col_name}, sql_dialect={sql_dialect}, table_id={table_id}'
+                f'No native column type: col_name={col_name}, sql_dialect={sql_dialect}, '
+                f'table_id={table_id}, is_typed={is_typed}'
             )
-
-        # KBC.datatype.nullable is stored as '1'/'true' for nullable, '0'/'false' (or absent) for non-nullable
-        nullable = str(nullable_str).lower() in ('1', 'true') if nullable_str is not None else False
 
         column_info.append(
             TableColumnInfo(
@@ -962,17 +980,16 @@ async def _update_bucket_description(client: KeboolaClient, bucket_id: str, desc
         return UpdateItemResult(item_id=bucket_id, success=False, error=str(e))
 
 
+def _job_timestamp(job: JsonDict) -> datetime | None:
+    raw = job.get('endTime') or job.get('createdTime')
+    return parse_iso_timestamp(raw) if isinstance(raw, str) else None
+
+
 async def _update_table_description(client: KeboolaClient, table_id: str, description: str) -> UpdateItemResult:
-    """Update a table description."""
+    """Update a table description through the native table definition."""
     try:
-        response = await client.storage_client.table_metadata_update(
-            table_id=table_id,
-            metadata={MetadataField.DESCRIPTION: description},
-            columns_metadata={},
-        )
-        raw_metadata = cast(list[JsonDict], response.get('metadata', []))
-        description_entry = next(entry for entry in raw_metadata if entry.get('key') == MetadataField.DESCRIPTION)
-        return UpdateItemResult(item_id=table_id, success=True, timestamp=description_entry['timestamp'])
+        job = await client.storage_client.table_definition_update(table_id=table_id, description=description)
+        return UpdateItemResult(item_id=table_id, success=True, timestamp=_job_timestamp(job))
     except Exception as e:
         return UpdateItemResult(item_id=table_id, success=False, error=str(e))
 
@@ -980,39 +997,16 @@ async def _update_table_description(client: KeboolaClient, table_id: str, descri
 async def _update_column_descriptions(
     client: KeboolaClient, table_id: str, column_updates: dict[str, str]
 ) -> list[UpdateItemResult]:
-    """Update multiple column descriptions for a single table."""
+    """Update multiple column descriptions for a single table through the native table definition."""
     try:
-        columns_metadata = {
-            column_name: [{'key': MetadataField.DESCRIPTION, 'value': description, 'columnName': column_name}]
-            for column_name, description in column_updates.items()
-        }
-
-        response = await client.storage_client.table_metadata_update(
-            table_id=table_id,
-            columns_metadata=columns_metadata,
-        )
-
-        column_metadata = cast(dict[str, list[JsonDict]], response.get('columnsMetadata', {}))
-        results = []
-
-        for column_name in column_updates:
-            try:
-                description_entry = next(
-                    entry
-                    for entry in column_metadata.get(column_name, [])
-                    if entry.get('key') == MetadataField.DESCRIPTION
-                )
-                results.append(
-                    UpdateItemResult(
-                        item_id=f'{table_id}.{column_name}', success=True, timestamp=description_entry['timestamp']
-                    )
-                )
-            except Exception as e:
-                results.append(UpdateItemResult(item_id=f'{table_id}.{column_name}', success=False, error=str(e)))
-
-        return results
+        job = await client.storage_client.table_definition_update(table_id=table_id, column_descriptions=column_updates)
+        timestamp = _job_timestamp(job)
+        return [
+            UpdateItemResult(item_id=f'{table_id}.{column_name}', success=True, timestamp=timestamp)
+            for column_name in column_updates
+        ]
     except Exception as e:
-        # If the entire table update fails, mark all columns as failed
+        # The definition update is a single job, so a failure applies to every column of the table.
         return [
             UpdateItemResult(item_id=f'{table_id}.{column_name}', success=False, error=str(e))
             for column_name in column_updates
