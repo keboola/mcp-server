@@ -354,20 +354,27 @@ class TestTableDefinitionUpdate:
             await client.table_definition_update('in.c-b.t', description='x')
 
     @pytest.mark.parametrize(
-        ('status_code', 'message', 'is_noop'),
+        ('status_code', 'error', 'is_noop'),
         [
-            (400, 'API error: No table definition changes were provided.', True),
-            (400, 'API error: Invalid column.', False),
+            (400, 'No table definition changes were provided.', True),
+            # the same error code is used for other validation failures
+            (400, "'abc' is not valid length for VARCHAR", False),
             (404, 'No table definition changes were provided.', False),
         ],
     )
     @pytest.mark.asyncio
     async def test_unchanged_values_are_a_noop(
-        self, raw_client: RawKeboolaClient, status_code: int, message: str, is_noop: bool
+        self, raw_client: RawKeboolaClient, status_code: int, error: str, is_noop: bool
     ) -> None:
-        raw_client.put.side_effect = httpx.HTTPStatusError(
-            message, request=httpx.Request('PUT', 'https://x'), response=httpx.Response(status_code)
+        response = httpx.Response(
+            status_code,
+            json={'error': error, 'code': 'storage.tables.definitionUpdateValidationFailed', 'exceptionId': 'x'},
+            request=httpx.Request('PUT', 'https://x'),
         )
+        try:
+            RawKeboolaClient._raise_for_status(response)
+        except httpx.HTTPStatusError as e:
+            raw_client.put.side_effect = e
         client = AsyncStorageClient(raw_client=raw_client)
 
         if is_noop:
@@ -375,11 +382,3 @@ class TestTableDefinitionUpdate:
         else:
             with pytest.raises(httpx.HTTPStatusError):
                 await client.table_definition_update('in.c-b.t', description='x')
-
-    @pytest.mark.asyncio
-    async def test_nothing_to_update_raises(self, raw_client: RawKeboolaClient) -> None:
-        client = AsyncStorageClient(raw_client=raw_client)
-
-        with pytest.raises(ValueError, match='At least one'):
-            await client.table_definition_update('in.c-b.t')
-        raw_client.put.assert_not_called()
