@@ -1,12 +1,23 @@
+import asyncio
 import logging
 from datetime import datetime
+from http import HTTPStatus
 from typing import Any, Union, cast
 
+import httpx
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from keboola_mcp_server.clients.base import KeboolaServiceClient, RawKeboolaClient
 
 LOG = logging.getLogger(__name__)
+
+# DSAPI's app delete can deadlock against its own state watcher saving the app (typically right after
+# a redeploy) and answers 500 with the MySQL error number in the body's `code` (1213 deadlock, 1205
+# lock wait timeout). Every unexpected DSAPI failure is a 500 with the same generic message, so the
+# delete retries any 500 with a short backoff (502/503/504 are already retried by the transport,
+# base.py). Scoped to this one endpoint, which is safe to repeat: a 404 on a retry means an earlier
+# attempt went through.
+_DELETE_RETRY_DELAYS_SECONDS = (2.0, 5.0)
 
 
 class AppProductionResponse(BaseModel):
@@ -635,9 +646,31 @@ class DataScienceClient(KeboolaServiceClient):
         Delete a data app by its ID.
         - Stops every deployment, moves the app's Storage configuration to the trash and removes its credentials.
         - Deprovisions the app's managed git repository, when it has one.
+        - Retries a DSAPI 500 (typically a deadlock, code 1213) a couple of times; any other error is raised as is.
         :param data_app_id: ID of the data app to delete
         """
-        await self.delete(endpoint=f'v2/apps/{data_app_id}')
+        endpoint = f'v2/apps/{data_app_id}'
+        for attempt, retry_delay in enumerate((*_DELETE_RETRY_DELAYS_SECONDS, None), start=1):
+            try:
+                await self.delete(endpoint=endpoint)
+                return
+            except httpx.HTTPStatusError as e:
+                if attempt > 1 and e.response.status_code == HTTPStatus.NOT_FOUND:
+                    LOG.info(
+                        'Data app %s is gone on delete attempt %d, an earlier attempt deleted it.', data_app_id, attempt
+                    )
+                    return
+                if retry_delay is None or e.response.status_code != HTTPStatus.INTERNAL_SERVER_ERROR:
+                    raise
+                LOG.warning(
+                    'Data app delete failed with a 500 in DSAPI (attempt %d), retrying in %.0fs: data_app_id=%s',
+                    attempt,
+                    retry_delay,
+                    data_app_id,
+                    exc_info=True,
+                )
+                await asyncio.sleep(retry_delay)
+        raise AssertionError('unreachable: loop always returns or raises')
 
     async def list_runtimes(self) -> list[RuntimeResponse]:
         """

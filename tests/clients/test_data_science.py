@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, call
 
+import httpx
 import pytest
 
+from keboola_mcp_server.clients.base import RawKeboolaClient
 from keboola_mcp_server.clients.data_science import (
     AppGitRepoResponse,
     AppPreviewLinkResponse,
@@ -403,3 +405,65 @@ async def test_create_app_preview_link_hides_url_in_validation_error() -> None:
     assert 'linkExpiresAt' in str(exc_info.value)
     assert exc_info.value.__cause__ is None
     assert exc_info.value.__context__ is None
+
+
+def _dsapi_error(status: int, code: int | str | None) -> httpx.HTTPStatusError:
+    """Builds the exception exactly as the real client raises it (via `_raise_for_status`)."""
+    request = httpx.Request('DELETE', 'https://api.example.com/v2/apps/app-123')
+    response = httpx.Response(status, json={'error': 'boom', 'code': code, 'exceptionId': 'exc-1'}, request=request)
+    with pytest.raises(httpx.HTTPStatusError) as exc_info:
+        RawKeboolaClient._raise_for_status(response)
+    return exc_info.value
+
+
+_DEADLOCK = _dsapi_error(500, 1213)
+_LOCK_WAIT_TIMEOUT = _dsapi_error(500, '1205')
+_FORBIDDEN = _dsapi_error(403, 403)
+_NOT_FOUND = _dsapi_error(404, 404)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('delete_outcomes', 'expected_error', 'expected_sleeps'),
+    [
+        ([None], None, []),
+        ([_DEADLOCK, None], None, [2.0]),
+        ([_LOCK_WAIT_TIMEOUT, _DEADLOCK, None], None, [2.0, 5.0]),
+        # A 404 on a retry means the failed attempt went through after all.
+        ([_DEADLOCK, _NOT_FOUND], None, [2.0]),
+        # A 404 on the first attempt is a real "no such app" and is raised as before.
+        ([_NOT_FOUND], _NOT_FOUND, []),
+        ([_FORBIDDEN], _FORBIDDEN, []),
+        ([_DEADLOCK, _FORBIDDEN], _FORBIDDEN, [2.0]),
+        ([_DEADLOCK, _DEADLOCK, _LOCK_WAIT_TIMEOUT], _LOCK_WAIT_TIMEOUT, [2.0, 5.0]),
+    ],
+    ids=[
+        'success',
+        'deadlock_then_success',
+        'two_500s_then_success',
+        'deadlock_then_404',
+        'first_404_raised',
+        'non_500_not_retried',
+        'deadlock_then_non_500',
+        'retries_exhausted',
+    ],
+)
+async def test_delete_data_app_retries_dsapi_500(
+    mocker,
+    delete_outcomes: list[httpx.HTTPStatusError | None],
+    expected_error: httpx.HTTPStatusError | None,
+    expected_sleeps: list[float],
+) -> None:
+    client = DataScienceClient.create('https://api.example.com', token=None)
+    client.delete = AsyncMock(side_effect=delete_outcomes)  # type: ignore[assignment]
+    sleep = mocker.patch('keboola_mcp_server.clients.data_science.asyncio.sleep', new=AsyncMock())
+
+    if expected_error is None:
+        await client.delete_data_app('app-123')
+    else:
+        with pytest.raises(httpx.HTTPStatusError) as exc_info:
+            await client.delete_data_app('app-123')
+        assert exc_info.value is expected_error
+
+    assert client.delete.await_args_list == [call(endpoint='v2/apps/app-123')] * len(delete_outcomes)
+    assert sleep.await_args_list == [call(delay) for delay in expected_sleeps]
