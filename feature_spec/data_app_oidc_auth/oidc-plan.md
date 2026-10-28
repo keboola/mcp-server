@@ -51,9 +51,10 @@ The RFC is sound in its main choice (skeleton + UI, secret never in the agent). 
 4. **Merge with the existing OIDC provider by `type`, not by id.** Hand-made or older configs exist with other
    ids (the repo's own fixtures use `'oidc'`). Matching on `type == 'oidc'` and normalizing the id to `'oidc-1'`
    keeps the stored secret in every case; matching on id would drop it for those apps.
-5. **Define "omitted" vs "null" for the optional fields.** The RFC says "only keys present in the new `oidc`
-   param overwrite", which leaves no way to remove `allowed_roles` or `logout_url`. Use pydantic
-   `model_fields_set`: omitted = keep the stored value, explicit `null` = remove the key.
+5. **Define how to remove an optional field.** The RFC says "only keys present in the new `oidc`
+   param overwrite", which leaves no way to remove `allowed_roles` or `logout_url`. Omitted or `null` keeps
+   the stored value, because LLM callers often send every optional field as `null`. `logout_url=''` and
+   `allowed_roles=[]` remove the key; `[]` is never written, because apps-proxy rejects an empty list.
 6. **Drop the "independent hygiene fix" from this PR.** On python-js prod create the config has no `#` key:
    the git block (with `#password`) exists only on drafts, and the legacy `WORKSPACE_ID` secret is not
    `#`-prefixed. The gap is real only for a future `#` field, and with OIDC-on-create rejected this change adds
@@ -95,7 +96,7 @@ if FastMCP runs the tool in a copied context.
 - OIDC provider fields written by the MCP: `id`, `type` (`'oidc'`), `client_id`, `issuer_url`, optional
   `logout_url`, optional `allowed_roles`. Never `#client_secret`.
 - Auth rule for OIDC: `{'type': 'pathPrefix', 'value': '/', 'auth_required': True, 'auth': ['oidc-1']}`.
-- `allowed_roles=[]` is rejected (apps-proxy treats an empty list as an error).
+- `allowed_roles=[]` removes the key and is never written (apps-proxy treats an empty list as an error).
 - Callback URL: `https://{slug}-{data_app_id}.hub.{hostname_suffix}/_proxy/callback`.
 - `tox` passes in full before every push.
 
@@ -125,16 +126,16 @@ if FastMCP runs the tool in a copied context.
   - `AuthenticationType = Literal['no-auth', 'basic-auth', 'oidc', 'default']`
   - `OIDC_PROVIDER_ID = 'oidc-1'`
   - `class OidcAuthConfig(BaseModel)`: `client_id: str`, `issuer_url: str`, `logout_url: str | None = None`,
-    `allowed_roles: list[str] | None = None`; field validator rejects `allowed_roles == []` with a message
-    that says to pass `null` for "no role requirement". Field descriptions are agent-facing (they land in
+    `allowed_roles: list[str] | None = None`. Field descriptions say that `null` keeps the stored value and
+    `''` / `[]` removes it. They are agent-facing (they land in
     TOOLS.md).
   - `_build_authorization(authentication_type: Literal['no-auth', 'basic-auth', 'oidc'], oidc: OidcAuthConfig | None = None, existing: Mapping[str, Any] | None = None) -> dict[str, Any]`
     — `existing` is the stored `authorization` block. `'basic-auth'` / `'no-auth'` return exactly what
     `_get_authorization(True/False)` returns today. `'oidc'` returns one provider + one rule (Global
     Constraints): it starts from the first existing provider with `type == 'oidc'` (all its keys, including
     `#client_secret` and unknown keys), sets `id='oidc-1'`, `type='oidc'`, `client_id`, `issuer_url`, then for
-    each of `logout_url` / `allowed_roles` in `oidc.model_fields_set`: value → set, `None` → delete key. Fields
-    not in `model_fields_set` keep the stored value. Non-OIDC providers are dropped.
+    each of `logout_url` / `allowed_roles`: `None` → keep the stored value, `''` / `[]` → delete the key, any
+    other value → set. Non-OIDC providers are dropped.
   - `_oidc_provider(authorization: Mapping[str, Any]) -> Mapping[str, Any] | None` — first provider with `type == 'oidc'`.
   - `_oidc_setup_required(authorization: Mapping[str, Any]) -> bool` — True when an OIDC provider exists and its `#client_secret` is missing or blank.
   - `_get_authorization` is deleted; its three callers move to `_build_authorization` in Tasks 2–3
@@ -145,12 +146,11 @@ if FastMCP runs the tool in a copied context.
   - `('no-auth', None, None)` → empty providers, `auth_required: False`, no `auth` key
   - `('oidc', OidcAuthConfig(client_id='c', issuer_url='https://i'), None)` → `[{'id': 'oidc-1', 'type': 'oidc', 'client_id': 'c', 'issuer_url': 'https://i'}]`, no `logout_url` / `allowed_roles` / `#client_secret` keys
   - existing `{'id': 'oidc', 'type': 'oidc', 'client_id': 'old', 'issuer_url': 'https://old', '#client_secret': 'KBC::ProjectSecure::x', 'logout_url': '', 'extra': 1}` + new `client_id='c'` → id `'oidc-1'`, `client_id == 'c'`, `#client_secret`, `logout_url == ''` and `extra` kept
-  - existing with `allowed_roles: ['a']` + new with `allowed_roles=None` passed explicitly → key removed; new without `allowed_roles` → `['a']` kept
+  - existing with `allowed_roles: ['a']` and `logout_url: 'https://l'` + new with `allowed_roles=None, logout_url=None` passed explicitly → both kept; new with `allowed_roles=[], logout_url=''` → both keys removed
   - existing simpleAuth + `'oidc'` → simpleAuth gone
 
   Plus, for every case: `auth_required is True` ⇔ `'auth' in rule`, and every id in `rule['auth']` is a provider id.
-  Plus `test_oidc_auth_config_rejects_empty_roles` (`pytest.raises(ValidationError, match='null')`), and
-  `_oidc_setup_required` cases: no OIDC provider → False; secret missing → True; `''` → True; cipher → False.
+  Plus `_oidc_setup_required` cases: no OIDC provider → False; secret missing → True; `''` → True; cipher → False.
 - [ ] **Step 2: Run** `pytest tests/tools/test_data_apps.py -k "build_authorization or oidc" -v` — expect FAIL (import errors).
 - [ ] **Step 3: Implement** the Interfaces above; delete `_get_authorization`; update `test_is_authorized_behavior` to use `_build_authorization`.
 - [ ] **Step 4: Run** the same command — expect PASS. Callers of `_get_authorization` will fail to import until Tasks 2–3; keep this task's commit green by switching the three call sites mechanically to `_build_authorization('basic-auth' if <old bool> else 'no-auth')` here.

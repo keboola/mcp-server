@@ -85,14 +85,17 @@ Both `modify_streamlit_data_app` and `modify_python_js_data_app` accept `'oidc'`
 | --- | --- | --- |
 | `client_id` | yes | Written verbatim. |
 | `issuer_url` | yes | Written verbatim. No IdP presets — see *Rejected alternatives*. |
-| `logout_url` | no | Omitted: the stored value is kept (none on a fresh skeleton). Explicit `null`: the key is removed. (The UI writes `''` rather than omitting; both are accepted downstream.) |
-| `allowed_roles` | no | Same omitted / `null` rule as `logout_url` — but read the ordering constraint below, it is sharp. |
+| `logout_url` | no | Omitted or `null`: the stored value is kept (none on a fresh skeleton). `''`: the key is removed. |
+| `allowed_roles` | no | Omitted or `null`: the stored value is kept. `[]`: the key is removed, so there is no role requirement. Read the ordering constraint below, it is sharp. |
 
 There is no provider-id argument. The provider id is always **`'oidc-1'`**, the literal the UI
 hardcodes: the UI rebuilds the provider with that id on every save, including the required secret
 save, so any other id would be overwritten anyway.
 
-"Omitted" and "`null`" are told apart with pydantic `model_fields_set`.
+Omitted and `null` mean the same thing on purpose. LLM callers often send every optional field as
+`null`, so `null` must never delete a stored value. Removing a value takes an explicit empty value:
+`''` or `[]`. `[]` is never written to the config, because apps-proxy treats an empty `allowedRoles` as an
+error; the key is removed instead.
 
 Rejections, each with a message naming the fix:
 
@@ -100,7 +103,6 @@ Rejections, each with a message naming the fix:
 | --- | --- |
 | `authentication_type='oidc'` without `oidc` | `ValueError` |
 | `oidc` passed with any other `authentication_type` | `ValueError` — never silently ignored |
-| `allowed_roles=[]` (empty list) | `ValueError` — rejected on both sides downstream; pass `null` for "no role requirement" |
 | `authentication_type='oidc'` on create (no `configuration_id`) | `ValueError` — create with `'basic-auth'` first. The callback URL needs the app id, so the IdP cannot be set up before the app exists, and a create repeated after URL elicitation would make a second app |
 | `authentication_type='oidc'` on a python-js **draft** | `ValueError` — a draft has its own slug *and* its own app id, therefore its own callback URL; OIDC belongs on the prod app |
 
@@ -185,7 +187,7 @@ function that produces them.
 | `'default'` | Preserved verbatim, including OIDC configured in the UI (AI-1848). Unchanged from today. |
 | `'basic-auth'` / `'no-auth'` | Overwritten, as today. |
 | `'oidc'`, no existing OIDC provider | Fresh skeleton written. |
-| `'oidc'`, existing OIDC provider | Merged into the first provider with `type == 'oidc'`, whatever its id: `client_id` / `issuer_url` overwritten, `logout_url` / `allowed_roles` per the omitted / `null` rule, every other key kept, id set to `'oidc-1'`. |
+| `'oidc'`, existing OIDC provider | Merged into the first provider with `type == 'oidc'`, whatever its id: `client_id` / `issuer_url` overwritten, `logout_url` / `allowed_roles` kept when omitted or `null`, removed when `''` / `[]`, every other key kept, id set to `'oidc-1'`. |
 
 Matching on `type` rather than id matters: older or hand-made configs use other ids (`'oidc'` is
 common), and matching on id would drop their stored secret.
@@ -246,8 +248,7 @@ The docstrings document the full sequence:
 ### `tools/data_apps.py`
 
 - `AuthenticationType` gains `'oidc'`.
-- New `OidcAuthConfig(BaseModel)`: the fields above, a validator rejecting an empty `allowed_roles`,
-  and no secret field.
+- New `OidcAuthConfig(BaseModel)`: the fields above and no secret field.
 - `_get_authorization(auth_with_password: bool)` (`:2834`) is replaced by
   `_build_authorization(authentication_type, oidc=None, existing=None)`. The two existing branches
   are preserved unchanged; the OIDC branch builds the skeleton and performs the
@@ -346,7 +347,7 @@ adding parallel functions, per the project's testing conventions:
 | **`oidc` → `oidc` update with a stored `#client_secret`** | **Cipher preserved verbatim; other supplied fields overwritten** — the critical invariant |
 | `default` on an app with OIDC | `authorization` unchanged — explicit AI-1848 regression |
 | `allowed_roles` set | Written to the provider; `change_summary` carries the UI-round-trip warning |
-| Optional fields | Fresh skeleton: `logout_url` / `allowed_roles` keys absent, not null. Merge: omitted keeps the stored value, explicit `null` removes the key |
+| Optional fields | Fresh skeleton: `logout_url` / `allowed_roles` keys absent, not null. Merge: omitted or `null` keeps the stored value; `logout_url=''` / `allowed_roles=[]` removes the key, and `[]` is never written |
 | Merge with a differently-named OIDC provider | Existing provider id `'oidc'` with a stored cipher: cipher kept, id becomes `'oidc-1'`, rule points at `'oidc-1'` |
 | Slug on an OIDC app | Rename of a never-deployed python-js app or of a Streamlit app keeps the slug and the callback URL; an explicit python-js `slug` moves it and `change_summary` says to re-register |
 | `oidc_callback_url` | Set right after a `basic-auth` create, before any deploy; `None` for a python-js draft |
