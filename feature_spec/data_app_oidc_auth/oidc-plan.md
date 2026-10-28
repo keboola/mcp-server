@@ -12,7 +12,7 @@ the builder on update only, and compute two new output fields from the config th
 `UrlElicitationMiddleware`: a tool records a "please open this page" request on success, and the middleware
 asks the client after the tool returns.
 
-**Tech Stack:** Python 3.10, FastMCP 4.x, pydantic v2, pytest + pytest-asyncio, tox (pytest, ruff, check-tools-docs).
+**Tech Stack:** Python 3.11, FastMCP 4.x, pydantic v2, pytest + pytest-asyncio, tox (pytest, ruff, check-tools-docs).
 
 **Spec:** `feature_spec/data_app_oidc_auth/RFC.md` (read it first). The RFC already includes the fixes from
 the *Architecture review* below.
