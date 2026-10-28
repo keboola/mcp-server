@@ -24,6 +24,7 @@ from keboola_mcp_server import auth_login, cli
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
 from keboola_mcp_server.mcp import (
+    SESSION_EXPIRED_MESSAGE,
     ServerState,
     SessionStateMiddleware,
     _SerializingFunctionTool,
@@ -335,6 +336,46 @@ async def test_with_session_state_admin_role_tools(mocker, admin_info, expected_
         tool_names = {tool.name for tool in tools}
         assert expected_included in tool_names
         assert expected_excluded not in tool_names
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('branch_id', 'failing_call'),
+    [
+        (None, 'verify_token'),  # ToolsFilteringMiddleware
+        ('123', 'dev_branch_detail'),  # session setup, before any tool middleware
+    ],
+)
+async def test_expired_token_is_an_error_result_not_internal_server_error(mocker, branch_id, failing_call):
+    os_mock = mocker.patch('keboola_mcp_server.server.os')
+    os_mock.environ = {
+        'KBC_STORAGE_TOKEN': 'SAPI_1234',
+        'KBC_STORAGE_API_URL': 'http://connection.test.keboola.com',
+    } | ({'KBC_BRANCH_ID': branch_id} if branch_id else {})
+    mocker.patch(
+        'keboola_mcp_server.clients.client.AsyncStorageClient.verify_token',
+        return_value={'owner': {'features': []}, 'admin': {'role': 'admin'}},
+    )
+    mocker.patch(
+        'keboola_mcp_server.clients.client.AsyncStorageClient.dev_branch_detail',
+        return_value={'id': branch_id, 'isDefault': False},
+    )
+
+    mcp = create_server(Config(), runtime_info=ServerRuntimeInfo(transport='stdio'))
+    async with Client(mcp) as client:
+        # The token expires once the session is connected.
+        mocker.patch(
+            f'keboola_mcp_server.clients.client.AsyncStorageClient.{failing_call}',
+            side_effect=httpx.HTTPStatusError(
+                "Client error '401 Unauthorized'", request=MagicMock(), response=MagicMock(status_code=401, text='')
+            ),
+        )
+        result = await client.call_tool_mcp('get_buckets', {})
+
+    assert result.is_error is True
+    assert isinstance(result.content[0], TextContent)
+    assert result.content[0].text.startswith(SESSION_EXPIRED_MESSAGE)
+    assert '401 Unauthorized' in result.content[0].text
 
 
 @pytest.mark.asyncio
