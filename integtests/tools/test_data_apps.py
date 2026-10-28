@@ -290,19 +290,20 @@ def _git(*args: str, cwd: Path) -> None:
     subprocess.run(['git', *args], cwd=cwd, check=True, capture_output=True, text=True)
 
 
-async def _wait_until_settled(keboola_client: KeboolaClient, data_app_id: str, timeout_s: float = 180) -> None:
-    """Wait until the data app's production serves the deployment last asked for, or the timeout passes.
+async def _wait_until_suspended(keboola_client: KeboolaClient, data_app_id: str, timeout_s: float = 180) -> None:
+    """Wait until the data app is suspended, or the timeout passes.
 
     - A delete issued while the app still changes state deadlocks in DSAPI against its state watcher (500).
+    - A suspend changes no deployment and `/v2` lists no stopping state, so only `suspended` tells it finished.
     - Returns on timeout too: the delete that follows reports the real outcome.
     """
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
         app = await keboola_client.data_science_client.get_data_app(data_app_id)
-        if app.production.desired_deployment_id == app.production.actual_deployment_id and app.state != 'starting':
+        if app.state == 'suspended':
             return
         await asyncio.sleep(5)
-    LOG.info(f'data app {data_app_id} did not settle within {timeout_s}s')
+    LOG.info(f'data app {data_app_id} did not suspend within {timeout_s}s')
 
 
 @pytest.mark.asyncio
@@ -552,7 +553,7 @@ async def test_python_js_data_app_prod_and_draft_lifecycle(
             await keboola_client.data_science_client.suspend_data_app(draft_output.data_app.data_app_id)
         except Exception as exc:
             LOG.info(f'suspend failed for {draft_output.data_app.data_app_id}: {exc}')
-        await _wait_until_settled(keboola_client, draft_output.data_app.data_app_id)
+        await _wait_until_suspended(keboola_client, draft_output.data_app.data_app_id)
         delete_result = await mcp_client.call_tool(
             name='delete_python_js_data_app_draft',
             arguments={'configuration_id': draft_output.data_app.configuration_id},
