@@ -207,6 +207,9 @@ DIRECTORY_TOOLS = frozenset(
 )
 
 
+SESSION_EXPIRED_MESSAGE = 'Your Keboola session has expired. Refresh the page (or sign in again) and try again.'
+
+
 def _is_unauthorized(error: BaseException) -> bool:
     """True when `error` is, or was caused by, a 401 from a Keboola API.
 
@@ -548,6 +551,14 @@ class SessionStateMiddleware(fmw.Middleware):
             return await self._on_request(context, call_next)
         except _CALLER_FACING_ERRORS as e:
             raise ToolError(str(e)) from e
+        except httpx.HTTPStatusError as e:
+            # A bare 401 here is a Storage call made by a middleware before the tool body ran (the
+            # branch check, `tokens/verify`): the token expired or was rotated between calls. The
+            # original text stays appended -- on a programmatic session a stale project scope 401s
+            # too, and it says how to fix that.
+            if context.method != 'tools/call' or e.response.status_code != HTTPStatus.UNAUTHORIZED:
+                raise
+            raise ToolError(f'{SESSION_EXPIRED_MESSAGE}\n\nDetails: {e}') from e
 
     async def _on_request(
         self,
