@@ -12,21 +12,12 @@ from keboola_mcp_server.clients.base import KeboolaServiceClient, RawKeboolaClie
 LOG = logging.getLogger(__name__)
 
 # DSAPI's app delete can deadlock against its own state watcher saving the app (typically right after
-# a redeploy) and answers 500 with the MySQL deadlock error code 1213. The transport-level retry
-# (base.py) does not cover a 500, so the delete retries this one case with a short backoff. The delete
-# is idempotent: a 404 on a retry means an earlier attempt went through.
-_DELETE_DEADLOCK_ERROR_CODE = 1213
-_DELETE_DEADLOCK_RETRY_DELAYS_SECONDS = (2.0, 5.0)
-
-
-def _is_deadlock_error(e: httpx.HTTPStatusError) -> bool:
-    if e.response.status_code != HTTPStatus.INTERNAL_SERVER_ERROR:
-        return False
-    try:
-        body = e.response.json()
-    except ValueError:
-        return False
-    return isinstance(body, dict) and str(body.get('code')) == str(_DELETE_DEADLOCK_ERROR_CODE)
+# a redeploy) and answers 500 with the MySQL error number in the body's `code` (1213 deadlock, 1205
+# lock wait timeout). Every unexpected DSAPI failure is a 500 with the same generic message, so the
+# delete retries any 500 with a short backoff (502/503/504 are already retried by the transport,
+# base.py). Scoped to this one endpoint, which is safe to repeat: a 404 on a retry means an earlier
+# attempt went through.
+_DELETE_RETRY_DELAYS_SECONDS = (2.0, 5.0)
 
 
 class AppProductionResponse(BaseModel):
@@ -655,11 +646,11 @@ class DataScienceClient(KeboolaServiceClient):
         Delete a data app by its ID.
         - Stops every deployment, moves the app's Storage configuration to the trash and removes its credentials.
         - Deprovisions the app's managed git repository, when it has one.
-        - Retries a DSAPI deadlock (500 with code 1213) a couple of times; any other error is raised as is.
+        - Retries a DSAPI 500 (typically a deadlock, code 1213) a couple of times; any other error is raised as is.
         :param data_app_id: ID of the data app to delete
         """
         endpoint = f'v2/apps/{data_app_id}'
-        for attempt, retry_delay in enumerate((*_DELETE_DEADLOCK_RETRY_DELAYS_SECONDS, None), start=1):
+        for attempt, retry_delay in enumerate((*_DELETE_RETRY_DELAYS_SECONDS, None), start=1):
             try:
                 await self.delete(endpoint=endpoint)
                 return
@@ -669,13 +660,14 @@ class DataScienceClient(KeboolaServiceClient):
                         'Data app %s is gone on delete attempt %d, an earlier attempt deleted it.', data_app_id, attempt
                     )
                     return
-                if retry_delay is None or not _is_deadlock_error(e):
+                if retry_delay is None or e.response.status_code != HTTPStatus.INTERNAL_SERVER_ERROR:
                     raise
                 LOG.warning(
-                    'Data app delete deadlocked in DSAPI (attempt %d), retrying in %.0fs: data_app_id=%s',
+                    'Data app delete failed with a 500 in DSAPI (attempt %d), retrying in %.0fs: data_app_id=%s',
                     attempt,
                     retry_delay,
                     data_app_id,
+                    exc_info=True,
                 )
                 await asyncio.sleep(retry_delay)
         raise AssertionError('unreachable: loop always returns or raises')

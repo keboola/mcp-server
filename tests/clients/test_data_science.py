@@ -417,8 +417,8 @@ def _dsapi_error(status: int, code: int | str | None) -> httpx.HTTPStatusError:
 
 
 _DEADLOCK = _dsapi_error(500, 1213)
-_DEADLOCK_STR_CODE = _dsapi_error(500, '1213')
-_OTHER_500 = _dsapi_error(500, 2000)
+_LOCK_WAIT_TIMEOUT = _dsapi_error(500, '1205')
+_FORBIDDEN = _dsapi_error(403, 403)
 _NOT_FOUND = _dsapi_error(404, 404)
 
 
@@ -428,27 +428,27 @@ _NOT_FOUND = _dsapi_error(404, 404)
     [
         ([None], None, []),
         ([_DEADLOCK, None], None, [2.0]),
-        ([_DEADLOCK_STR_CODE, _DEADLOCK, None], None, [2.0, 5.0]),
-        # A 404 on a retry means the deadlocked attempt went through after all.
+        ([_LOCK_WAIT_TIMEOUT, _DEADLOCK, None], None, [2.0, 5.0]),
+        # A 404 on a retry means the failed attempt went through after all.
         ([_DEADLOCK, _NOT_FOUND], None, [2.0]),
         # A 404 on the first attempt is a real "no such app" and is raised as before.
         ([_NOT_FOUND], _NOT_FOUND, []),
-        ([_OTHER_500], _OTHER_500, []),
-        ([_DEADLOCK, _OTHER_500], _OTHER_500, [2.0]),
-        ([_DEADLOCK, _DEADLOCK, _DEADLOCK_STR_CODE], _DEADLOCK_STR_CODE, [2.0, 5.0]),
+        ([_FORBIDDEN], _FORBIDDEN, []),
+        ([_DEADLOCK, _FORBIDDEN], _FORBIDDEN, [2.0]),
+        ([_DEADLOCK, _DEADLOCK, _LOCK_WAIT_TIMEOUT], _LOCK_WAIT_TIMEOUT, [2.0, 5.0]),
     ],
     ids=[
         'success',
         'deadlock_then_success',
-        'two_deadlocks_then_success',
+        'two_500s_then_success',
         'deadlock_then_404',
         'first_404_raised',
-        'other_500_not_retried',
-        'deadlock_then_other_500',
-        'deadlocks_exhausted',
+        'non_500_not_retried',
+        'deadlock_then_non_500',
+        'retries_exhausted',
     ],
 )
-async def test_delete_data_app_retries_dsapi_deadlock(
+async def test_delete_data_app_retries_dsapi_500(
     mocker,
     delete_outcomes: list[httpx.HTTPStatusError | None],
     expected_error: httpx.HTTPStatusError | None,

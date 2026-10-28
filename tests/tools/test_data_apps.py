@@ -3771,7 +3771,7 @@ async def test_delete_python_js_data_app_draft_success(
     """Happy path: deletes the data app via DSAPI only and returns the parent configuration_id so
     the agent can pivot back. The Storage config must NOT be deleted by the tool — DSAPI already
     moves it to the trash, and a second delete would purge it from the trash permanently.
-    A DSAPI deadlock (500, code 1213) on the delete is retried and still ends as `deleted`."""
+    A DSAPI 500 on the delete (typically a deadlock, code 1213) is retried and still ends as `deleted`."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     draft = _make_python_js_draft_data_app(
         configuration_id='cfg-draft-1', data_app_id='app-draft-1', parent_configuration_id='cfg-prod-1'
