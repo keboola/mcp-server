@@ -47,6 +47,9 @@ BUCKET_ID_PARTS = 2
 TABLE_ID_PARTS = 3
 COLUMN_ID_PARTS = 4
 
+# Backends whose tables support the native table definition endpoint; other backends keep KBC.* metadata.
+NATIVE_DEFINITION_BACKENDS = frozenset({'snowflake', 'bigquery'})
+
 
 def add_storage_tools(mcp: KeboolaMcpServer) -> None:
     """Adds tools to the MCP server."""
@@ -279,6 +282,22 @@ class GetBucketsOutput(BaseModel):
         return self.model_copy(update={'buckets': buckets, 'links': sorted(links, key=lambda x: (x.type, x.title))})
 
 
+def _has_native_definition(raw_table: dict[str, Any]) -> bool:
+    """Whether the table lives on a backend whose descriptions and types are held in the native definition."""
+    backend = get_nested(raw_table, 'bucket.backend')
+    return isinstance(backend, str) and backend.lower() in NATIVE_DEFINITION_BACKENDS
+
+
+def _metadata_table_description(values: dict[str, Any]) -> str | None:
+    """Table description from KBC.description metadata, which must win over the stale legacy `description` field."""
+    return (
+        get_metadata_property(values.get('metadata', []), MetadataField.DESCRIPTION)
+        or get_metadata_property(get_nested(values, 'sourceTable.metadata', default=[]), MetadataField.DESCRIPTION)
+        or values.get('description')
+        or None
+    )
+
+
 class TableColumnInfo(BaseModel):
     name: str = Field(description='Plain name of the column.')
     quoted_name: str = Field(
@@ -352,14 +371,7 @@ class TableSummary(BaseModel):
     @model_validator(mode='before')
     @classmethod
     def set_description(cls, values: dict[str, Any]) -> dict[str, Any]:
-        # KBC.description metadata holds the curated, user-editable description and must win over the
-        # legacy top-level `description` field, which is auto-generated and stale for linked tables.
-        description = (
-            get_metadata_property(values.get('metadata', []), MetadataField.DESCRIPTION)
-            or get_metadata_property(get_nested(values, 'sourceTable.metadata', default=[]), MetadataField.DESCRIPTION)
-            or values.get('description')
-        )
-        values['description'] = description or None
+        values['description'] = _metadata_table_description(values)
         return values
 
     @model_validator(mode='before')
@@ -419,8 +431,11 @@ class TableDetail(TableSummary):
     @model_validator(mode='before')
     @classmethod
     def set_description(cls, values: dict[str, Any]) -> dict[str, Any]:
-        # The native table definition is the source the UI shows; Storage resolves alias inheritance there.
-        values['description'] = get_nested(values, 'definition.description') or None
+        if _has_native_definition(values):
+            # The native table definition is the source the UI shows; Storage resolves alias inheritance there.
+            values['description'] = get_nested(values, 'definition.description') or None
+        else:
+            values['description'] = _metadata_table_description(values)
         return values
 
     def with_lineage_metadata(self, values: dict[str, Any]) -> 'TableDetail':
@@ -794,6 +809,7 @@ async def _get_table(
     raw_source_column_metadata = cast(
         dict[str, list[dict[str, Any]]], get_nested(raw_table, 'sourceTable.columnMetadata', default={})
     )
+    native_definition = _has_native_definition(raw_table)
     is_typed = bool(raw_table.get('isTyped'))
     definition_columns = {
         cast(str, col['name']): cast(dict[str, Any], col)
@@ -809,17 +825,23 @@ async def _get_table(
         definition_column = definition_columns.get(col_name, {})
         column_definition = cast(dict[str, Any], definition_column.get('definition') or {})
 
-        description: str | None = column_definition.get('description') or None
+        col_meta = raw_column_metadata.get(col_name, [])
+        source_col_meta = raw_source_column_metadata.get(col_name, [])
 
-        if is_typed:
+        if native_definition:
+            description: str | None = column_definition.get('description') or None
+        else:
+            description = get_metadata_property(col_meta, MetadataField.DESCRIPTION)
+            if not description:
+                description = get_metadata_property(source_col_meta, MetadataField.DESCRIPTION)
+
+        if native_definition and is_typed:
             base_type: str | None = definition_column.get('basetype')
             native_type: str | None = column_definition.get('type')
             nullable = bool(column_definition.get('nullable', False))
         else:
-            # Non-typed tables carry no types in the native definition, only the KBC.datatype.* metadata.
-            col_meta = raw_column_metadata.get(col_name, [])
-            source_col_meta = raw_source_column_metadata.get(col_name, [])
-
+            # Non-typed tables and non-native backends carry no types in the native definition, only the
+            # KBC.datatype.* metadata.
             base_type = get_metadata_property(col_meta, MetadataField.DATATYPE_BASETYPE, preferred_providers=['user'])
             if not base_type:
                 base_type = get_metadata_property(
@@ -985,19 +1007,38 @@ def _job_timestamp(job: JsonDict) -> datetime | None:
     return parse_iso_timestamp(raw) if isinstance(raw, str) else None
 
 
-async def _definition_branch_id(client: KeboolaClient, table_id: str) -> str:
-    """Branch whose table definition is written: the dev branch only when the table exists in it."""
-    if not await has_storage_branches(client):
-        return 'default'
-    _, dev_table = await merged_table_detail(client, table_id)
-    return cast(str, client.branch_id) if dev_table else 'default'
+async def _resolve_write_target(client: KeboolaClient, table_id: str) -> tuple[str, bool]:
+    """
+    Resolve where a table description is written.
+
+    Returns the branch ID and whether the native table definition is used (otherwise the KBC.description metadata).
+    The dev branch is written only when the table exists in it; legacy dev branches and production-only tables are
+    written in the default branch.
+    """
+    prod_table, dev_table = await merged_table_detail(client, table_id)
+    table = dev_table or prod_table
+    if not table:
+        raise ValueError(f'Table "{table_id}" not found.')
+    branch_id = cast(str, client.branch_id) if dev_table and await has_storage_branches(client) else 'default'
+    return branch_id, _has_native_definition(table)
 
 
 async def _update_table_description(client: KeboolaClient, table_id: str, description: str) -> UpdateItemResult:
-    """Update a table description through the native table definition."""
+    """Update a table description."""
     try:
+        branch_id, native_definition = await _resolve_write_target(client, table_id)
+        if not native_definition:
+            response = await client.storage_client.table_metadata_update(
+                table_id=table_id,
+                metadata={MetadataField.DESCRIPTION: description},
+                columns_metadata={},
+            )
+            raw_metadata = cast(list[JsonDict], response.get('metadata', []))
+            entry = next(entry for entry in raw_metadata if entry.get('key') == MetadataField.DESCRIPTION)
+            return UpdateItemResult(item_id=table_id, success=True, timestamp=entry['timestamp'])
+
         job = await client.storage_client.table_definition_update(
-            table_id=table_id, description=description, branch_id=await _definition_branch_id(client, table_id)
+            table_id=table_id, description=description, branch_id=branch_id
         )
         return UpdateItemResult(item_id=table_id, success=True, timestamp=_job_timestamp(job))
     except Exception as e:
@@ -1007,12 +1048,14 @@ async def _update_table_description(client: KeboolaClient, table_id: str, descri
 async def _update_column_descriptions(
     client: KeboolaClient, table_id: str, column_updates: dict[str, str]
 ) -> list[UpdateItemResult]:
-    """Update multiple column descriptions for a single table through the native table definition."""
+    """Update multiple column descriptions for a single table."""
     try:
+        branch_id, native_definition = await _resolve_write_target(client, table_id)
+        if not native_definition:
+            return await _update_column_descriptions_metadata(client, table_id, column_updates)
+
         job = await client.storage_client.table_definition_update(
-            table_id=table_id,
-            column_descriptions=column_updates,
-            branch_id=await _definition_branch_id(client, table_id),
+            table_id=table_id, column_descriptions=column_updates, branch_id=branch_id
         )
         timestamp = _job_timestamp(job)
         return [
@@ -1025,6 +1068,33 @@ async def _update_column_descriptions(
             UpdateItemResult(item_id=f'{table_id}.{column_name}', success=False, error=str(e))
             for column_name in column_updates
         ]
+
+
+async def _update_column_descriptions_metadata(
+    client: KeboolaClient, table_id: str, column_updates: dict[str, str]
+) -> list[UpdateItemResult]:
+    """Update column descriptions through KBC.description metadata, for backends without a native definition."""
+    columns_metadata = {
+        column_name: [{'key': MetadataField.DESCRIPTION, 'value': description, 'columnName': column_name}]
+        for column_name, description in column_updates.items()
+    }
+    response = await client.storage_client.table_metadata_update(table_id=table_id, columns_metadata=columns_metadata)
+
+    column_metadata = cast(dict[str, list[JsonDict]], response.get('columnsMetadata', {}))
+    results = []
+    for column_name in column_updates:
+        try:
+            description_entry = next(
+                entry for entry in column_metadata.get(column_name, []) if entry.get('key') == MetadataField.DESCRIPTION
+            )
+            results.append(
+                UpdateItemResult(
+                    item_id=f'{table_id}.{column_name}', success=True, timestamp=description_entry['timestamp']
+                )
+            )
+        except Exception as e:
+            results.append(UpdateItemResult(item_id=f'{table_id}.{column_name}', success=False, error=str(e)))
+    return results
 
 
 @tool_errors()

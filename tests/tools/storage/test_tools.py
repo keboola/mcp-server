@@ -79,7 +79,7 @@ def _get_sapi_tables(details: bool | None = None) -> list[dict[str, Any]]:
                     {'name': 'surname', 'definition': {}},
                 ],
             },
-            'bucket': {'id': 'in.c-foo', 'name': 'c-foo'},
+            'bucket': {'id': 'in.c-foo', 'name': 'c-foo', 'backend': 'snowflake'},
         },
         # emails table in c-foo bucket in the production branch
         {
@@ -126,7 +126,7 @@ def _get_sapi_tables(details: bool | None = None) -> list[dict[str, Any]]:
                     {'name': 'user_id', 'definition': {}},
                 ],
             },
-            'bucket': {'id': 'in.c-foo', 'name': 'c-foo'},
+            'bucket': {'id': 'in.c-foo', 'name': 'c-foo', 'backend': 'snowflake'},
         },
         # emails table in c-foo bucket in the dev branch
         {
@@ -173,7 +173,7 @@ def _get_sapi_tables(details: bool | None = None) -> list[dict[str, Any]]:
                     {'name': 'user_id', 'definition': {}},
                 ],
             },
-            'bucket': {'id': 'in.c-1246948-foo', 'name': 'c-1246948-foo'},
+            'bucket': {'id': 'in.c-1246948-foo', 'name': 'c-1246948-foo', 'backend': 'snowflake'},
         },
         # assets table in c-foo bucket in the dev branch
         {
@@ -213,7 +213,7 @@ def _get_sapi_tables(details: bool | None = None) -> list[dict[str, Any]]:
                     {'id': '1234', 'key': 'KBC.datatype.nullable', 'value': '1'},
                 ],
             },
-            'bucket': {'id': 'in.c-1246948-foo', 'name': 'c-1246948-foo'},
+            'bucket': {'id': 'in.c-1246948-foo', 'name': 'c-1246948-foo', 'backend': 'snowflake'},
             'sourceTable': {
                 'project': {
                     'name': 'Source Project',
@@ -1220,6 +1220,7 @@ def test_bucket_detail_description_fallback(raw_data: dict[str, Any], expected_d
                 'description': 'Table created by Transformation API',
                 'metadata': [{'key': 'KBC.description', 'value': 'Stale meta desc'}],
                 'definition': {'description': 'Native desc'},
+                'bucket': {'backend': 'snowflake'},
             },
             'Native desc',
         ),
@@ -1231,10 +1232,22 @@ def test_bucket_detail_description_fallback(raw_data: dict[str, Any], expected_d
                 'metadata': [{'key': 'KBC.description', 'value': 'Meta desc'}],
                 'sourceTable': {'metadata': [{'key': 'KBC.description', 'value': 'Source desc'}]},
                 'definition': {'columns': []},
+                'bucket': {'backend': 'bigquery'},
             },
             None,
         ),
-        (TableDetail, {'description': '', 'metadata': []}, None),
+        (TableDetail, {'description': '', 'metadata': [], 'bucket': {'backend': 'snowflake'}}, None),
+        # a backend without the native definition keeps the KBC.description metadata
+        (
+            TableDetail,
+            {
+                'description': 'Direct desc',
+                'metadata': [{'key': 'KBC.description', 'value': 'Meta desc'}],
+                'definition': {'description': 'Ignored'},
+                'bucket': {'backend': 'synapse'},
+            },
+            'Meta desc',
+        ),
         # the listing still reads the KBC.description metadata until it can use the native definition
         (
             TableSummary,
@@ -1364,6 +1377,7 @@ def test_bucket_detail_updated_resolution(raw_data: dict[str, Any], expected_upd
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     (
+        'backend',
         'is_typed',
         'definition_column',
         'column_metadata',
@@ -1376,6 +1390,7 @@ def test_bucket_detail_updated_resolution(raw_data: dict[str, Any], expected_upd
     [
         # typed table: description and types come from the native definition, stale metadata is ignored
         (
+            'snowflake',
             True,
             {
                 'name': 'col1',
@@ -1395,9 +1410,40 @@ def test_bucket_detail_updated_resolution(raw_data: dict[str, Any], expected_upd
             True,
         ),
         # typed table without a definition column falls back to the default type
-        (True, None, [{'key': 'KBC.datatype.type', 'value': 'NUMBER'}], [], None, None, 'VARCHAR', False),
+        (
+            'snowflake',
+            True,
+            None,
+            [{'key': 'KBC.datatype.type', 'value': 'NUMBER'}],
+            [],
+            None,
+            None,
+            'VARCHAR',
+            False,
+        ),
+        # a backend without the native definition reads description and types from the metadata
+        (
+            'synapse',
+            True,
+            {
+                'name': 'col1',
+                'definition': {'type': 'NUMBER', 'nullable': True, 'description': 'Ignored'},
+                'basetype': 'NUMERIC',
+            },
+            [
+                {'key': 'KBC.description', 'value': 'Meta desc'},
+                {'key': 'KBC.datatype.basetype', 'value': 'STRING'},
+                {'key': 'KBC.datatype.type', 'value': 'VARCHAR'},
+            ],
+            [],
+            'Meta desc',
+            'STRING',
+            'VARCHAR',
+            False,
+        ),
         # non-typed table: description from the definition, types from KBC.datatype.* (own metadata first)
         (
+            'snowflake',
             False,
             {'name': 'col1', 'definition': {'description': 'Native desc'}},
             [
@@ -1414,6 +1460,7 @@ def test_bucket_detail_updated_resolution(raw_data: dict[str, Any], expected_upd
         ),
         # non-typed table: types fall back to the source column metadata, no description anywhere
         (
+            'bigquery',
             False,
             {'name': 'col1', 'definition': {}},
             [],
@@ -1430,6 +1477,7 @@ def test_bucket_detail_updated_resolution(raw_data: dict[str, Any], expected_upd
     ],
 )
 async def test_get_table_column_definition(
+    backend: str,
     is_typed: bool,
     definition_column: dict[str, Any] | None,
     column_metadata: list[dict[str, Any]],
@@ -1453,7 +1501,7 @@ async def test_get_table_column_definition(
         'columns': ['col1'],
         'columnMetadata': {'col1': column_metadata},
         'metadata': [],
-        'bucket': {'id': 'in.c-test', 'name': 'c-test'},
+        'bucket': {'id': 'in.c-test', 'name': 'c-test', 'backend': backend},
         'sourceTable': {'columnMetadata': {'col1': source_column_metadata}},
         'isTyped': is_typed,
         'definition': {'columns': [definition_column] if definition_column else []},
@@ -1527,8 +1575,23 @@ async def test_update_descriptions_bucket_success(
     )
 
 
+@pytest.fixture
+def merged_table(mocker: MockerFixture) -> Any:
+    """Patches the table lookup of update_descriptions; the table is a Snowflake table by default."""
+
+    def _patch(backend: str = 'snowflake', dev_table_exists: bool = False) -> Any:
+        table = {'id': 'in.c-test.test-table', 'bucket': {'backend': backend}}
+        return mocker.patch(
+            'keboola_mcp_server.tools.storage.tools.merged_table_detail',
+            new=mocker.AsyncMock(return_value=(table, table if dev_table_exists else None)),
+        )
+
+    _patch()
+    return _patch
+
+
 @pytest.mark.asyncio
-async def test_update_descriptions_table_success(mocker: MockerFixture, mcp_context_client) -> None:
+async def test_update_descriptions_table_success(mocker: MockerFixture, mcp_context_client, merged_table) -> None:
     """Test successful update of table description through the native table definition."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.storage_client.table_definition_update = mocker.AsyncMock(
@@ -1560,7 +1623,7 @@ async def test_update_descriptions_table_success(mocker: MockerFixture, mcp_cont
 
 
 @pytest.mark.asyncio
-async def test_update_descriptions_column_success(mocker: MockerFixture, mcp_context_client) -> None:
+async def test_update_descriptions_column_success(mocker: MockerFixture, mcp_context_client, merged_table) -> None:
     """Test successful update of column description through the native table definition."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.storage_client.table_definition_update = mocker.AsyncMock(
@@ -1600,6 +1663,7 @@ async def test_update_descriptions_mixed_types_success(
     mocker: MockerFixture,
     mcp_context_client,
     mock_update_bucket_description_response,
+    merged_table,
 ) -> None:
     """Test successful update of mixed types using update_descriptions."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
@@ -2056,16 +2120,14 @@ async def test_update_descriptions_definition_branch(
     expected_branch_id: str,
     mocker: MockerFixture,
     mcp_context_client,
+    merged_table,
 ) -> None:
     """Test that the table definition is written to the branch where the table lives."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.branch_id = '1246948'
     keboola_client.has_feature = mocker.AsyncMock(return_value=storage_branches)
     keboola_client.storage_client.table_definition_update = mocker.AsyncMock(return_value={})
-    mocker.patch(
-        'keboola_mcp_server.tools.storage.tools.merged_table_detail',
-        new=mocker.AsyncMock(return_value=({'id': 't'}, {'id': 't'} if dev_table_exists else None)),
-    )
+    merged_table(dev_table_exists=dev_table_exists)
 
     result = await update_descriptions(
         ctx=mcp_context_client,
@@ -2076,3 +2138,53 @@ async def test_update_descriptions_definition_branch(
     keboola_client.storage_client.table_definition_update.assert_called_once_with(
         table_id='in.c-test.test-table', description='Desc', branch_id=expected_branch_id
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('item_id', 'expected_metadata_call'),
+    [
+        (
+            'in.c-test.test-table',
+            {'metadata': {MetadataField.DESCRIPTION: 'Desc'}, 'columns_metadata': {}},
+        ),
+        (
+            'in.c-test.test-table.column_name',
+            {
+                'columns_metadata': {
+                    'column_name': [{'key': MetadataField.DESCRIPTION, 'value': 'Desc', 'columnName': 'column_name'}]
+                }
+            },
+        ),
+    ],
+)
+async def test_update_descriptions_backend_without_definition(
+    item_id: str,
+    expected_metadata_call: dict[str, Any],
+    mocker: MockerFixture,
+    mcp_context_client,
+    merged_table,
+) -> None:
+    """Test that a backend without the native table definition keeps the KBC.description metadata write."""
+    merged_table(backend='synapse')
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.storage_client.table_definition_update = mocker.AsyncMock()
+    keboola_client.storage_client.table_metadata_update = mocker.AsyncMock(
+        return_value={
+            'metadata': [{'key': MetadataField.DESCRIPTION, 'timestamp': '2024-01-01T00:00:00Z'}],
+            'columnsMetadata': {
+                'column_name': [{'key': MetadataField.DESCRIPTION, 'timestamp': '2024-01-01T00:00:00Z'}]
+            },
+        }
+    )
+
+    result = await update_descriptions(
+        ctx=mcp_context_client, updates=[DescriptionUpdate(item_id=item_id, description='Desc')]
+    )
+
+    assert result.successful == 1
+    assert result.results[0].timestamp == parse_iso_timestamp('2024-01-01T00:00:00Z')
+    keboola_client.storage_client.table_metadata_update.assert_called_once_with(
+        table_id='in.c-test.test-table', **expected_metadata_call
+    )
+    keboola_client.storage_client.table_definition_update.assert_not_called()
