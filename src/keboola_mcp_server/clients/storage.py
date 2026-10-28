@@ -6,6 +6,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime
 from typing import Any, Literal, cast
 
+import httpx
 from pydantic import AliasChoices, BaseModel, Field, field_validator
 
 from keboola_mcp_server.clients.base import InvalidArgumentError, JsonDict, KeboolaServiceClient, RawKeboolaClient
@@ -311,6 +312,7 @@ class AsyncStorageClient(KeboolaServiceClient):
     JOB_POLL_INTERVAL_SECONDS = 0.5
     JOB_FINAL_STATUSES = frozenset({'success', 'warning', 'error', 'cancelled'})
     JOB_SUCCESS_STATUSES = frozenset({'success', 'warning'})
+    NO_CHANGES_ERROR_MESSAGE = 'No table definition changes were provided'
 
     def __init__(
         self,
@@ -996,6 +998,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         description: str | None = None,
         column_descriptions: Mapping[str, str] | None = None,
         is_description_system_managed: bool = False,
+        branch_id: str | None = None,
     ) -> JsonDict:
         """
         Updates the native description of a table and/or its columns and waits for the Storage job to finish.
@@ -1005,7 +1008,8 @@ class AsyncStorageClient(KeboolaServiceClient):
         :param column_descriptions: Mapping of column names to their new descriptions.
         :param is_description_system_managed: Whether the table description is managed by the system. User edits
             keep it False so that Output Mapping never overwrites them.
-        :return: The finished Storage job as a dictionary.
+        :param branch_id: Optional branch ID override (uses client's branch_id if not specified)
+        :return: The finished Storage job as a dictionary; empty if the values already matched the stored ones.
         """
         if description is None and not column_descriptions:
             raise ValueError('At least one of the `description` or `column_descriptions` arguments must be provided.')
@@ -1017,10 +1021,14 @@ class AsyncStorageClient(KeboolaServiceClient):
         if column_descriptions:
             payload['columns'] = [{'name': name, 'description': desc} for name, desc in column_descriptions.items()]
 
-        job = cast(
-            JsonDict,
-            await self.put(endpoint=f'branch/{self._branch_id}/tables/{table_id}/definition', data=payload),
-        )
+        bid = branch_id or self._branch_id
+        try:
+            job = cast(JsonDict, await self.put(endpoint=f'branch/{bid}/tables/{table_id}/definition', data=payload))
+        except httpx.HTTPStatusError as e:
+            # Storage rejects a request whose values equal the stored ones; for an idempotent write that is a success.
+            if e.response.status_code == 400 and self.NO_CHANGES_ERROR_MESSAGE in str(e):
+                return {}
+            raise
         return await self._wait_for_job(job)
 
     async def _wait_for_job(self, job: JsonDict) -> JsonDict:

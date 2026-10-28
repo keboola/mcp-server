@@ -1554,7 +1554,7 @@ async def test_update_descriptions_table_success(mocker: MockerFixture, mcp_cont
     assert table_result.timestamp == parse_iso_timestamp('2024-01-01T00:00:00Z')
 
     keboola_client.storage_client.table_definition_update.assert_called_once_with(
-        table_id='in.c-test.test-table', description='Updated table description'
+        table_id='in.c-test.test-table', description='Updated table description', branch_id='default'
     )
     keboola_client.storage_client.table_metadata_update.assert_not_called()
 
@@ -1588,7 +1588,9 @@ async def test_update_descriptions_column_success(mocker: MockerFixture, mcp_con
     assert column_result.timestamp == parse_iso_timestamp('2024-01-01T00:00:00Z')
 
     keboola_client.storage_client.table_definition_update.assert_called_once_with(
-        table_id='in.c-test.test-table', column_descriptions={'column_name': 'Updated column description'}
+        table_id='in.c-test.test-table',
+        column_descriptions={'column_name': 'Updated column description'},
+        branch_id='default',
     )
     keboola_client.storage_client.table_metadata_update.assert_not_called()
 
@@ -1638,7 +1640,7 @@ async def test_update_descriptions_mixed_types_success(
         metadata={MetadataField.DESCRIPTION: 'Updated bucket description'},
     )
     keboola_client.storage_client.table_definition_update.assert_called_once_with(
-        table_id='in.c-test.test-table', description='Updated table description'
+        table_id='in.c-test.test-table', description='Updated table description', branch_id='default'
     )
 
 
@@ -2036,4 +2038,41 @@ async def test_get_table_storage_branches(mocker: MockerFixture, mcp_context_cli
     # table_detail called with both default and branch endpoints
     keboola_client.storage_client.table_detail.assert_has_calls(
         [call('out.c-model.customers', branch_id='default'), call('out.c-model.customers', branch_id=branch_id)]
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('storage_branches', 'dev_table_exists', 'expected_branch_id'),
+    [
+        (False, False, 'default'),  # legacy dev branches keep the table in the default branch
+        (True, True, '1246948'),  # the table exists in the dev branch
+        (True, False, 'default'),  # production-only table
+    ],
+)
+async def test_update_descriptions_definition_branch(
+    storage_branches: bool,
+    dev_table_exists: bool,
+    expected_branch_id: str,
+    mocker: MockerFixture,
+    mcp_context_client,
+) -> None:
+    """Test that the table definition is written to the branch where the table lives."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.branch_id = '1246948'
+    keboola_client.has_feature = mocker.AsyncMock(return_value=storage_branches)
+    keboola_client.storage_client.table_definition_update = mocker.AsyncMock(return_value={})
+    mocker.patch(
+        'keboola_mcp_server.tools.storage.tools.merged_table_detail',
+        new=mocker.AsyncMock(return_value=({'id': 't'}, {'id': 't'} if dev_table_exists else None)),
+    )
+
+    result = await update_descriptions(
+        ctx=mcp_context_client,
+        updates=[DescriptionUpdate(item_id='in.c-test.test-table', description='Desc')],
+    )
+
+    assert result.successful == 1
+    keboola_client.storage_client.table_definition_update.assert_called_once_with(
+        table_id='in.c-test.test-table', description='Desc', branch_id=expected_branch_id
     )

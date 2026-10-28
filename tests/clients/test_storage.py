@@ -1,6 +1,7 @@
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+import httpx
 import pytest
 from pytest_mock import MockerFixture
 
@@ -328,13 +329,52 @@ class TestTableDefinitionUpdate:
         )
         assert raw_client.get.call_count == 2
 
+    @pytest.mark.parametrize('initial_status', ['error', 'processing'])
     @pytest.mark.asyncio
-    async def test_failed_job_raises(self, raw_client: RawKeboolaClient) -> None:
-        raw_client.put.return_value = {'id': 7, 'status': 'error', 'error': {'message': 'Backend failed'}}
+    async def test_failed_job_raises(
+        self, mocker: MockerFixture, raw_client: RawKeboolaClient, initial_status: str
+    ) -> None:
+        mocker.patch('keboola_mcp_server.clients.storage.asyncio.sleep', new=mocker.AsyncMock())
+        failed = {'id': 7, 'status': 'error', 'error': {'message': 'Backend failed'}}
+        raw_client.put.return_value = failed if initial_status == 'error' else {'id': 7, 'status': initial_status}
+        raw_client.get.return_value = failed
         client = AsyncStorageClient(raw_client=raw_client)
 
         with pytest.raises(RuntimeError, match='Backend failed'):
             await client.table_definition_update('in.c-b.t', description='x')
+
+    @pytest.mark.asyncio
+    async def test_unfinished_job_times_out(self, mocker: MockerFixture, raw_client: RawKeboolaClient) -> None:
+        mocker.patch('keboola_mcp_server.clients.storage.asyncio.sleep', new=mocker.AsyncMock())
+        mocker.patch.object(AsyncStorageClient, 'JOB_TIMEOUT_SECONDS', -1.0)
+        raw_client.put.return_value = {'id': 7, 'status': 'processing'}
+        client = AsyncStorageClient(raw_client=raw_client)
+
+        with pytest.raises(TimeoutError, match='did not finish'):
+            await client.table_definition_update('in.c-b.t', description='x')
+
+    @pytest.mark.parametrize(
+        ('status_code', 'message', 'is_noop'),
+        [
+            (400, 'API error: No table definition changes were provided.', True),
+            (400, 'API error: Invalid column.', False),
+            (404, 'No table definition changes were provided.', False),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_unchanged_values_are_a_noop(
+        self, raw_client: RawKeboolaClient, status_code: int, message: str, is_noop: bool
+    ) -> None:
+        raw_client.put.side_effect = httpx.HTTPStatusError(
+            message, request=httpx.Request('PUT', 'https://x'), response=httpx.Response(status_code)
+        )
+        client = AsyncStorageClient(raw_client=raw_client)
+
+        if is_noop:
+            assert await client.table_definition_update('in.c-b.t', description='x') == {}
+        else:
+            with pytest.raises(httpx.HTTPStatusError):
+                await client.table_definition_update('in.c-b.t', description='x')
 
     @pytest.mark.asyncio
     async def test_nothing_to_update_raises(self, raw_client: RawKeboolaClient) -> None:

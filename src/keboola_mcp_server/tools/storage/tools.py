@@ -985,10 +985,20 @@ def _job_timestamp(job: JsonDict) -> datetime | None:
     return parse_iso_timestamp(raw) if isinstance(raw, str) else None
 
 
+async def _definition_branch_id(client: KeboolaClient, table_id: str) -> str:
+    """Branch whose table definition is written: the dev branch only when the table exists in it."""
+    if not await has_storage_branches(client):
+        return 'default'
+    _, dev_table = await merged_table_detail(client, table_id)
+    return cast(str, client.branch_id) if dev_table else 'default'
+
+
 async def _update_table_description(client: KeboolaClient, table_id: str, description: str) -> UpdateItemResult:
     """Update a table description through the native table definition."""
     try:
-        job = await client.storage_client.table_definition_update(table_id=table_id, description=description)
+        job = await client.storage_client.table_definition_update(
+            table_id=table_id, description=description, branch_id=await _definition_branch_id(client, table_id)
+        )
         return UpdateItemResult(item_id=table_id, success=True, timestamp=_job_timestamp(job))
     except Exception as e:
         return UpdateItemResult(item_id=table_id, success=False, error=str(e))
@@ -999,7 +1009,11 @@ async def _update_column_descriptions(
 ) -> list[UpdateItemResult]:
     """Update multiple column descriptions for a single table through the native table definition."""
     try:
-        job = await client.storage_client.table_definition_update(table_id=table_id, column_descriptions=column_updates)
+        job = await client.storage_client.table_definition_update(
+            table_id=table_id,
+            column_descriptions=column_updates,
+            branch_id=await _definition_branch_id(client, table_id),
+        )
         timestamp = _job_timestamp(job)
         return [
             UpdateItemResult(item_id=f'{table_id}.{column_name}', success=True, timestamp=timestamp)
