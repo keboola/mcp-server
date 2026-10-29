@@ -24,6 +24,7 @@ from keboola_mcp_server.clients.data_science import (
     RuntimeResponse,
 )
 from keboola_mcp_server.clients.storage import ConfigurationAPIResponse
+from keboola_mcp_server.elicitation import offer_url
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
 from keboola_mcp_server.mcp import PlainFunctionTool as FunctionTool
@@ -938,11 +939,14 @@ async def modify_streamlit_data_app(
             )
             response = _update_response(data_app)
             written_authorization = updated_config.get('authorization') or {}
+            config_link = links_manager.get_data_app_config_link(configuration_id, name, False).url
             oidc_hint = _oidc_change_summary(
                 written_authorization,
-                config_link=links_manager.get_data_app_config_link(configuration_id, name, False).url,
+                config_link=config_link,
                 roles_requested=bool(oidc and oidc.allowed_roles),
             )
+            if _oidc_setup_required(written_authorization):
+                offer_url(_OIDC_SECRET_PAGE_MESSAGE, config_link)
             return ModifiedDataAppOutput(
                 response=response,
                 change_summary='\n'.join(note for note in (folder_hint, oidc_hint) if note) or None,
@@ -1613,11 +1617,14 @@ async def modify_python_js_data_app(
             if storage_access is not None
             else None
         )
+        config_link = links_manager.get_data_app_config_link(configuration_id, name or data_app.name, False).url
         oidc_hint = _oidc_change_summary(
             written_authorization,
-            config_link=links_manager.get_data_app_config_link(configuration_id, name or data_app.name, False).url,
+            config_link=config_link,
             roles_requested=bool(oidc and oidc.allowed_roles),
         )
+        if _oidc_setup_required(written_authorization):
+            offer_url(_OIDC_SECRET_PAGE_MESSAGE, config_link)
         change_summary = (
             '\n'.join(
                 note
@@ -3121,6 +3128,11 @@ def _oidc_callback_url(client: KeboolaClient, data_app_id: str, configuration: M
     if not slug or _is_draft_config(configuration):
         return None
     return f'{_hub_url(client, data_app_id, slug)}/_proxy/callback'
+
+
+_OIDC_SECRET_PAGE_MESSAGE = (
+    "Open the data app's configuration page, go to the Authentication section, enter the OIDC client secret and save."
+)
 
 
 def _oidc_change_summary(authorization: Mapping[str, Any], config_link: str, roles_requested: bool) -> str | None:

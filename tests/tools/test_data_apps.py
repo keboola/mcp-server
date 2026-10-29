@@ -3,6 +3,7 @@ import re
 import sys
 from types import ModuleType
 from typing import Literal, cast
+from unittest.mock import MagicMock
 
 import pytest
 from fastmcp import Context
@@ -1979,6 +1980,7 @@ def _assert_oidc_output(
     result: ModifiedDataAppOutput | ModifiedPythonJsDataAppOutput,
     written: dict,
     callback_url: str,
+    offer_url: MagicMock,
     expect_setup_required: bool,
     expected_phrases: list[str],
     unexpected_phrases: list[str],
@@ -1992,6 +1994,14 @@ def _assert_oidc_output(
         assert phrase in summary
     for phrase in unexpected_phrases:
         assert phrase not in summary
+    if expect_setup_required:
+        offer_url.assert_called_once()
+        message, url = offer_url.call_args.args
+        assert 'client secret' in message
+        assert url.endswith('/data-apps/cfg-1')
+        assert url in summary
+    else:
+        offer_url.assert_not_called()
 
 
 def _stored_oidc_authorization(stored_secret: str | None) -> dict:
@@ -2023,6 +2033,7 @@ async def test_modify_python_js_data_app_update_oidc_output(
     keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value={})
     mocker.patch('keboola_mcp_server.tools.data_apps.set_cfg_update_metadata', mocker.AsyncMock())
     mocker.patch('keboola_mcp_server.tools.data_apps.apply_configuration_folder', mocker.AsyncMock(return_value=None))
+    offer_url = mocker.patch('keboola_mcp_server.tools.data_apps.offer_url')
 
     result = await modify_python_js_data_app(
         ctx=mcp_context_client,
@@ -2038,6 +2049,7 @@ async def test_modify_python_js_data_app_update_oidc_output(
         result,
         written,
         'https://prod-app-1.hub.test.keboola.com/_proxy/callback',
+        offer_url,
         expect_setup_required,
         expected_phrases,
         unexpected_phrases,
@@ -2112,6 +2124,7 @@ async def test_modify_streamlit_data_app_update_oidc_output(
     )
     mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=existing))
     streamlit_client.storage_client.configuration_update = mocker.AsyncMock(return_value={'version': 3})
+    offer_url = mocker.patch('keboola_mcp_server.tools.data_apps.offer_url')
 
     result = await modify_streamlit_data_app(
         ctx=mcp_context_client,
@@ -2131,6 +2144,7 @@ async def test_modify_streamlit_data_app_update_oidc_output(
         result,
         written,
         'https://my-app-app-1.hub.test.keboola.com/_proxy/callback',
+        offer_url,
         expect_setup_required,
         expected_phrases,
         unexpected_phrases,
