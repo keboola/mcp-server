@@ -193,6 +193,13 @@ class OidcAuthConfig(BaseModel):
     )
 
 
+def _type_object_on_ref(schema: dict[str, Any]) -> None:
+    """Add `type: object` to the `$ref` member of the schema, as some MCP clients need every member typed."""
+    for member in schema.get('anyOf', []):
+        if '$ref' in member:
+            member['type'] = 'object'
+
+
 _NO_AUTH_ON_DRAFT_MESSAGE = (
     "authentication_type='no-auth' is not allowed on draft data apps. A draft inherits the prod "
     'app\'s data access, so disabling its authentication exposes Storage-reading and Storage-writing '
@@ -803,6 +810,7 @@ async def modify_streamlit_data_app(
                 'type. Only for updating an existing app, not for create. It has no secret '
                 'field: the user enters the client secret in the Keboola UI.'
             ),
+            json_schema_extra=_type_object_on_ref,
         ),
     ] = None,
     change_description: Annotated[
@@ -1258,6 +1266,7 @@ async def modify_python_js_data_app(
                 'type. Only for updating an existing prod app, not for create or drafts. It has no secret '
                 'field: the user enters the client secret in the Keboola UI.'
             ),
+            json_schema_extra=_type_object_on_ref,
         ),
     ] = None,
     auto_suspend_after_seconds: Annotated[

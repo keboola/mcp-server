@@ -2803,7 +2803,8 @@ working; tell the user both.
     "oidc": {
       "anyOf": [
         {
-          "$ref": "#/$defs/OidcAuthConfig"
+          "$ref": "#/$defs/OidcAuthConfig",
+          "type": "object"
         },
         {
           "type": "null"
@@ -3031,7 +3032,8 @@ SQL & DATA TYPE RULES:
     "oidc": {
       "anyOf": [
         {
-          "$ref": "#/$defs/OidcAuthConfig"
+          "$ref": "#/$defs/OidcAuthConfig",
+          "type": "object"
         },
         {
           "type": "null"
