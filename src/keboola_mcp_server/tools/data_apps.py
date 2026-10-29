@@ -167,7 +167,31 @@ INJECTED_BLOCK_RE = re.compile(
 )
 
 # Type of the authentication used in the data app
-AuthenticationType = Literal['no-auth', 'basic-auth', 'default']
+AuthenticationType = Literal['no-auth', 'basic-auth', 'oidc', 'default']
+
+OIDC_PROVIDER_ID = 'oidc-1'
+
+
+class OidcAuthConfig(BaseModel):
+    """OpenID Connect settings of a data app. The client secret is never part of it."""
+
+    client_id: str = Field(description='The OIDC client ID registered at the identity provider.')
+    issuer_url: str = Field(description='The URL of the OIDC issuer, for example https://login.example.com.')
+    logout_url: str | None = Field(
+        default=None,
+        description=(
+            'The URL where the user is sent after logout. '
+            'Omit it or pass null to keep the stored value. Pass an empty string to remove it.'
+        ),
+    )
+    allowed_roles: list[str] | None = Field(
+        default=None,
+        description=(
+            'The roles that may open the app. '
+            'Omit it or pass null to keep the stored value. Pass an empty list to remove it.'
+        ),
+    )
+
 
 _NO_AUTH_ON_DRAFT_MESSAGE = (
     "authentication_type='no-auth' is not allowed on draft data apps. A draft inherits the prod "
@@ -1511,7 +1535,9 @@ async def modify_python_js_data_app(
             )
         # On create, treat 'default' as 'basic-auth' (safe-by-default) to match modify_streamlit_data_app.
         uses_basic_auth = authentication_type in ('basic-auth', 'default')
-        authorization_model = DataAppConfig.Authorization.model_validate(_get_authorization(uses_basic_auth))
+        authorization_model = DataAppConfig.Authorization.model_validate(
+            _build_authorization('basic-auth' if uses_basic_auth else 'no-auth')
+        )
 
         git_clone_url: str | None = None
         draft_branch: str | None = None
@@ -1945,7 +1971,9 @@ def _update_existing_code_data_app_config(
     if auto_suspend_after_seconds is not None:
         new_config['parameters']['autoSuspendAfterSeconds'] = auto_suspend_after_seconds
     if authentication_type != 'default':
-        new_config['authorization'] = _get_authorization(authentication_type == 'basic-auth')
+        new_config['authorization'] = _build_authorization(
+            'basic-auth' if authentication_type == 'basic-auth' else 'no-auth'
+        )
     if branch is not None:
         data_app_block = new_config['parameters'].get('dataApp')
         git_block = data_app_block.get('git') if isinstance(data_app_block, dict) else None
@@ -2450,7 +2478,9 @@ def _build_data_app_config(
         'packages': packages,
     }
     # By default secure with basic authorization
-    authorization = _get_authorization(authentication_type in ['basic-auth', 'default'])
+    authorization = _build_authorization(
+        'basic-auth' if authentication_type in ['basic-auth', 'default'] else 'no-auth'
+    )
     return {'parameters': parameters, 'authorization': authorization}
 
 
@@ -2484,7 +2514,9 @@ def _update_existing_data_app_config(
     new_config['parameters']['dataApp']['secrets'] = updated_secrets
 
     if authentication_type != 'default':
-        new_config['authorization'] = _get_authorization(authentication_type == 'basic-auth')
+        new_config['authorization'] = _build_authorization(
+            'basic-auth' if authentication_type == 'basic-auth' else 'no-auth'
+        )
     # Clean up any empty/array-shaped storage left behind by earlier MCP/CLI/KAI writes so the
     # Writable Tables editor keeps working after a re-save (AI-3135).
     _normalize_config_storage(new_config)
@@ -2819,14 +2851,37 @@ async def _fetch_latest_run(client: KeboolaClient, data_app_id: str) -> AppRunIn
         return None
 
 
-def _get_authorization(auth_with_password: bool) -> dict[str, Any]:
-    if auth_with_password:
-        return {
-            'app_proxy': {
-                'auth_providers': [{'id': 'simpleAuth', 'type': 'password'}],
-                'auth_rules': [{'type': 'pathPrefix', 'value': '/', 'auth_required': True, 'auth': ['simpleAuth']}],
-            },
-        }
+def _oidc_provider(authorization: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    providers = (authorization.get('app_proxy') or {}).get('auth_providers') or []
+    return next((p for p in providers if p.get('type') == 'oidc'), None)
+
+
+def _oidc_setup_required(authorization: Mapping[str, Any]) -> bool:
+    provider = _oidc_provider(authorization)
+    return provider is not None and not str(provider.get('#client_secret') or '').strip()
+
+
+def _build_authorization(
+    authentication_type: Literal['no-auth', 'basic-auth', 'oidc'],
+    oidc: OidcAuthConfig | None = None,
+    existing: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    if authentication_type == 'basic-auth':
+        provider_id, providers = 'simpleAuth', [{'id': 'simpleAuth', 'type': 'password'}]
+    elif authentication_type == 'oidc':
+        if oidc is None:
+            raise ValueError('The OIDC settings are required for the OIDC authentication.')
+        # keep the stored secret and unknown keys, so an update does not wipe them
+        provider = dict(_oidc_provider(existing or {}) or {})
+        provider.update(id=OIDC_PROVIDER_ID, type='oidc', client_id=oidc.client_id, issuer_url=oidc.issuer_url)
+        for key, value in (('logout_url', oidc.logout_url), ('allowed_roles', oidc.allowed_roles)):
+            if value is None:
+                continue
+            if value in ('', []):
+                provider.pop(key, None)
+            else:
+                provider[key] = value
+        provider_id, providers = OIDC_PROVIDER_ID, [provider]
     else:
         return {
             'app_proxy': {
@@ -2834,6 +2889,12 @@ def _get_authorization(auth_with_password: bool) -> dict[str, Any]:
                 'auth_rules': [{'type': 'pathPrefix', 'value': '/', 'auth_required': False}],
             }
         }
+    return {
+        'app_proxy': {
+            'auth_providers': providers,
+            'auth_rules': [{'type': 'pathPrefix', 'value': '/', 'auth_required': True, 'auth': [provider_id]}],
+        },
+    }
 
 
 # Maximum length for DNS labels per RFC 1035

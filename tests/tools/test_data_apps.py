@@ -1,3 +1,4 @@
+import copy
 import re
 import sys
 from types import ModuleType
@@ -28,15 +29,17 @@ from keboola_mcp_server.tools.data_apps import (
     DataAppSlugTooLongError,
     DataAppSummary,
     ModifiedDataAppOutput,
+    OidcAuthConfig,
     RuntimeImage,
+    _build_authorization,
     _build_data_app_config,
     _fetch_data_app,
     _fetch_latest_run,
-    _get_authorization,
     _get_data_app_slug,
     _get_query_function_code,
     _get_secrets,
     _inject_query_to_source_code,
+    _oidc_setup_required,
     _prune_empty_storage_objects,
     _resolve_app_image,
     _update_existing_data_app_config,
@@ -130,21 +133,135 @@ def test_get_data_app_slug_length_validation(name, expected_slug, expected_error
         assert slug == expected_slug
 
 
-def test_get_authorization_mapping():
-    auth_true = _get_authorization(True)
-    assert auth_true['app_proxy']['auth_providers'] == [{'id': 'simpleAuth', 'type': 'password'}]
-    assert auth_true['app_proxy']['auth_rules'] == [
-        {'type': 'pathPrefix', 'value': '/', 'auth_required': True, 'auth': ['simpleAuth']}
-    ]
+_SIMPLE_AUTH = {
+    'app_proxy': {
+        'auth_providers': [{'id': 'simpleAuth', 'type': 'password'}],
+        'auth_rules': [{'type': 'pathPrefix', 'value': '/', 'auth_required': True, 'auth': ['simpleAuth']}],
+    }
+}
+_STORED_OIDC = {
+    'id': 'oidc',
+    'type': 'oidc',
+    'client_id': 'old',
+    'issuer_url': 'https://old',
+    '#client_secret': 'KBC::ProjectSecure::x',
+    'logout_url': '',
+    'extra': 1,
+}
+_STORED_OIDC_ROLES = {
+    **_STORED_OIDC,
+    'logout_url': 'https://l',
+    'allowed_roles': ['a'],
+}
 
-    auth_false = _get_authorization(False)
-    assert auth_false['app_proxy']['auth_providers'] == []
-    assert auth_false['app_proxy']['auth_rules'] == [{'type': 'pathPrefix', 'value': '/', 'auth_required': False}]
+
+def _stored(provider: dict) -> dict:
+    return {'app_proxy': {'auth_providers': [provider], 'auth_rules': []}}
+
+
+@pytest.mark.parametrize(
+    ('authentication_type', 'oidc', 'existing', 'expected_providers'),
+    [
+        ('basic-auth', None, None, [{'id': 'simpleAuth', 'type': 'password'}]),
+        ('no-auth', None, None, []),
+        (
+            'oidc',
+            OidcAuthConfig(client_id='c', issuer_url='https://i'),
+            None,
+            [{'id': 'oidc-1', 'type': 'oidc', 'client_id': 'c', 'issuer_url': 'https://i'}],
+        ),
+        (
+            'oidc',
+            OidcAuthConfig(client_id='c', issuer_url='https://i'),
+            _stored(_STORED_OIDC),
+            [{**_STORED_OIDC, 'id': 'oidc-1', 'client_id': 'c', 'issuer_url': 'https://i'}],
+        ),
+        (
+            'oidc',
+            OidcAuthConfig(client_id='c', issuer_url='https://i', logout_url=None, allowed_roles=None),
+            _stored(_STORED_OIDC_ROLES),
+            [{**_STORED_OIDC_ROLES, 'id': 'oidc-1', 'client_id': 'c', 'issuer_url': 'https://i'}],
+        ),
+        (
+            'oidc',
+            OidcAuthConfig(client_id='c', issuer_url='https://i', logout_url='', allowed_roles=[]),
+            _stored(_STORED_OIDC_ROLES),
+            [
+                {
+                    'id': 'oidc-1',
+                    'type': 'oidc',
+                    'client_id': 'c',
+                    'issuer_url': 'https://i',
+                    '#client_secret': 'KBC::ProjectSecure::x',
+                    'extra': 1,
+                }
+            ],
+        ),
+        (
+            'oidc',
+            OidcAuthConfig(client_id='c', issuer_url='https://i', logout_url='https://n', allowed_roles=['b']),
+            _stored(_STORED_OIDC_ROLES),
+            [
+                {
+                    **_STORED_OIDC_ROLES,
+                    'id': 'oidc-1',
+                    'client_id': 'c',
+                    'issuer_url': 'https://i',
+                    'logout_url': 'https://n',
+                    'allowed_roles': ['b'],
+                }
+            ],
+        ),
+        (
+            'oidc',
+            OidcAuthConfig(client_id='c', issuer_url='https://i'),
+            _SIMPLE_AUTH,
+            [{'id': 'oidc-1', 'type': 'oidc', 'client_id': 'c', 'issuer_url': 'https://i'}],
+        ),
+    ],
+    ids=[
+        'basic-auth',
+        'no-auth',
+        'oidc-new',
+        'oidc-keeps-secret-and-unknown-keys',
+        'oidc-null-keeps-optional',
+        'oidc-empty-removes-optional',
+        'oidc-replaces-optional',
+        'oidc-drops-simple-auth',
+    ],
+)
+def test_build_authorization(authentication_type, oidc, existing, expected_providers):
+    snapshot = copy.deepcopy(existing)
+
+    authorization = _build_authorization(authentication_type, oidc, existing)
+
+    proxy = authorization['app_proxy']
+    assert proxy['auth_providers'] == expected_providers
+    (rule,) = proxy['auth_rules']
+    assert rule['auth_required'] is ('auth' in rule)
+    assert set(rule.get('auth', [])) <= {p['id'] for p in proxy['auth_providers']}
+    assert existing == snapshot
+
+
+@pytest.mark.parametrize(
+    ('provider', 'expected'),
+    [
+        (None, False),
+        ({'id': 'simpleAuth', 'type': 'password'}, False),
+        ({'type': 'oidc'}, True),
+        ({'type': 'oidc', '#client_secret': ''}, True),
+        ({'type': 'oidc', '#client_secret': '   '}, True),
+        ({'type': 'oidc', '#client_secret': 'KBC::ProjectSecure::x'}, False),
+    ],
+    ids=['no-provider', 'other-provider', 'secret-missing', 'secret-empty', 'secret-blank', 'secret-set'],
+)
+def test_oidc_setup_required(provider, expected):
+    assert _oidc_setup_required(_stored(provider) if provider else {}) is expected
 
 
 def test_is_authorized_behavior():
-    assert _uses_basic_authentication(_get_authorization(True)) is True
-    assert _uses_basic_authentication(_get_authorization(False)) is False
+    assert _uses_basic_authentication(_build_authorization('basic-auth')) is True
+    assert _uses_basic_authentication(_build_authorization('no-auth')) is False
 
 
 @pytest.mark.parametrize(
@@ -344,7 +461,7 @@ def test_build_data_app_config_merges_defaults_and_secrets():
     # Secrets carried over
     assert params['dataApp']['secrets'] == secrets
     # Authentication reflects flag
-    assert config['authorization'] == _get_authorization(True)
+    assert config['authorization'] == _build_authorization('basic-auth')
 
 
 @pytest.mark.parametrize(
@@ -416,7 +533,7 @@ def test_update_existing_data_app_config():
     # Secrets merged
     assert new['parameters']['dataApp']['secrets'] == {'FOO': 'old', 'KEEP': 'x', 'NEW': 'y'}
     # Authentication updated
-    assert new['authorization'] == _get_authorization(True)
+    assert new['authorization'] == _build_authorization('basic-auth')
 
 
 def test_update_existing_data_app_config_preserves_existing_secrets():
