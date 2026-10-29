@@ -858,8 +858,18 @@ async def modify_streamlit_data_app(
     updating, set `authentication_type` to `default` to keep the existing authentication type configuration
     (including OIDC setups) unless explicitly specified otherwise.
     - `authentication_type='oidc'` (with the `oidc` argument) switches an existing app to OIDC. It is rejected on
-    create: create the app with `'basic-auth'` first, then update it. The tool never takes a client secret: the
-    user enters it in the Keboola UI.
+    create. The tool never takes a client secret: the user enters it in the Keboola UI.
+    Set up OIDC in this order:
+    1. Create the app with `'basic-auth'`. The output has `oidc_callback_url`.
+    2. The user registers `oidc_callback_url` at the identity provider and gives you the `client_id`.
+    3. Update the app with `authentication_type='oidc'` and `oidc` (`client_id`, `issuer_url`, and optionally
+       `logout_url`, `allowed_roles`).
+    4. The user enters the client secret in the app's Authentication section in the Keboola UI. If the client
+       can open URLs, it is asked to open that page.
+    5. Only if you use `allowed_roles`: update with `'oidc'` once more after the secret is saved.
+    6. Call `deploy_data_app` last.
+    If the output has `oidc_setup_required=true`, tell the user to follow `change_summary`. In `oidc`, null keeps
+    the stored `logout_url` / `allowed_roles`; `''` or `[]` removes them. The slug stays fixed on OIDC apps.
 
     SQL & DATA TYPE RULES:
     - Use delimited identifiers for the current SQL dialect for all column names and aliases in SQL.
@@ -1467,8 +1477,19 @@ async def modify_python_js_data_app(
     setups configured outside the MCP); `'basic-auth'` / `'no-auth'` overwrite it.
 
     `authentication_type='oidc'` (with the `oidc` argument) switches an existing prod app to OIDC. It is
-    rejected on create and on drafts. Create the app with `'basic-auth'` first, then update it. The tool
-    never takes a client secret: the user enters it in the Keboola UI.
+    rejected on create and on drafts. The tool never takes a client secret: the user enters it in the Keboola UI.
+
+    Set up OIDC in this order:
+    1. Create the app with `'basic-auth'`. The output has `oidc_callback_url`.
+    2. The user registers `oidc_callback_url` at the identity provider and gives you the `client_id`.
+    3. Update the app with `authentication_type='oidc'` and `oidc` (`client_id`, `issuer_url`, and optionally
+       `logout_url`, `allowed_roles`).
+    4. The user enters the client secret in the app's Authentication section in the Keboola UI. If the client
+       can open URLs, it is asked to open that page.
+    5. Only if you use `allowed_roles`: update with `'oidc'` once more after the secret is saved.
+    6. Call `deploy_data_app` last.
+    If the output has `oidc_setup_required=true`, tell the user to follow `change_summary`. In `oidc`, null keeps
+    the stored `logout_url` / `allowed_roles`; `''` or `[]` removes them. The slug stays fixed on OIDC apps.
 
     ## Slug constraint
 

@@ -395,10 +395,19 @@ The response reports the truth:
 
 ### `modify_python_js_data_app(authentication_type=...)`
 
-- **Type**: `'no-auth' | 'basic-auth' | 'default'` (default: `'default'`).
+- **Type**: `'no-auth' | 'basic-auth' | 'oidc' | 'default'` (default: `'default'`).
 - **Semantics on create**: `'default'` and `'basic-auth'` both apply HTTP basic authentication (safe-by-default for new apps); `'no-auth'` exposes the app publicly.
 - **Draft restriction**: `'no-auth'` is rejected on drafts — a draft inherits the prod app's data access, so disabling its authentication would expose Storage-reading and Storage-writing endpoints publicly. Use it only on the prod app, and only when the user explicitly asks for a public app. Never disable authentication to make a preview work — the in-platform preview (`deploy_data_app(mode='dev')`) authenticates on top of the configured auth.
 - **Semantics on update**: `'default'` leaves the existing `authorization` block untouched (so OIDC and other advanced setups configured outside the MCP survive); `'basic-auth'` and `'no-auth'` overwrite it.
+- **OIDC**: `'oidc'` (with the `oidc` argument: `client_id`, `issuer_url`, optional `logout_url` and `allowed_roles`) switches an existing prod app to OIDC login. It is rejected on create and on drafts, because a draft has its own URL and so its own callback URL. The tool never takes a client secret.
+  1. Create the app with `'basic-auth'`. The output has `oidc_callback_url`.
+  2. The user registers `oidc_callback_url` at the identity provider and gives you the `client_id`.
+  3. Update the app with `authentication_type='oidc'` and `oidc`.
+  4. The user enters the client secret in the app's Authentication section in the Keboola UI. If the client can open URLs, it is asked to open that page.
+  5. Only if you use `allowed_roles`: update with `'oidc'` once more after the secret is saved.
+  6. Call `deploy_data_app` last.
+
+  If the output has `oidc_setup_required=true`, the app has no client secret yet and cannot log anyone in; tell the user to follow `change_summary`. In `oidc`, null keeps the stored `logout_url` / `allowed_roles`; `''` or `[]` removes them. The slug stays fixed on OIDC apps. The `oidc` provider is always stored with the id `oidc-1`.
 - **Wire shape**: identical to Streamlit — `authorization.app_proxy.{auth_providers, auth_rules}`. The DSAPI's python-js endpoint accepts this block alongside `useManagedGitRepo: true`.
 
 ---
