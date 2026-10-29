@@ -1511,6 +1511,9 @@ async def modify_python_js_data_app(
     After an explicit `slug` the new URL applies on the next `deploy_data_app` and the old URL stops
     working; tell the user both.
     """
+    if not configuration_id and parent_configuration_id:
+        # Checked first so a draft with 'oidc' gets the draft message, not the create-with-basic-auth one.
+        _reject_oidc_on_draft(authentication_type)
     _validate_oidc_args(authentication_type, oidc, is_create=not configuration_id)
     if configuration_id:
         if slug:
@@ -1531,7 +1534,6 @@ async def modify_python_js_data_app(
             raise ValueError('branch is only valid on the draft create path (pair it with parent_configuration_id).')
         if parent_configuration_id:
             _reject_no_auth_on_draft(authentication_type)
-            _reject_oidc_on_draft(authentication_type)
 
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
@@ -1610,6 +1612,13 @@ async def modify_python_js_data_app(
         # Without an explicit `slug`, a new slug is a never-deployed app's slug following its name.
         if new_slug is None:
             slug_hint = None
+            # On a retry after URL elicitation the first round already wrote the explicit slug, so
+            # nothing moves now, but the agent has not yet seen the IdP warning.
+            if slug and oidc_app:
+                slug_hint = (
+                    f"The URL slug is '{slug}'. The app uses OIDC login: register the callback URL "
+                    f'{oidc_callback_url} at the identity provider before you redeploy, or every login fails.'
+                )
         elif slug:
             slug_hint = (
                 f"Changed the URL slug to '{new_slug}'. The app keeps its current URL until it is redeployed "
@@ -1693,8 +1702,9 @@ async def modify_python_js_data_app(
             legacy_workspace_id, legacy_fallback_hint = await _resolve_legacy_workspace_fallback(
                 ctx, client, configuration_id=None
             )
-        # On create, treat 'default' as 'basic-auth' (safe-by-default) to match modify_streamlit_data_app.
-        uses_basic_auth = authentication_type in ('basic-auth', 'default')
+        # On create, anything but an explicit 'no-auth' becomes 'basic-auth' (fail closed), to match
+        # modify_streamlit_data_app.
+        uses_basic_auth = authentication_type != 'no-auth'
         authorization_model = DataAppConfig.Authorization.model_validate(
             _build_authorization('basic-auth' if uses_basic_auth else 'no-auth')
         )

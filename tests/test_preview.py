@@ -1,6 +1,6 @@
 import copy
 from collections.abc import Generator
-from typing import cast
+from typing import Any, cast
 
 import pytest
 import pytest_asyncio
@@ -1007,8 +1007,55 @@ class TestPreviewConfigDiff:
         assert result['isValid'] is False
         assert expected_error_fragment in str(result.get('validationErrors', ''))
 
-    def test_preview_modify_streamlit_data_app_success(self, test_client: TestClient, mocker):
-        """Test successful preview of modify_streamlit_data_app tool."""
+    @pytest.mark.parametrize(
+        ('auth_params', 'expected_slug', 'expected_authorization', 'expected_error'),
+        [
+            pytest.param({'authentication_type': 'default'}, 'updated-data-app', {}, None, id='default_auth'),
+            pytest.param(
+                {
+                    'authentication_type': 'oidc',
+                    'oidc': {'client_id': 'my-client', 'issuer_url': 'https://login.example.com'},
+                },
+                # an OIDC app keeps its slug, because the callback URL at the identity provider contains it
+                'old-slug',
+                {
+                    'app_proxy': {
+                        'auth_providers': [
+                            {
+                                'id': 'oidc-1',
+                                'type': 'oidc',
+                                'client_id': 'my-client',
+                                'issuer_url': 'https://login.example.com',
+                            }
+                        ],
+                        'auth_rules': [{'type': 'pathPrefix', 'value': '/', 'auth_required': True, 'auth': ['oidc-1']}],
+                    }
+                },
+                None,
+                id='oidc_auth',
+            ),
+            pytest.param(
+                {
+                    'authentication_type': 'basic-auth',
+                    'oidc': {'client_id': 'my-client', 'issuer_url': 'https://login.example.com'},
+                },
+                None,
+                None,
+                "The `oidc` settings are only used with authentication_type='oidc'",
+                id='oidc_with_basic_auth_rejected',
+            ),
+        ],
+    )
+    def test_preview_modify_streamlit_data_app_success(
+        self,
+        test_client: TestClient,
+        mocker,
+        auth_params: dict[str, Any],
+        expected_slug: str | None,
+        expected_authorization: dict[str, Any] | None,
+        expected_error: str | None,
+    ):
+        """Test the preview of modify_streamlit_data_app tool."""
         from keboola_mcp_server.clients.client import DATA_APP_COMPONENT_ID
 
         # Mock the data app configuration data
@@ -1106,7 +1153,7 @@ class TestPreviewConfigDiff:
                 'description': 'Updated data app description',
                 'source_code': 'print("Hello World")',
                 'packages': ['streamlit', 'pandas'],
-                'authentication_type': 'default',
+                **auth_params,
             },
         }
 
@@ -1116,6 +1163,10 @@ class TestPreviewConfigDiff:
         # Assertions
         assert response.status_code == 200
         result = response.json()
+        if expected_error:
+            assert result['isValid'] is False
+            assert expected_error in str(result['validationErrors'])
+            return
 
         # Check response structure
         assert result['isValid'] is True
@@ -1136,7 +1187,7 @@ class TestPreviewConfigDiff:
             'configuration': {
                 'parameters': {
                     'dataApp': {
-                        'slug': 'updated-data-app',
+                        'slug': expected_slug,
                         'secrets': {
                             'FOO': 'old',
                             'KEEP': 'x',
@@ -1147,7 +1198,7 @@ class TestPreviewConfigDiff:
                     'script': [],
                     'packages': ['httpx', 'pandas', 'streamlit'],
                 },
-                'authorization': {},
+                'authorization': expected_authorization,
                 # The empty `storage: {}` from the original config is pruned on re-save so it is
                 # never persisted as `[]` (which breaks the Writable Tables editor, AI-3135).
             },

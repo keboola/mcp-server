@@ -160,6 +160,10 @@ def _stored(provider: dict) -> dict:
     return {'app_proxy': {'auth_providers': [provider], 'auth_rules': []}}
 
 
+_OIDC_WITH_SECRET = {**_STORED_OIDC, 'id': 'oidc-1'}
+_OIDC_NO_SECRET = {key: value for key, value in _OIDC_WITH_SECRET.items() if key != '#client_secret'}
+
+
 @pytest.mark.parametrize(
     ('authentication_type', 'oidc', 'existing', 'expected_providers'),
     [
@@ -1490,17 +1494,17 @@ async def test_modify_python_js_data_app_create_prod_derives_or_honors_slug(
     ),
     [
         # Never deployed, generic slug from the UI → the slug follows the new name.
-        ('New App', 'new-app', False, 'notDeployed', None, False, {'name': 'Sales Dashboard'}, 'sales-dashboard'),
+        ('New App', 'new-app', False, 'notDeployed', None, None, {'name': 'Sales Dashboard'}, 'sales-dashboard'),
         # Never deployed and already renamed once → it keeps following.
-        ('Sales Dashboard', 'sales-dashboard', False, 'notDeployed', None, False, {'name': 'Revenue'}, 'revenue'),
+        ('Sales Dashboard', 'sales-dashboard', False, 'notDeployed', None, None, {'name': 'Revenue'}, 'revenue'),
         # A UI-derived slug that kept repeated hyphens still counts as following the name.
-        ('Sales & Ops', 'sales---ops', False, 'notDeployed', None, False, {'name': 'Ops Board'}, 'ops-board'),
+        ('Sales & Ops', 'sales---ops', False, 'notDeployed', None, None, {'name': 'Ops Board'}, 'ops-board'),
         # First deploy in progress → the URL is being served, the slug stays.
-        ('New App', 'new-app', False, 'starting', 'dep-1', False, {'name': 'Sales'}, 'new-app'),
+        ('New App', 'new-app', False, 'starting', 'dep-1', None, {'name': 'Sales'}, 'new-app'),
         # Deployed before → a rename keeps the slug.
-        ('New App', 'new-app', False, 'suspended', 'dep-1', False, {'name': 'Sales'}, 'new-app'),
+        ('New App', 'new-app', False, 'suspended', 'dep-1', None, {'name': 'Sales'}, 'new-app'),
         # A custom slug that never followed the name → a rename keeps it.
-        ('Sales Dashboard', 'sales', False, 'notDeployed', None, False, {'name': 'Revenue'}, 'sales'),
+        ('Sales Dashboard', 'sales', False, 'notDeployed', None, None, {'name': 'Revenue'}, 'sales'),
         # Drafts never change their slug on rename.
         (
             'New App',
@@ -1508,16 +1512,16 @@ async def test_modify_python_js_data_app_create_prod_derives_or_honors_slug(
             True,
             'notDeployed',
             None,
-            False,
+            None,
             {'name': 'Sales'},
             'new-app-draft-a1b2c3',
         ),
         # Same name → nothing to follow.
-        ('New App', 'new-app', False, 'notDeployed', None, False, {'name': 'New App'}, 'new-app'),
+        ('New App', 'new-app', False, 'notDeployed', None, None, {'name': 'New App'}, 'new-app'),
         # An explicit slug on a deployed prod app is written.
-        ('Sales', 'sales', False, 'running', 'dep-1', False, {'name': 'Sales', 'slug': 'kpis'}, 'kpis'),
+        ('Sales', 'sales', False, 'running', 'dep-1', None, {'name': 'Sales', 'slug': 'kpis'}, 'kpis'),
         # The callback URL contains the slug, so a rename keeps it on an OIDC app...
-        ('New App', 'new-app', False, 'notDeployed', None, True, {'name': 'Sales'}, 'new-app'),
+        ('New App', 'new-app', False, 'notDeployed', None, _OIDC_WITH_SECRET, {'name': 'Sales'}, 'new-app'),
         # ...and on an app that is switched to OIDC by this update...
         (
             'New App',
@@ -1525,7 +1529,7 @@ async def test_modify_python_js_data_app_create_prod_derives_or_honors_slug(
             False,
             'notDeployed',
             None,
-            False,
+            None,
             {
                 'name': 'Sales',
                 'authentication_type': 'oidc',
@@ -1540,12 +1544,15 @@ async def test_modify_python_js_data_app_create_prod_derives_or_honors_slug(
             False,
             'notDeployed',
             None,
-            True,
+            _OIDC_WITH_SECRET,
             {'name': 'Sales', 'authentication_type': 'basic-auth'},
             'sales',
         ),
         # An explicit slug still moves an OIDC app.
-        ('Sales', 'sales', False, 'running', 'dep-1', True, {'name': 'Sales', 'slug': 'kpis'}, 'kpis'),
+        ('Sales', 'sales', False, 'running', 'dep-1', _OIDC_WITH_SECRET, {'name': 'Sales', 'slug': 'kpis'}, 'kpis'),
+        # A retry after the secret page: the first round already wrote the explicit slug, yet the
+        # IdP warning must still reach the agent.
+        ('Sales', 'kpis', False, 'running', 'dep-1', _OIDC_NO_SECRET, {'name': 'Sales', 'slug': 'kpis'}, 'kpis'),
     ],
 )
 async def test_modify_python_js_data_app_update_slug(
@@ -1556,7 +1563,7 @@ async def test_modify_python_js_data_app_update_slug(
     is_draft: bool,
     state: str,
     desired_deployment_id: str | None,
-    stored_oidc: bool,
+    stored_oidc: dict | None,
     kwargs: dict,
     expected_slug: str,
 ) -> None:
@@ -1571,7 +1578,7 @@ async def test_modify_python_js_data_app_update_slug(
         data_app_block |= {'isDraft': True, 'parentConfigurationId': 'cfg-prod'}
     configuration: dict = {'parameters': {'autoSuspendAfterSeconds': 900, 'dataApp': data_app_block}}
     if stored_oidc:
-        configuration['authorization'] = _stored({**_STORED_OIDC, 'id': 'oidc-1'})
+        configuration['authorization'] = _stored(stored_oidc)
     existing = DataApp(
         name=stored_name,
         component_id=DATA_APP_COMPONENT_ID,
@@ -1597,17 +1604,19 @@ async def test_modify_python_js_data_app_update_slug(
 
     new_cfg = keboola_client.storage_client.configuration_update.await_args.kwargs['configuration']
     assert new_cfg['parameters']['dataApp']['slug'] == expected_slug
-    if expected_slug == stored_slug:
+    register_at_idp = stored_oidc is not None and 'slug' in kwargs
+    if expected_slug == stored_slug and not register_at_idp:
         assert 'slug' not in (result.change_summary or '')
-    else:
+    elif expected_slug != stored_slug:
         assert f"'{expected_slug}'" in result.change_summary
         # The explicit-slug rows are deployed apps; every other change is a rename of a never-deployed one.
         expected_phrase = 'old URL stops working' if 'slug' in kwargs else 'Nothing to do or undo'
         assert expected_phrase in result.change_summary
     callback_url = f'https://{expected_slug}-app-1.hub.test.keboola.com/_proxy/callback'
     assert result.oidc_callback_url == (None if is_draft else callback_url)
-    register_at_idp = stored_oidc and 'slug' in kwargs
     assert (callback_url in (result.change_summary or '')) is register_at_idp
+    if register_at_idp:
+        assert 'at the identity provider before you redeploy' in result.change_summary
 
 
 @pytest.mark.asyncio
@@ -1721,6 +1730,7 @@ async def test_modify_python_js_data_app_create_calls_full_provisioning_chain(
         ('default', True),
         ('basic-auth', True),
         ('no-auth', False),
+        ('oidc', True),
     ],
 )
 async def test_modify_python_js_data_app_create_authentication_type(
@@ -1731,7 +1741,10 @@ async def test_modify_python_js_data_app_create_authentication_type(
     expect_basic_auth: bool,
 ) -> None:
     """Create path translates authentication_type to the right authorization block:
-    'default' and 'basic-auth' → password-protected; 'no-auth' → public."""
+    'default' and 'basic-auth' → password-protected; 'no-auth' → public.
+
+    Any other type fails closed to password-protected. 'oidc' is rejected on create by validation,
+    which is skipped here to check that the create path never makes the app public by mistake."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
     keboola_client.has_feature = mocker.AsyncMock(return_value=True)
@@ -1749,13 +1762,15 @@ async def test_modify_python_js_data_app_create_authentication_type(
     )
     mocker.patch('keboola_mcp_server.tools.data_apps.set_cfg_creation_metadata', mocker.AsyncMock())
     mocker.patch('keboola_mcp_server.tools.data_apps.apply_configuration_folder', mocker.AsyncMock(return_value=None))
+    if authentication_type == 'oidc':
+        mocker.patch('keboola_mcp_server.tools.data_apps._validate_oidc_args')
 
     result = await modify_python_js_data_app(
         ctx=mcp_context_client,
         name='My App',
         description='desc',
         slug='my-app',
-        authentication_type=cast(Literal['no-auth', 'basic-auth', 'default'], authentication_type),
+        authentication_type=cast(Literal['no-auth', 'basic-auth', 'default', 'oidc'], authentication_type),
     )
 
     assert result.oidc_callback_url == 'https://my-app-app-pyjs-1.hub.test.keboola.com/_proxy/callback'
@@ -1862,7 +1877,7 @@ async def test_modify_python_js_data_app_no_auth_rejected_only_on_drafts(
         ('cfg-prod-1', None, False, 'oidc', False, 'oidc.*settings|`oidc`'),
         ('cfg-prod-1', None, False, 'basic-auth', True, "authentication_type='oidc'"),
         ('', None, False, 'oidc', True, "'basic-auth' first"),
-        ('', 'cfg-prod-1', False, 'oidc', True, "'basic-auth' first"),
+        ('', 'cfg-prod-1', False, 'oidc', True, 'not allowed on draft data apps'),
         ('cfg-draft-1', None, True, 'oidc', True, 'draft'),
     ],
     ids=[
