@@ -575,6 +575,24 @@ async def get_buckets(
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
 
+    output = await _get_buckets(client, links_manager, bucket_ids)
+    if await WorkspaceManager.from_state(ctx.session.state).is_governed():
+        # The number of tables and their size count the tables that the reader may not read, too.
+        output = output.model_copy(
+            update={
+                'buckets': [
+                    bucket.model_copy(update={'tables_count': None, 'data_size_bytes': None})
+                    for bucket in output.buckets
+                ]
+            }
+        )
+
+    return output.pack_links()
+
+
+async def _get_buckets(
+    client: KeboolaClient, links_manager: ProjectLinksManager, bucket_ids: Sequence[str]
+) -> GetBucketsOutput:
     if bucket_ids:
         has_sb = await has_storage_branches(client)
 
@@ -604,7 +622,7 @@ async def get_buckets(
     else:
         output = await _list_buckets(client, links_manager)
 
-    return output.pack_links()
+    return output
 
 
 async def _list_buckets(client: KeboolaClient, links_manager: ProjectLinksManager) -> GetBucketsOutput:
@@ -731,32 +749,59 @@ async def get_tables(
             elif isinstance(table_detail_or_id, str):
                 missing_ids.append(table_detail_or_id)
 
-        # Add the component usage to the table detail
-        if include_usage:
-            prod_ids_to_ids = {table.prod_id: table.id for table in tables_by_id.values()}
-            usage_by_ids = await find_id_usage(
-                client,
-                list(prod_ids_to_ids.keys()),
-                ['configuration', 'configuration-row', 'transformation'],
-                ['storage.input', 'storage.output'],
-            )
-            # Initialize the used_by list for all tables to avoid None values which could confuse the model.
-            # Usage only applies to full table details; summaries (from bucket listing) carry no used_by.
-            for table in tables_by_id.values():
-                if isinstance(table, TableDetail):
-                    table.used_by = []
-            for id_usage in usage_by_ids:
-                table_id = prod_ids_to_ids.get(id_usage.target_id)
-                if table_id and isinstance(table := tables_by_id[table_id], TableDetail):
-                    table.used_by = id_usage.usage_references
-                elif not table_id:
-                    LOG.error(f'Target ID has changed during searching for usage: prod_id={id_usage.target_id}.')
+    # A governed project shows only what Query Service lets the reader read, with the columns of its column policy.
+    # A table that is hidden is reported exactly as a table that does not exist.
+    if tables_by_id and (scope := await workspace_manager.get_rls_scope(list(tables_by_id))) is not None:
+        requested_ids = set(table_ids)
+        for table_id in list(tables_by_id):
+            if scope.is_readable(table_id):
+                tables_by_id[table_id] = _limit_columns(tables_by_id[table_id], scope.visible_columns(table_id))
+            else:
+                del tables_by_id[table_id]
+                if table_id in requested_ids:
+                    missing_ids.append(table_id)
+
+    # Add the component usage to the table detail
+    if table_ids and include_usage:
+        prod_ids_to_ids = {table.prod_id: table.id for table in tables_by_id.values()}
+        usage_by_ids = await find_id_usage(
+            client,
+            list(prod_ids_to_ids.keys()),
+            ['configuration', 'configuration-row', 'transformation'],
+            ['storage.input', 'storage.output'],
+        )
+        # Initialize the used_by list for all tables to avoid None values which could confuse the model.
+        # Usage only applies to full table details; summaries (from bucket listing) carry no used_by.
+        for table in tables_by_id.values():
+            if isinstance(table, TableDetail):
+                table.used_by = []
+        for id_usage in usage_by_ids:
+            table_id = prod_ids_to_ids.get(id_usage.target_id)
+            if table_id and isinstance(table := tables_by_id[table_id], TableDetail):
+                table.used_by = id_usage.usage_references
+            elif not table_id:
+                LOG.error(f'Target ID has changed during searching for usage: prod_id={id_usage.target_id}.')
 
     return GetTablesOutput(
         tables=list(tables_by_id.values()),
         tables_not_found=missing_ids if missing_ids else None,
         links=[links_manager.get_bucket_dashboard_link()],
     ).pack_links()
+
+
+def _limit_columns(table: TableDetail | TableSummary, allowed: Sequence[str] | None) -> TableDetail | TableSummary:
+    """Keeps only the columns of the column policy (`allowed`, None means every column) in the column names that the
+    table carries: its column list and its primary key."""
+    if allowed is None:
+        return table
+
+    allowed_set = set(allowed)
+    update: dict[str, Any] = {}
+    if table.primary_key:
+        update['primary_key'] = [column for column in table.primary_key if column in allowed_set] or None
+    if isinstance(table, TableDetail) and table.columns is not None:
+        update['columns'] = [column for column in table.columns if column.name in allowed_set]
+    return table.model_copy(update=update)
 
 
 async def _get_table(

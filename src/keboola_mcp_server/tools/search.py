@@ -38,6 +38,7 @@ from keboola_mcp_server.tools.search_models import (
     SearchType,
 )
 from keboola_mcp_server.tools.storage_helpers import merged_bucket_list, merged_bucket_table_list
+from keboola_mcp_server.workspace import RlsScope, RlsScopeUnavailableError, WorkspaceManager
 
 LOG = logging.getLogger(__name__)
 
@@ -137,36 +138,73 @@ async def _fetch_buckets(client: KeboolaClient, spec: SearchSpec) -> list[Search
     return hits
 
 
-async def _fetch_tables(client: KeboolaClient, spec: SearchSpec) -> list[SearchHit]:
-    """Fetches and filters tables from all buckets."""
-    hits = []
+def _limit_raw_columns(table: JsonDict, allowed: Sequence[str] | None) -> JsonDict:
+    """Keeps only the columns of the column policy (`allowed`, None means every column) in the raw table, so that no
+    pattern is matched against the name or the description of a column that the reader may not see."""
+    if allowed is None:
+        return table
+
+    allowed_set = set(allowed)
+    return table | {
+        'columns': [column for column in table.get('columns', []) if column in allowed_set],
+        'columnMetadata': {
+            column: metadata for column, metadata in table.get('columnMetadata', {}).items() if column in allowed_set
+        },
+    }
+
+
+async def _fetch_tables(
+    client: KeboolaClient, spec: SearchSpec, workspace_manager: WorkspaceManager | None = None
+) -> list[SearchHit]:
+    """Fetches and filters tables from all buckets.
+
+    :param workspace_manager: Set for a project that enforces row-level security: only the tables that Query Service
+        lets the reader read are searched, and only in the columns of their column policy.
+    """
+    raw_tables: list[JsonDict] = []
     for bucket in await merged_bucket_list(client):
         if not (bucket_id := bucket.get('id')):
             continue
 
         tables = await merged_bucket_table_list(client, bucket_id, include=['columns', 'columnMetadata'])
-        for table in tables:
-            if not (table_id := table.get('id')):
+        raw_tables.extend(table for table in tables if table.get('id'))
+
+    scope: RlsScope | None = None
+    if workspace_manager and raw_tables:
+        scope = await workspace_manager.get_rls_scope([_prod_table_id(client, table['id']) for table in raw_tables])
+
+    hits = []
+    for table in raw_tables:
+        table_id = table['id']
+        if scope is not None:
+            prod_id = _prod_table_id(client, table_id)
+            if not scope.is_readable(prod_id):
                 continue
+            table = _limit_raw_columns(table, scope.visible_columns(prod_id))
 
-            table_name = table.get('name')
-            table_display_name = table.get('displayName')
-            table_description = get_metadata_property(table.get('metadata', []), MetadataField.DESCRIPTION)
+        table_name = table.get('name')
+        table_display_name = table.get('displayName')
+        table_description = get_metadata_property(table.get('metadata', []), MetadataField.DESCRIPTION)
 
-            matches = spec.match_texts([table_id, table_name, table_display_name, table_description])
-            matches.extend(_check_column_match(table, spec))
-            if matches:
-                hits.append(
-                    SearchHit(
-                        table_id=table_id,
-                        item_type='table',
-                        updated=_get_field_value(table, ['lastChangeDate', 'created']) or '',
-                        name=table_name,
-                        display_name=table_display_name,
-                        description=table_description,
-                    ).set_matches(matches)
-                )
+        matches = spec.match_texts([table_id, table_name, table_display_name, table_description])
+        matches.extend(_check_column_match(table, spec))
+        if matches:
+            hits.append(
+                SearchHit(
+                    table_id=table_id,
+                    item_type='table',
+                    updated=_get_field_value(table, ['lastChangeDate', 'created']) or '',
+                    name=table_name,
+                    display_name=table_display_name,
+                    description=table_description,
+                ).set_matches(matches)
+            )
     return hits
+
+
+def _prod_table_id(client: KeboolaClient, table_id: str) -> str:
+    """The ID of the table as it appears on the production branch, which is the key of its policies."""
+    return table_id.replace(f'c-{client.branch_id}-', 'c-') if client.branch_id else table_id
 
 
 async def fetch_configurations(client: KeboolaClient, spec: SearchSpec) -> list[SearchHit]:
@@ -489,7 +527,12 @@ async def search(
 
     client = KeboolaClient.from_state(ctx.session.state)
 
-    if search_type == 'textual' and await client.storage_client.is_enabled(GLOBAL_SEARCH_FEATURE):
+    # The global search counts and returns the tables that the reader may not read, so a project that enforces
+    # row-level security is always searched by the enumeration, which hides them.
+    workspace_manager = WorkspaceManager.from_state(ctx.session.state)
+    governed = await workspace_manager.is_governed()
+
+    if not governed and search_type == 'textual' and await client.storage_client.is_enabled(GLOBAL_SEARCH_FEATURE):
         if mode == 'regex':
             raise ToolError(
                 'Regex patterns are not supported for textual search — it is a tokenized full-text name search. '
@@ -511,7 +554,9 @@ async def search(
     else:
         # Projects without the global-search feature use the legacy client-side enumeration;
         # config-based search has no server-side equivalent and always runs client-side.
-        output = await _enumeration_search(client, spec, limit=limit, offset=offset)
+        output = await _enumeration_search(
+            client, spec, limit=limit, offset=offset, workspace_manager=workspace_manager if governed else None
+        )
 
     # Get links for the hits
     links_manager = await ProjectLinksManager.from_client(client)
@@ -529,11 +574,19 @@ async def search(
     return output
 
 
-async def _enumeration_search(client: KeboolaClient, spec: SearchSpec, limit: int, offset: int) -> SearchOutput:
+async def _enumeration_search(
+    client: KeboolaClient,
+    spec: SearchSpec,
+    limit: int,
+    offset: int,
+    workspace_manager: WorkspaceManager | None = None,
+) -> SearchOutput:
     """
     Searches by enumerating the project's items client-side. Used for config-based search (which has no
     server-side equivalent) and as the legacy fallback for textual search in projects without the
     global-search feature.
+
+    :param workspace_manager: Set for a project that enforces row-level security, see `_fetch_tables`.
     """
     # Determine which types to fetch
     types_to_fetch = set(spec.item_types) if spec.item_types else set()
@@ -546,7 +599,7 @@ async def _enumeration_search(client: KeboolaClient, spec: SearchSpec, limit: in
         tasks.append(_fetch_buckets(client, spec))
 
     if not types_to_fetch or 'table' in types_to_fetch:
-        tasks.append(_fetch_tables(client, spec))
+        tasks.append(_fetch_tables(client, spec, workspace_manager))
 
     if not types_to_fetch or types_to_fetch & {
         'configuration',
@@ -563,6 +616,9 @@ async def _enumeration_search(client: KeboolaClient, spec: SearchSpec, limit: in
 
     # Process results
     for result in results:
+        if isinstance(result, RlsScopeUnavailableError):
+            # Fail closed: tables are never searched without knowing which of them the reader may read.
+            raise result
         if isinstance(result, Exception):
             # TODO: report this somehow to the AI assistant
             LOG.warning(f'Error fetching items: {result}')

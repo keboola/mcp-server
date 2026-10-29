@@ -162,8 +162,15 @@ policies of the project. There is no rewriting in this server and no fallback: w
   workspace that is recreated, has a new KID and starts again with every policy.
 - **Limits.** The workspace id of the server's workspace is also what a data app gets as `WORKSPACE_ID` when no
   separate workspace is provisioned for it; the app queries with its own token, has no verified identity, and reads
-  nothing from governed tables. The metadata tools (`get_tables`, `get_buckets`, `search`) are not filtered by the
-  policies: they can list tables that a governed workspace refuses to read.
+  nothing from governed tables.
+- **Metadata.** The metadata tools show only what the Query Service lets the reader read. `get_tables` and `search`
+  (which then does not use the global search, as its counts include the hidden tables) leave out a table the reader may
+  not read, and `get_tables` reports one that was asked for by ID as not found; a table with a column policy shows only
+  the columns of the policy (also in its primary key and in what `search` matches). `get_buckets` still lists every
+  bucket, but without the number of tables and the size, which count the hidden tables. This needs the Query Service
+  endpoint `POST /api/v1/branches/{branch}/workspaces/{workspace}/rls/scope`, and fails closed: when the Query Service
+  cannot say, a tool of a governed project returns an error with a short message and no table. A project without the
+  feature is not affected and makes no extra call.
 
 ---
 

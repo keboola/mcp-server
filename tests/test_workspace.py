@@ -11,6 +11,8 @@ from keboola_mcp_server.workspace import (
     GOVERNED_LOGIN_TYPE,
     RLS_FEATURE,
     JobSubmittedInfo,
+    RlsScope,
+    RlsScopeUnavailableError,
     WorkspaceManager,
     _SnowflakeWorkspace,
     _WspInfo,
@@ -1182,3 +1184,150 @@ def test_init_bigquery_workspace_needs_credentials_unless_governed(
     else:
         with pytest.raises(ValueError, match='No credentials or no project ID'):
             manager._init_workspace(info)
+
+
+def _scope_workspace(*, governed: bool = True) -> tuple[_SnowflakeWorkspace, AsyncMock]:
+    qs_mock = AsyncMock(spec=QueryServiceClient)
+    workspace = _SnowflakeWorkspace(workspace_id=7, schema='S', client=Mock(spec=KeboolaClient))
+    workspace._qsclient = qs_mock
+    workspace.governed = governed
+    return workspace, qs_mock
+
+
+def _status_error(status_code: int) -> HTTPStatusError:
+    request = Request('POST', 'https://query.keboola.com/api/v1/branches/1/workspaces/7/rls/scope')
+    return HTTPStatusError(f'HTTP {status_code}', request=request, response=Response(status_code, request=request))
+
+
+@pytest.mark.asyncio
+async def test_workspace_rls_scope_maps_the_readable_tables_and_their_columns() -> None:
+    workspace, qs_mock = _scope_workspace()
+    qs_mock.get_rls_scope.return_value = {
+        'readable': [
+            {'table': 'in.c-crm.orders', 'columns': ['id', 'region']},
+            {'table': 'in.c-crm.users', 'columns': None},
+        ]
+    }
+
+    scope = await workspace.get_rls_scope(['in.c-crm.orders', 'in.c-crm.users', 'in.c-crm.hidden'])
+
+    assert scope == RlsScope(readable={'in.c-crm.orders': ['id', 'region'], 'in.c-crm.users': None})
+    assert scope.is_readable('in.c-crm.users') and not scope.is_readable('in.c-crm.hidden')
+    assert scope.visible_columns('in.c-crm.orders') == ['id', 'region']
+    assert scope.visible_columns('in.c-crm.users') is None
+    qs_mock.get_rls_scope.assert_awaited_once_with(
+        workspace_id='7', tables=['in.c-crm.orders', 'in.c-crm.users', 'in.c-crm.hidden']
+    )
+
+
+@pytest.mark.asyncio
+async def test_workspace_rls_scope_asks_in_chunks_of_100_unique_valid_keys() -> None:
+    workspace, qs_mock = _scope_workspace()
+    keys = [f'in.c-b.t{i}' for i in range(250)]
+    qs_mock.get_rls_scope.side_effect = lambda workspace_id, tables: {
+        'readable': [{'table': t, 'columns': None} for t in tables]
+    }
+
+    # a duplicate and keys Query Service cannot read (no dot, a space) are not sent, and are not readable
+    scope = await workspace.get_rls_scope([*keys, keys[0], 'no_dot', 'in.c-b.has space'])
+
+    assert [len(call.kwargs['tables']) for call in qs_mock.get_rls_scope.await_args_list] == [100, 100, 50]
+    assert set(scope.readable) == set(keys)
+    assert not scope.is_readable('no_dot') and not scope.is_readable('in.c-b.has space')
+
+
+@pytest.mark.asyncio
+async def test_workspace_rls_scope_of_no_table_asks_nothing() -> None:
+    workspace, qs_mock = _scope_workspace()
+
+    assert await workspace.get_rls_scope([]) == RlsScope(readable={})
+    qs_mock.get_rls_scope.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_workspace_rls_scope_of_an_ungoverned_workspace_is_none() -> None:
+    workspace, qs_mock = _scope_workspace()
+    qs_mock.get_rls_scope.side_effect = _status_error(409)
+
+    assert await workspace.get_rls_scope(['in.c-crm.orders']) is None
+
+
+@pytest.mark.parametrize(
+    'failure',
+    [
+        _status_error(403),
+        _status_error(503),
+        _status_error(500),
+        asyncio.TimeoutError(),
+        RuntimeError('boom'),
+        'no-readable-key',
+        'bad-entry',
+    ],
+    ids=['403', '503', '500', 'timeout', 'error', 'no_readable_key', 'bad_entry'],
+)
+@pytest.mark.asyncio
+async def test_workspace_rls_scope_fails_closed(failure) -> None:
+    workspace, qs_mock = _scope_workspace()
+    if failure == 'no-readable-key':
+        qs_mock.get_rls_scope.return_value = {}
+    elif failure == 'bad-entry':
+        qs_mock.get_rls_scope.return_value = {'readable': [{'name': 'in.c-crm.orders'}]}
+    else:
+        qs_mock.get_rls_scope.side_effect = failure
+
+    with pytest.raises(RlsScopeUnavailableError) as exc_info:
+        await workspace.get_rls_scope(['in.c-crm.orders'])
+
+    # the message says nothing about the reason
+    assert str(exc_info.value) == 'Table metadata of this project is temporarily unavailable. Please try again later.'
+
+
+@pytest.mark.parametrize(
+    ('rls_feature', 'governed', 'workspace_error', 'expected'),
+    [
+        (False, True, False, 'none'),  # no feature: nothing is asked, no workspace is touched
+        (True, False, False, 'none'),  # an ordinary workspace: nothing is hidden
+        (True, True, False, 'scope'),
+        (True, True, True, 'unavailable'),  # the workspace cannot be resolved: never "show everything"
+    ],
+)
+@pytest.mark.asyncio
+async def test_workspace_manager_rls_scope_follows_the_governed_state(
+    rls_feature: bool, governed: bool, workspace_error: bool, expected: str
+) -> None:
+    mock_client = Mock(spec=KeboolaClient)
+    mock_client.has_feature = AsyncMock(return_value=rls_feature)
+    manager = WorkspaceManager(mock_client)
+    workspace, qs_mock = _scope_workspace(governed=governed)
+    qs_mock.get_rls_scope.return_value = {'readable': [{'table': 'in.c-crm.orders', 'columns': None}]}
+    manager._get_workspace = AsyncMock(  # type: ignore[method-assign]
+        side_effect=RuntimeError('no workspace') if workspace_error else None, return_value=workspace
+    )
+
+    if expected == 'unavailable':
+        with pytest.raises(RlsScopeUnavailableError):
+            await manager.get_rls_scope(['in.c-crm.orders'])
+        with pytest.raises(RlsScopeUnavailableError):
+            await manager.is_governed()
+        return
+
+    scope = await manager.get_rls_scope(['in.c-crm.orders'])
+    assert await manager.is_governed() is (expected == 'scope')
+    if expected == 'scope':
+        assert scope == RlsScope(readable={'in.c-crm.orders': None})
+    else:
+        assert scope is None
+        qs_mock.get_rls_scope.assert_not_awaited()
+    if not rls_feature:
+        manager._get_workspace.assert_not_awaited()  # type: ignore[attr-defined]
+
+
+@pytest.mark.parametrize(
+    ('login_type', 'expected'),
+    [(GOVERNED_LOGIN_TYPE, True), ('default', False), ('snowflake-person-sso', False), (None, False)],
+)
+def test_init_workspace_marks_only_the_governed_login_type(login_type: str | None, expected: bool) -> None:
+    manager = WorkspaceManager(Mock(spec=KeboolaClient))
+    info = _WspInfo(id=1, schema='S', backend='snowflake', credentials=None, readonly=True, login_type=login_type)
+
+    assert manager._init_workspace(info).governed is expected
