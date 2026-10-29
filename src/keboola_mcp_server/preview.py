@@ -253,8 +253,20 @@ def _prepare_mutator(
             mutator_params['schedules'] = type_adapter.validate_python(schedules)
 
     elif preview_rq.tool_name == 'modify_streamlit_data_app':
-        mutator_fn = data_app_tools.modify_streamlit_data_app_internal
         mutator_params['workspace_manager'] = workspace_manager
+
+        # Validated inside the mutator so a bad `oidc` shows as a validation error in the preview.
+        async def _modify_streamlit_data_app_preview(**kwargs: Any) -> tuple:
+            if (oidc := kwargs.get('oidc')) is not None:
+                kwargs['oidc'] = data_app_tools.OidcAuthConfig.model_validate(oidc)
+            data_app_tools._validate_oidc_args(
+                kwargs.get('authentication_type', 'default'),
+                kwargs.get('oidc'),
+                is_create=not kwargs.get('configuration_id'),
+            )
+            return await data_app_tools.modify_streamlit_data_app_internal(**kwargs)
+
+        mutator_fn = _modify_streamlit_data_app_preview
 
     else:
         raise ValueError(f'Invalid tool name: "{preview_rq.tool_name}"')
