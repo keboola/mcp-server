@@ -208,6 +208,36 @@ def _reject_no_auth_on_draft(authentication_type: str) -> None:
         raise ValueError(_NO_AUTH_ON_DRAFT_MESSAGE)
 
 
+_OIDC_ON_DRAFT_MESSAGE = (
+    "authentication_type='oidc' is not allowed on draft data apps. A draft has its own URL and so its "
+    'own callback URL, which the identity provider does not know. Set up OIDC on the prod app instead.'
+)
+
+
+def _reject_oidc_on_draft(authentication_type: AuthenticationType) -> None:
+    if authentication_type == 'oidc':
+        raise ValueError(_OIDC_ON_DRAFT_MESSAGE)
+
+
+def _validate_oidc_args(
+    authentication_type: AuthenticationType, oidc: OidcAuthConfig | None, *, is_create: bool
+) -> None:
+    if authentication_type == 'oidc':
+        if is_create:
+            raise ValueError(
+                "authentication_type='oidc' is not allowed when creating a data app, because the callback URL "
+                "needs the app ID. Create the app with authentication_type='basic-auth' first, "
+                "then update it with 'oidc'."
+            )
+        if oidc is None:
+            raise ValueError("authentication_type='oidc' needs the `oidc` settings (client_id and issuer_url).")
+    elif oidc is not None:
+        raise ValueError(
+            "The `oidc` settings are only used with authentication_type='oidc'. "
+            'Set that authentication type or drop `oidc`.'
+        )
+
+
 SECRET_WORKSPACE_ID = 'WORKSPACE_ID'
 SECRET_BRANCH_ID = 'BRANCH_ID'
 
@@ -1164,6 +1194,16 @@ async def modify_python_js_data_app(
             ),
         ),
     ] = 'default',
+    oidc: Annotated[
+        OidcAuthConfig | None,
+        Field(
+            description=(
+                'OIDC settings. Required with authentication_type="oidc" and not allowed with any other '
+                'type. Only for updating an existing prod app, not for create or drafts. It has no secret '
+                'field: the user enters the client secret in the Keboola UI.'
+            ),
+        ),
+    ] = None,
     auto_suspend_after_seconds: Annotated[
         int | None,
         Field(
@@ -1357,6 +1397,10 @@ async def modify_python_js_data_app(
     `authentication_type='default'` preserves the existing `authorization` block (including OIDC
     setups configured outside the MCP); `'basic-auth'` / `'no-auth'` overwrite it.
 
+    `authentication_type='oidc'` (with the `oidc` argument) switches an existing prod app to OIDC. It is
+    rejected on create and on drafts. Create the app with `'basic-auth'` first, then update it. The tool
+    never takes a client secret: the user enters it in the Keboola UI.
+
     ## Slug constraint
 
     Must be DNS-label-safe (lowercase letters, digits, hyphens). Optional on create: when omitted it
@@ -1377,6 +1421,7 @@ async def modify_python_js_data_app(
     After an explicit `slug` the new URL applies on the next `deploy_data_app` and the old URL stops
     working; tell the user both.
     """
+    _validate_oidc_args(authentication_type, oidc, is_create=not configuration_id)
     if configuration_id:
         if slug:
             _validate_explicit_slug(slug)
@@ -1396,6 +1441,7 @@ async def modify_python_js_data_app(
             raise ValueError('branch is only valid on the draft create path (pair it with parent_configuration_id).')
         if parent_configuration_id:
             _reject_no_auth_on_draft(authentication_type)
+            _reject_oidc_on_draft(authentication_type)
 
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
@@ -1419,6 +1465,7 @@ async def modify_python_js_data_app(
         data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
         if _is_draft_config(data_app.configuration):
             _reject_no_auth_on_draft(authentication_type)
+            _reject_oidc_on_draft(authentication_type)
         normalized_branch = _validate_branch_update(branch, data_app, configuration_id) if branch else None
         new_slug = _resolve_slug_update(data_app, name=name, explicit_slug=slug)
         if (
@@ -1437,6 +1484,7 @@ async def modify_python_js_data_app(
             existing_config=data_app.configuration,
             auto_suspend_after_seconds=auto_suspend_after_seconds,
             authentication_type=authentication_type,
+            oidc=oidc,
             storage_access=storage_access,
             has_storage_workspace=has_storage_workspace,
             legacy_workspace_id=legacy_workspace_id,
@@ -1939,6 +1987,7 @@ def _update_existing_code_data_app_config(
     branch: str | None = None,
     slug: str | None = None,
     image_version: str | None = None,
+    oidc: OidcAuthConfig | None = None,
 ) -> dict[str, Any]:
     """Apply requested updates to the existing python-js data app storage configuration.
 
@@ -1949,7 +1998,8 @@ def _update_existing_code_data_app_config(
     `image_version` pins `runtime.image.version`; '' drops the pin (both it and the legacy
     `parameters.imageVersion`) so the app follows the platform default; None leaves the stored pin as is.
     `authentication_type='default'` preserves the existing `authorization` block (including OIDC
-    setups configured outside the MCP); 'no-auth' / 'basic-auth' overwrite it.
+    setups configured outside the MCP); 'no-auth' / 'basic-auth' overwrite it; 'oidc' rewrites the
+    OIDC provider from `oidc` and keeps the stored client secret.
     `storage_access` moves the app's read-only Storage access, through whichever mechanism the
     project supports: `runtime.workspace.enabled` when `has_storage_workspace` is true, and the
     legacy `parameters.dataApp.secrets.WORKSPACE_ID` entry (taken from `legacy_workspace_id`) when
@@ -1972,7 +2022,7 @@ def _update_existing_code_data_app_config(
         new_config['parameters']['autoSuspendAfterSeconds'] = auto_suspend_after_seconds
     if authentication_type != 'default':
         new_config['authorization'] = _build_authorization(
-            'basic-auth' if authentication_type == 'basic-auth' else 'no-auth'
+            authentication_type, oidc, existing_config.get('authorization')
         )
     if branch is not None:
         data_app_block = new_config['parameters'].get('dataApp')

@@ -1760,6 +1760,75 @@ async def test_modify_python_js_data_app_no_auth_rejected_only_on_drafts(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('configuration_id', 'parent_configuration_id', 'target_is_draft', 'authentication_type', 'with_oidc', 'match'),
+    [
+        ('cfg-prod-1', None, False, 'oidc', False, 'oidc.*settings|`oidc`'),
+        ('cfg-prod-1', None, False, 'basic-auth', True, "authentication_type='oidc'"),
+        ('', None, False, 'oidc', True, "'basic-auth' first"),
+        ('', 'cfg-prod-1', False, 'oidc', True, "'basic-auth' first"),
+        ('cfg-draft-1', None, True, 'oidc', True, 'draft'),
+    ],
+    ids=[
+        'oidc_without_settings',
+        'settings_without_oidc',
+        'oidc_on_create',
+        'oidc_on_draft_create',
+        'oidc_on_draft_update',
+    ],
+)
+async def test_modify_python_js_data_app_oidc_rejected(
+    mocker,
+    mcp_context_client: Context,
+    workspace_manager,
+    configuration_id: str,
+    parent_configuration_id: str | None,
+    target_is_draft: bool,
+    authentication_type: str,
+    with_oidc: bool,
+    match: str,
+) -> None:
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.data_science_client = mocker.AsyncMock()
+    keboola_client.has_feature = mocker.AsyncMock(return_value=True)
+    workspace_manager.get_data_app_branch_id = mocker.AsyncMock(return_value='branch-1')
+    data_app_block: dict = {'slug': 'old-slug'}
+    if target_is_draft:
+        data_app_block.update(isDraft=True, parentConfigurationId='cfg-prod-1')
+    mocker.patch(
+        'keboola_mcp_server.tools.data_apps._fetch_data_app',
+        mocker.AsyncMock(
+            return_value=DataApp(
+                name='Old',
+                component_id=DATA_APP_COMPONENT_ID,
+                configuration_id=configuration_id or 'cfg-draft-1',
+                data_app_id='app-1',
+                project_id='proj-1',
+                branch_id='branch-1',
+                config_version='2',
+                type='python-js',
+                configuration={'parameters': {'autoSuspendAfterSeconds': 900, 'dataApp': data_app_block}},
+                state='stopped',
+            )
+        ),
+    )
+    keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value={})
+
+    with pytest.raises(ValueError, match=match):
+        await modify_python_js_data_app(
+            ctx=mcp_context_client,
+            name='My App',
+            description='desc',
+            configuration_id=configuration_id,
+            parent_configuration_id=parent_configuration_id,
+            authentication_type=cast(Literal['no-auth', 'basic-auth', 'oidc', 'default'], authentication_type),
+            oidc=OidcAuthConfig(client_id='c', issuer_url='https://i') if with_oidc else None,
+        )
+    keboola_client.data_science_client.create_data_app.assert_not_called()
+    keboola_client.storage_client.configuration_update.assert_not_called()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(('auto_suspend_after_seconds', 'expected_auto_suspend'), [(600, 600), (None, 3600)])
 async def test_modify_python_js_data_app_update_patches_storage_config(
     mocker,
@@ -2584,6 +2653,47 @@ def test_update_existing_code_data_app_config_default_auth_preserves_existing() 
     new = _update_existing_code_data_app_config(existing, auto_suspend_after_seconds=900, authentication_type='default')
     # Deepcopy makes it equal-but-not-identical.
     assert new['authorization'] == existing_authorization
+
+
+@pytest.mark.parametrize(
+    ('existing_authorization', 'expected_provider'),
+    [
+        (
+            {'app_proxy': {'auth_providers': [{'id': 'simpleAuth', 'type': 'password'}], 'auth_rules': []}},
+            {'id': 'oidc-1', 'type': 'oidc', 'client_id': 'c', 'issuer_url': 'https://i'},
+        ),
+        (
+            {
+                'app_proxy': {
+                    'auth_providers': [{'id': 'oidc-1', 'type': 'oidc', '#client_secret': 'KBC::ProjectSecure::abc'}],
+                    'auth_rules': [],
+                }
+            },
+            {
+                'id': 'oidc-1',
+                'type': 'oidc',
+                '#client_secret': 'KBC::ProjectSecure::abc',
+                'client_id': 'c',
+                'issuer_url': 'https://i',
+            },
+        ),
+    ],
+    ids=['from_basic_auth', 'keeps_stored_secret'],
+)
+def test_update_existing_code_data_app_config_oidc(existing_authorization: dict, expected_provider: dict) -> None:
+    existing = {
+        'parameters': {'autoSuspendAfterSeconds': 900, 'dataApp': {'slug': 'x'}},
+        'authorization': existing_authorization,
+    }
+    new = _update_existing_code_data_app_config(
+        existing,
+        authentication_type='oidc',
+        oidc=OidcAuthConfig(client_id='c', issuer_url='https://i'),
+    )
+    assert new['authorization']['app_proxy']['auth_providers'] == [expected_provider]
+    assert new['authorization']['app_proxy']['auth_rules'] == [
+        {'type': 'pathPrefix', 'value': '/', 'auth_required': True, 'auth': ['oidc-1']}
+    ]
 
 
 def test_update_existing_code_data_app_config_basic_auth_overwrites() -> None:
