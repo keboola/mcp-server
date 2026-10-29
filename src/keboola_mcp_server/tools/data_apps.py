@@ -608,6 +608,20 @@ class ModifiedDataAppOutput(BaseModel):
     change_summary: str | None = Field(default=None, description='Additional notes or hints about the operation.')
     data_app: DataAppSummary = Field(description='The data app.')
     links: list[Link] = Field(description='Navigation links for the web interface.')
+    oidc_callback_url: str | None = Field(
+        default=None,
+        description=(
+            'The OIDC redirect URI of the app (`https://<slug>-<app id>.hub.<stack>/_proxy/callback`). Register it '
+            'at the identity provider before you switch the app to OIDC. None for drafts.'
+        ),
+    )
+    oidc_setup_required: bool = Field(
+        default=False,
+        description=(
+            'True when the app uses OIDC but has no client secret yet: it cannot log anyone in. '
+            'Tell the user to follow `change_summary` before deploying.'
+        ),
+    )
 
 
 class ModifiedPythonJsDataAppOutput(BaseModel):
@@ -616,6 +630,20 @@ class ModifiedPythonJsDataAppOutput(BaseModel):
     response: str = Field(description='The response of the action performed with potential additional information.')
     change_summary: str | None = Field(default=None, description='Additional notes or hints about the operation.')
     data_app: DataAppSummary = Field(description='The data app.')
+    oidc_callback_url: str | None = Field(
+        default=None,
+        description=(
+            'The OIDC redirect URI of the app (`https://<slug>-<app id>.hub.<stack>/_proxy/callback`). Register it '
+            'at the identity provider before you switch the app to OIDC. None for drafts.'
+        ),
+    )
+    oidc_setup_required: bool = Field(
+        default=False,
+        description=(
+            'True when the app uses OIDC but has no client secret yet: it cannot log anyone in. '
+            'Tell the user to follow `change_summary` before deploying.'
+        ),
+    )
     repo_url: str | None = Field(
         default=None,
         description=(
@@ -901,11 +929,19 @@ async def modify_streamlit_data_app(
                 uses_basic_authentication=_uses_basic_authentication(data_app.configuration.get('authorization') or {}),
             )
             response = _update_response(data_app)
+            written_authorization = updated_config.get('authorization') or {}
+            oidc_hint = _oidc_change_summary(
+                written_authorization,
+                config_link=links_manager.get_data_app_config_link(configuration_id, name, False).url,
+                roles_requested=bool(oidc and oidc.allowed_roles),
+            )
             return ModifiedDataAppOutput(
                 response=response,
-                change_summary=folder_hint,
+                change_summary='\n'.join(note for note in (folder_hint, oidc_hint) if note) or None,
                 data_app=DataAppSummary.model_validate(data_app.model_dump()),
                 links=links,
+                oidc_callback_url=_oidc_callback_url(client, data_app_pre.data_app_id, updated_config),
+                oidc_setup_required=_oidc_setup_required(written_authorization),
             )
         except Exception:
             LOG.exception(
@@ -962,6 +998,7 @@ async def modify_streamlit_data_app(
                     data_app_resp, await _config_version_or_blank(client, data_app_resp.config_id)
                 ),
                 links=links,
+                oidc_callback_url=_oidc_callback_url(client, data_app_resp.id, config),
             )
         except Exception:
             LOG.exception(
@@ -1486,7 +1523,11 @@ async def modify_python_js_data_app(
             _reject_no_auth_on_draft(authentication_type)
             _reject_oidc_on_draft(authentication_type)
         normalized_branch = _validate_branch_update(branch, data_app, configuration_id) if branch else None
-        new_slug = _resolve_slug_update(data_app, name=name, explicit_slug=slug)
+        oidc_app = authentication_type == 'oidc' or (
+            authentication_type == 'default'
+            and _oidc_provider(data_app.configuration.get('authorization') or {}) is not None
+        )
+        new_slug = _resolve_slug_update(data_app, name=name, explicit_slug=slug, oidc_app=oidc_app)
         if (
             not has_storage_workspace
             and wants_storage_access
@@ -1530,6 +1571,8 @@ async def modify_python_js_data_app(
         folder_hint = await apply_configuration_folder(
             client, DATA_APP_COMPONENT_ID, configuration_id, folder, 'data apps', 'modify_python_js_data_app'
         )
+        written_authorization = updated_config.get('authorization') or {}
+        oidc_callback_url = _oidc_callback_url(client, data_app.data_app_id, updated_config)
         # Without an explicit `slug`, a new slug is a never-deployed app's slug following its name.
         if new_slug is None:
             slug_hint = None
@@ -1539,6 +1582,11 @@ async def modify_python_js_data_app(
                 '(deploy_data_app); from then on it is served under the new slug and the old URL stops working. '
                 'Tell the user both.'
             )
+            if oidc_app:
+                slug_hint += (
+                    f' The app uses OIDC login: register the new callback URL {oidc_callback_url} at the '
+                    'identity provider before you redeploy, or every login fails.'
+                )
         else:
             slug_hint = (
                 f"The URL slug followed the new name to '{new_slug}': the app has never been deployed, so its "
@@ -1556,6 +1604,11 @@ async def modify_python_js_data_app(
             if storage_access is not None
             else None
         )
+        oidc_hint = _oidc_change_summary(
+            written_authorization,
+            config_link=links_manager.get_data_app_config_link(configuration_id, name or data_app.name, False).url,
+            roles_requested=bool(oidc and oidc.allowed_roles),
+        )
         change_summary = (
             '\n'.join(
                 note
@@ -1566,6 +1619,7 @@ async def modify_python_js_data_app(
                     storage_access_hint,
                     _image_version_hint(image_version),
                     legacy_fallback_hint,
+                    oidc_hint,
                 )
                 if note
             )
@@ -1590,6 +1644,8 @@ async def modify_python_js_data_app(
             data_app=data_app_summary,
             repo_url=repo_url,
             links=links,
+            oidc_callback_url=oidc_callback_url,
+            oidc_setup_required=_oidc_setup_required(written_authorization),
         )
     else:
         # Create new python-js data app — either a prod app (own managed repo) or a draft
@@ -1743,6 +1799,9 @@ async def modify_python_js_data_app(
             git_clone_url=git_clone_url,
             branch=draft_branch,
             links=links,
+            oidc_callback_url=_oidc_callback_url(
+                client, data_app_resp.id, config.model_dump(by_alias=True, exclude_none=True)
+            ),
         )
 
 
@@ -2562,9 +2621,15 @@ def _update_existing_data_app_config(
     oidc: OidcAuthConfig | None = None,
 ) -> dict[str, Any]:
     new_config = cast(dict[str, Any], copy.deepcopy(existing_config))
-    new_config['parameters']['dataApp']['slug'] = (
-        _get_data_app_slug(name) or existing_config['parameters']['dataApp']['slug']
-    )
+    if authentication_type != 'default':
+        new_config['authorization'] = _build_authorization(
+            authentication_type, oidc, existing_config.get('authorization')
+        )
+    # The OIDC callback URL contains the slug, so a rename must not move it.
+    if _oidc_provider(new_config.get('authorization') or {}) is None:
+        new_config['parameters']['dataApp']['slug'] = (
+            _get_data_app_slug(name) or existing_config['parameters']['dataApp']['slug']
+        )
     if source_code:
         new_config['parameters']['script'] = [_inject_query_to_source_code(source_code, sql_dialect)]
     new_config['parameters']['packages'] = (
@@ -2581,10 +2646,6 @@ def _update_existing_data_app_config(
 
     new_config['parameters']['dataApp']['secrets'] = updated_secrets
 
-    if authentication_type != 'default':
-        new_config['authorization'] = _build_authorization(
-            authentication_type, oidc, existing_config.get('authorization')
-        )
     # Clean up any empty/array-shaped storage left behind by earlier MCP/CLI/KAI writes so the
     # Writable Tables editor keeps working after a re-save (AI-3135).
     _normalize_config_storage(new_config)
@@ -3028,6 +3089,11 @@ def _update_response(data_app: 'DataApp') -> str:
     return 'updated (redeploy required to apply changes in the running app)'
 
 
+def _hub_url(client: KeboolaClient, data_app_id: str, slug: str) -> str:
+    """The app address `https://<slug>-<app id>.hub.<stack>`. The formula is the operator's."""
+    return f'https://{slug}-{data_app_id}.hub.{client.hostname_suffix}'
+
+
 def _app_url(client: KeboolaClient, data_app_id: str, configuration: Mapping[str, Any]) -> str | None:
     """A draft's address, `https://<slug>-<app id>.hub.<stack>`; None for a prod app or without a slug.
 
@@ -3037,7 +3103,38 @@ def _app_url(client: KeboolaClient, data_app_id: str, configuration: Mapping[str
     slug = _config_slug(configuration)
     if not slug or not _is_draft_config(configuration):
         return None
-    return f'https://{slug}-{data_app_id}.hub.{client.hostname_suffix}'
+    return _hub_url(client, data_app_id, slug)
+
+
+def _oidc_callback_url(client: KeboolaClient, data_app_id: str, configuration: Mapping[str, Any]) -> str | None:
+    """The OIDC redirect URI of a prod app; None for a draft (drafts cannot use OIDC) or without a slug."""
+    slug = _config_slug(configuration)
+    if not slug or _is_draft_config(configuration):
+        return None
+    return f'{_hub_url(client, data_app_id, slug)}/_proxy/callback'
+
+
+def _oidc_change_summary(authorization: Mapping[str, Any], config_link: str, roles_requested: bool) -> str | None:
+    """The next steps for an OIDC app, or None when there is nothing to tell."""
+    if _oidc_setup_required(authorization):
+        roles_step = (
+            "After that, run this update again with authentication_type='oidc' and the same `allowed_roles`: "
+            'saving the form in the UI removes them. '
+            if roles_requested
+            else ''
+        )
+        return (
+            'OIDC login is set, but the app cannot log anyone in yet: the client secret is missing. '
+            f'Ask the user to open {config_link}, go to the Authentication section, enter the client secret '
+            f'and save. {roles_step}Deploy the app (deploy_data_app) only as the last step.'
+        )
+    if roles_requested:
+        return (
+            'The UI form does not show `allowed_roles`, so any later save of the Authentication section in the UI '
+            "removes them. After such a save, run this update again with authentication_type='oidc' and "
+            '`allowed_roles`, then redeploy.'
+        )
+    return None
 
 
 def _config_git_branch(configuration: Mapping[str, Any]) -> str | None:
@@ -3047,14 +3144,16 @@ def _config_git_branch(configuration: Mapping[str, Any]) -> str | None:
     return branch if isinstance(branch, str) and branch else None
 
 
-def _resolve_slug_update(data_app: 'DataApp', *, name: str, explicit_slug: str | None) -> str | None:
+def _resolve_slug_update(data_app: 'DataApp', *, name: str, explicit_slug: str | None, oidc_app: bool) -> str | None:
     """The slug a python-js update writes, or None to keep the stored one.
 
     1. An explicit slug on a draft raises — draft slugs never change.
     2. An explicit slug on a prod app is written as given.
-    3. A rename of a prod app that was never deployed moves the slug to `_derive_slug_from_name(name)`
+    3. An app whose written authorization has an OIDC provider (`oidc_app`) keeps its slug, because
+       the callback URL registered at the IdP contains it.
+    4. A rename of a prod app that was never deployed moves the slug to `_derive_slug_from_name(name)`
        when the stored slug still follows the current name.
-    4. Anything else keeps the stored slug.
+    5. Anything else keeps the stored slug.
 
     - "Follows the name" compares both through `_derive_slug_from_name`, so a slug the UI derived
       (`prepareSlug`, which keeps repeated hyphens) counts as well.
@@ -3067,7 +3166,7 @@ def _resolve_slug_update(data_app: 'DataApp', *, name: str, explicit_slug: str |
     current_slug = _config_slug(data_app.configuration)
     if explicit_slug:
         return None if explicit_slug == current_slug else explicit_slug
-    if not name or name == data_app.name or current_slug is None or not _is_never_deployed(data_app):
+    if oidc_app or not name or name == data_app.name or current_slug is None or not _is_never_deployed(data_app):
         return None
     if _derive_slug_from_name(current_slug, draft=False) != _derive_slug_from_name(data_app.name, draft=False):
         return None
