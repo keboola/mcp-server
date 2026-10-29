@@ -359,6 +359,7 @@ async def test_get_workspace_resolves_by_id_when_set():
     and take precedence over `workspace_schema`, instead of falling back to the default
     per-branch MCP-managed workspace."""
     mock_client = Mock(spec=KeboolaClient)
+    mock_client.has_feature = AsyncMock(return_value=False)  # no RLS feature: a pin is not restricted
     manager = WorkspaceManager(mock_client, workspace_schema='SOME_SCHEMA', workspace_id='123')
 
     ws_info = _WspInfo(id=123, schema='APP_SCHEMA', backend='snowflake', credentials=None, readonly=True)
@@ -391,6 +392,7 @@ async def test_get_workspace_warns_when_pinned_workspace_is_not_readonly(caplog:
     actually read-only is unconfirmed against a real stack; hard-enforcing here without knowing
     that could break the feature outright -- see AI-3669 review, workspace.py:834 thread)."""
     mock_client = Mock(spec=KeboolaClient)
+    mock_client.has_feature = AsyncMock(return_value=False)  # no RLS feature: a pin is not restricted
     manager = WorkspaceManager(mock_client, workspace_id='123')
     writable_info = _WspInfo(id=123, schema='APP_SCHEMA', backend='snowflake', credentials=None, readonly=False)
     manager._find_ws_by_id = AsyncMock(return_value=(writable_info, mock_client))  # type: ignore[method-assign]
@@ -411,6 +413,7 @@ async def test_get_data_app_workspace_id_ignores_the_pin():
     code. If they returned the pinned workspace, creating/updating data app B from a session
     pinned to app A's workspace would permanently point B at A's workspace/dialect."""
     mock_client = Mock(spec=KeboolaClient)
+    mock_client.has_feature = AsyncMock(return_value=False)  # no RLS: an ordinary pinned BigQuery workspace is usable
     manager = WorkspaceManager(mock_client, workspace_id='999')
 
     pinned_info = _WspInfo(
@@ -508,6 +511,7 @@ async def test_pin_resolution_via_prod_fallback_does_not_leak_into_managed_looku
     running on the manager's original (dev-branch) client, not the prod client the pin happened
     to resolve on."""
     dev_client = Mock(spec=KeboolaClient)
+    dev_client.has_feature = AsyncMock(return_value=False)  # no RLS feature: a pin is not restricted
     dev_client.branch_id = '456'
     dev_client.storage_client = AsyncMock()
     mock_response = Mock(spec=Response)
@@ -549,6 +553,7 @@ async def test_get_workspace_warns_when_pin_resolves_via_prod_fallback(caplog: p
     queries run against the prod-branch workspace -- nothing else makes that branch mismatch
     diagnosable, so it must at least be logged (AI-3669 review, workspace.py:908 thread)."""
     dev_client = Mock(spec=KeboolaClient)
+    dev_client.has_feature = AsyncMock(return_value=False)  # no RLS feature: a pin is not restricted
     dev_client.branch_id = '456'
     dev_client.storage_client = AsyncMock()
     mock_response = Mock(spec=Response)
@@ -1019,9 +1024,8 @@ async def test_find_ws_in_branch_returns_none_when_no_mcp_workspace():
         ('snowflake', False, 'snowflake-person-sso'),
         # A project with the RLS feature gets a governed workspace on Snowflake, so Query Service enforces the policies.
         ('snowflake', True, GOVERNED_LOGIN_TYPE),
-        # BigQuery is not governed yet: the login type is unchanged with or without the feature.
         ('bigquery', False, 'default'),
-        ('bigquery', True, 'default'),
+        ('bigquery', True, GOVERNED_LOGIN_TYPE),
     ],
     ids=['snowflake', 'snowflake_rls', 'bigquery', 'bigquery_rls'],
 )
@@ -1039,8 +1043,7 @@ async def test_create_ws_login_type_follows_the_rls_feature(backend: str, rls_fe
 
     await WorkspaceManager(mock_client)._create_ws()
 
-    if backend == 'snowflake':
-        mock_client.has_feature.assert_awaited_with(RLS_FEATURE)
+    mock_client.has_feature.assert_awaited_with(RLS_FEATURE)
     assert mock_storage_client.workspace_create_for_config.await_args.kwargs['login_type'] == expected_login_type
 
 
@@ -1078,8 +1081,10 @@ async def test_create_ws_refused_governed_login_type_is_not_retried_as_an_ordina
         (True, [_wsp(2, True), _wsp(3, True, login_type=GOVERNED_LOGIN_TYPE)], 3),
         # a governed workspace that is not read-only is not an MCP workspace
         (True, [_wsp(2, False, login_type=GOVERNED_LOGIN_TYPE)], None),
-        # BigQuery has no governed type yet, so an ordinary one stays usable
-        (True, [_wsp(2, True, backend='bigquery', login_type='default')], 2),
+        # the same on BigQuery
+        (True, [_wsp(2, True, backend='bigquery', login_type='default')], None),
+        (True, [_wsp(2, True, backend='bigquery', login_type=GOVERNED_LOGIN_TYPE)], 2),
+        (False, [_wsp(2, True, backend='bigquery', login_type='default')], 2),
     ],
     ids=[
         'no_feature',
@@ -1087,7 +1092,9 @@ async def test_create_ws_refused_governed_login_type_is_not_retried_as_an_ordina
         'feature_ordinary',
         'feature_governed',
         'feature_not_readonly',
-        'bigquery',
+        'bigquery_feature_ordinary',
+        'bigquery_feature_governed',
+        'bigquery_no_feature',
     ],
 )
 async def test_find_ws_in_branch_requires_a_governed_workspace_with_the_rls_feature(
@@ -1103,3 +1110,75 @@ async def test_find_ws_in_branch_requires_a_governed_workspace_with_the_rls_feat
     info = await WorkspaceManager(mock_client)._find_ws_in_branch()
 
     assert (info.id if info else None) == expected_id
+
+
+@pytest.mark.parametrize(
+    ('rls_feature', 'backend', 'login_type', 'allowed'),
+    [
+        (True, 'snowflake', 'snowflake-person-sso', False),
+        (True, 'snowflake', None, False),
+        (True, 'snowflake', GOVERNED_LOGIN_TYPE, True),
+        (False, 'snowflake', 'snowflake-person-sso', True),
+        (False, 'snowflake', GOVERNED_LOGIN_TYPE, True),
+        (True, 'bigquery', 'default', False),
+        (True, 'bigquery', GOVERNED_LOGIN_TYPE, True),
+        (False, 'bigquery', 'default', True),
+    ],
+)
+@pytest.mark.parametrize('pin', ['workspace_id', 'workspace_schema'])
+@pytest.mark.asyncio
+async def test_pin_must_be_governed_when_the_project_enforces_rls(
+    pin: str, rls_feature: bool, backend: str, login_type: str | None, allowed: bool
+) -> None:
+    """With the RLS feature, an ordinary workspace is not filtered, so pinning one (by id or by schema) would read
+    around the policies; a governed one and any workspace without the feature stay usable."""
+    mock_client = Mock(spec=KeboolaClient)
+    mock_client.has_feature = AsyncMock(return_value=rls_feature)
+    info = _WspInfo(
+        id=123,
+        schema='PINNED',
+        backend=backend,
+        credentials='{"project_id": "p"}',
+        readonly=True,
+        login_type=login_type,
+    )
+    if pin == 'workspace_id':
+        manager = WorkspaceManager(mock_client, workspace_id='123')
+        manager._find_ws_by_id = AsyncMock(return_value=(info, mock_client))  # type: ignore[method-assign]
+        resolve = manager._get_workspace
+    else:
+        manager = WorkspaceManager(mock_client, workspace_schema='PINNED')
+        manager._find_ws_by_schema = AsyncMock(return_value=info)  # type: ignore[method-assign]
+        resolve = manager._get_managed_workspace
+
+    if allowed:
+        assert (await resolve()).id == 123
+    else:
+        with pytest.raises(ValueError, match='only a governed workspace can be pinned'):
+            await resolve()
+
+
+@pytest.mark.parametrize(
+    ('login_type', 'credentials', 'expected'),
+    [
+        # a governed workspace has no credentials of its own: its queries go through Query Service
+        (GOVERNED_LOGIN_TYPE, None, 'ok'),
+        ('default', '{"project_id": "p"}', 'ok'),
+        ('default', None, 'error'),
+        ('default', '{}', 'error'),
+    ],
+    ids=['governed_no_credentials', 'ordinary', 'ordinary_no_credentials', 'ordinary_no_project'],
+)
+def test_init_bigquery_workspace_needs_credentials_unless_governed(
+    login_type: str, credentials: str | None, expected: str
+) -> None:
+    info = _WspInfo(
+        id=7, schema='WORKSPACE_7', backend='bigquery', credentials=credentials, readonly=True, login_type=login_type
+    )
+    manager = WorkspaceManager(Mock(spec=KeboolaClient))
+
+    if expected == 'ok':
+        assert manager._init_workspace(info).id == 7
+    else:
+        with pytest.raises(ValueError, match='No credentials or no project ID'):
+            manager._init_workspace(info)
