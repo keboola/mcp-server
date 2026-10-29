@@ -141,15 +141,17 @@ policies of the project. There is no rewriting in this server and no fallback: w
   create a governed workspace (Snowflake, no public key). The stack's Connection must accept the login type
   `governed`: a stack that does not refuses the create, and then every tool that needs the workspace fails (there is
   no fallback to an ordinary workspace). BigQuery projects keep an ordinary, unfiltered workspace. An older ordinary
-  MCP workspace is not deleted: it is skipped as soon as the feature is on, and `workspace_schema` or an
-  `X-Workspace-Id` pin can still select it.
+  MCP workspace is not deleted: it is skipped as soon as the feature is on. With the feature on, a `workspace_schema`
+  or `X-Workspace-Id` pin is accepted only for a governed workspace (an ordinary one would read around the
+  policies), so a pin to the old workspace, or to a data app's own ordinary workspace, is refused; delete the old one.
 - **Deny by default.** The Query Service refuses a table of a governed workspace that no `rls-policy` applies to (a
   `"*"` rule opens a table to every identified reader); a `cls-policy` alone grants no rows. A statement that reads
   no table (`SELECT 1`) runs. A refusal reaches the agent as `Row-level security does not allow this query`.
-- **Who is the reader.** The Query Service resolves the user from the programmatic token this server forwards
-  (`kbc_at_` / `kbc_pat_`, sent with `X-KBC-ProjectId`). A session that has only a legacy Storage token, or that
-  this server cannot map to a user (for example Kai), has no verified identity and reads nothing from a governed
-  table. Group rules never match (an OAuth login carries no groups).
+- **Who is the reader.** The Query Service resolves the reader from the administrator's own token of the project:
+  the programmatic token this server forwards (`kbc_at_` / `kbc_pat_`, including the child PAT of a multi-project
+  scope, sent with `X-KBC-ProjectId`) or an administrator's own master Storage token. Any other token (an
+  integration, a data app, Kai) names no end user, has no verified identity and reads nothing from a governed
+  table. Group rules never match (the identity carries no groups).
 - **Bindings.** Without a binding a workspace gets every policy of the project, and this server never creates one.
   To give a workspace only some policies, bind them to its KID: `KID:<stack id>:project-<project id>:workspace-<workspace id>`
   (a workspace of the default branch; a branch workspace also has `branch-<branch id>` before `project`). The stack
