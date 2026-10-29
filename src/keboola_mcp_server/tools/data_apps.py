@@ -758,14 +758,25 @@ async def modify_streamlit_data_app(
         Field(
             description=(
                 'Authentication type, "no-auth" removes authentication completely, "basic-auth" sets the data '
-                'app to be secured using the HTTP basic authentication, and "default" keeps the existing '
-                'authentication type when updating.'
+                'app to be secured using the HTTP basic authentication, "oidc" sets up OIDC login (update '
+                'only, needs the `oidc` argument), and "default" keeps the existing authentication type '
+                'when updating.'
             )
         ),
     ],
     configuration_id: Annotated[
         str, Field(description='The ID of existing data app configuration when updating, otherwise empty string.')
     ] = '',
+    oidc: Annotated[
+        OidcAuthConfig | None,
+        Field(
+            description=(
+                'OIDC settings. Required with authentication_type="oidc" and not allowed with any other '
+                'type. Only for updating an existing app, not for create. It has no secret '
+                'field: the user enters the client secret in the Keboola UI.'
+            ),
+        ),
+    ] = None,
     change_description: Annotated[
         str,
         Field(description='The description of the change when updating (e.g. "Update Code"), otherwise empty string.'),
@@ -809,6 +820,9 @@ async def modify_streamlit_data_app(
     - New apps use the HTTP basic authentication by default for security unless explicitly specified otherwise; when
     updating, set `authentication_type` to `default` to keep the existing authentication type configuration
     (including OIDC setups) unless explicitly specified otherwise.
+    - `authentication_type='oidc'` (with the `oidc` argument) switches an existing app to OIDC. It is rejected on
+    create: create the app with `'basic-auth'` first, then update it. The tool never takes a client secret: the
+    user enters it in the Keboola UI.
 
     SQL & DATA TYPE RULES:
     - Use delimited identifiers for the current SQL dialect for all column names and aliases in SQL.
@@ -817,6 +831,7 @@ async def modify_streamlit_data_app(
     `df["col"] = pd.to_numeric(df["col"], errors="coerce").fillna(0)` and
     `df["date"] = pd.to_datetime(df["date"], errors="coerce")`.
     """
+    _validate_oidc_args(authentication_type, oidc, is_create=not configuration_id)
     client = KeboolaClient.from_state(ctx.session.state)
     workspace_manager = WorkspaceManager.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
@@ -847,6 +862,7 @@ async def modify_streamlit_data_app(
             source_code=source_code,
             packages=packages,
             authentication_type=authentication_type,
+            oidc=oidc,
             configuration_id=configuration_id,
             change_description=change_description,
         )
@@ -974,6 +990,7 @@ async def modify_streamlit_data_app_internal(
     configuration_id: str,
     change_description: str = '',
     folder: str | None = None,
+    oidc: OidcAuthConfig | None = None,
 ) -> tuple[DataApp, JsonDict, dict | None]:
     secrets = _get_secrets(
         workspace_id=str(await workspace_manager.get_data_app_workspace_id()),
@@ -989,6 +1006,7 @@ async def modify_streamlit_data_app_internal(
         authentication_type,
         secrets,
         await workspace_manager.get_data_app_sql_dialect(),
+        oidc,
     )
     updated_config = cast(
         JsonDict,
@@ -1186,7 +1204,8 @@ async def modify_python_js_data_app(
                 'Authentication type. "no-auth" removes authentication completely (the app becomes '
                 'public -- only use it when the user explicitly asks for a public app; it is rejected '
                 'on drafts, which inherit the prod app\'s data access), "basic-auth" secures the data '
-                'app via HTTP basic authentication, and "default" means: on create, apply basic auth '
+                'app via HTTP basic authentication, "oidc" sets up OIDC login (update of a prod app only, '
+                'needs the `oidc` argument), and "default" means: on create, apply basic auth '
                 '(safe default for new apps); on update, keep the existing authentication configuration '
                 '(including OIDC setups configured outside the MCP). Never disable authentication to '
                 'make a preview work -- the in-platform preview authenticates on top of the configured '
@@ -2528,9 +2547,7 @@ def _build_data_app_config(
         'packages': packages,
     }
     # By default secure with basic authorization
-    authorization = _build_authorization(
-        'basic-auth' if authentication_type in ['basic-auth', 'default'] else 'no-auth'
-    )
+    authorization = _build_authorization('no-auth' if authentication_type == 'no-auth' else 'basic-auth')
     return {'parameters': parameters, 'authorization': authorization}
 
 
@@ -2542,6 +2559,7 @@ def _update_existing_data_app_config(
     authentication_type: AuthenticationType,
     secrets: dict[str, Any],
     sql_dialect: str,
+    oidc: OidcAuthConfig | None = None,
 ) -> dict[str, Any]:
     new_config = cast(dict[str, Any], copy.deepcopy(existing_config))
     new_config['parameters']['dataApp']['slug'] = (
@@ -2565,7 +2583,7 @@ def _update_existing_data_app_config(
 
     if authentication_type != 'default':
         new_config['authorization'] = _build_authorization(
-            'basic-auth' if authentication_type == 'basic-auth' else 'no-auth'
+            authentication_type, oidc, existing_config.get('authorization')
         )
     # Clean up any empty/array-shaped storage left behind by earlier MCP/CLI/KAI writes so the
     # Writable Tables editor keeps working after a re-save (AI-3135).

@@ -681,8 +681,24 @@ def test_update_existing_data_app_config_no_authorization_key():
     assert 'authorization' not in new
 
 
-def test_update_existing_data_app_config_basic_auth_overwrites_oidc():
-    """Explicit 'basic-auth' must replace an existing OIDC block."""
+@pytest.mark.parametrize(
+    ('authentication_type', 'oidc', 'expected_provider_ids', 'expected_auth', 'expected_secret'),
+    [
+        ('basic-auth', None, ['simpleAuth'], ['simpleAuth'], None),
+        (
+            'oidc',
+            OidcAuthConfig(client_id='new-client', issuer_url='https://issuer'),
+            ['oidc-1'],
+            ['oidc-1'],
+            'KBC::ProjectSecure::abc',
+        ),
+        ('default', None, ['oidc-1'], ['oidc-1'], 'KBC::ProjectSecure::abc'),
+    ],
+    ids=['basic-auth-overwrites-oidc', 'oidc-keeps-secret', 'default-keeps-block'],
+)
+def test_update_existing_data_app_config_authentication(
+    authentication_type, oidc, expected_provider_ids, expected_auth, expected_secret
+):
     existing = {
         'parameters': {
             'dataApp': {'slug': 'x', 'secrets': {}},
@@ -691,8 +707,16 @@ def test_update_existing_data_app_config_basic_auth_overwrites_oidc():
         },
         'authorization': {
             'app_proxy': {
-                'auth_providers': [{'id': 'oidc', 'type': 'oidc'}],
-                'auth_rules': [{'type': 'pathPrefix', 'value': '/', 'auth_required': True, 'auth': ['oidc']}],
+                'auth_providers': [
+                    {
+                        'id': 'oidc-1',
+                        'type': 'oidc',
+                        'client_id': 'old-client',
+                        'issuer_url': 'https://old',
+                        '#client_secret': 'KBC::ProjectSecure::abc',
+                    }
+                ],
+                'auth_rules': [{'type': 'pathPrefix', 'value': '/', 'auth_required': True, 'auth': ['oidc-1']}],
             }
         },
     }
@@ -701,13 +725,19 @@ def test_update_existing_data_app_config_basic_auth_overwrites_oidc():
         name='',
         source_code='',
         packages=[],
-        authentication_type='basic-auth',
+        authentication_type=authentication_type,
         secrets={},
         sql_dialect='snowflake',
+        oidc=oidc,
     )
-    assert new['authorization']['app_proxy']['auth_rules'] == [
-        {'type': 'pathPrefix', 'value': '/', 'auth_required': True, 'auth': ['simpleAuth']}
-    ]
+    proxy = new['authorization']['app_proxy']
+    assert [p['id'] for p in proxy['auth_providers']] == expected_provider_ids
+    assert proxy['auth_rules'][0]['auth'] == expected_auth
+    assert proxy['auth_providers'][0].get('#client_secret') == expected_secret
+    if authentication_type == 'oidc':
+        assert proxy['auth_providers'][0]['client_id'] == 'new-client'
+    if authentication_type == 'default':
+        assert new['authorization'] == existing['authorization']
 
 
 def test_get_query_function_code_selects_snippets():
@@ -1824,6 +1854,46 @@ async def test_modify_python_js_data_app_oidc_rejected(
             authentication_type=cast(Literal['no-auth', 'basic-auth', 'oidc', 'default'], authentication_type),
             oidc=OidcAuthConfig(client_id='c', issuer_url='https://i') if with_oidc else None,
         )
+    keboola_client.data_science_client.create_data_app.assert_not_called()
+    keboola_client.storage_client.configuration_update.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('configuration_id', 'authentication_type', 'with_oidc', 'match'),
+    [
+        ('cfg-1', 'oidc', False, 'oidc.*settings|`oidc`'),
+        ('cfg-1', 'basic-auth', True, "authentication_type='oidc'"),
+        ('', 'oidc', True, "'basic-auth' first"),
+    ],
+    ids=['oidc_without_settings', 'settings_without_oidc', 'oidc_on_create'],
+)
+async def test_modify_streamlit_data_app_oidc_rejected(
+    mocker,
+    mcp_context_client: Context,
+    workspace_manager,
+    configuration_id: str,
+    authentication_type: str,
+    with_oidc: bool,
+    match: str,
+) -> None:
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.data_science_client = mocker.AsyncMock()
+    keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value={})
+    fetch = mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock())
+
+    with pytest.raises(ValueError, match=match):
+        await modify_streamlit_data_app(
+            ctx=mcp_context_client,
+            name='My App',
+            description='desc',
+            source_code='print(1)',
+            packages=[],
+            authentication_type=cast(Literal['no-auth', 'basic-auth', 'oidc', 'default'], authentication_type),
+            configuration_id=configuration_id,
+            oidc=OidcAuthConfig(client_id='c', issuer_url='https://i') if with_oidc else None,
+        )
+    fetch.assert_not_called()
     keboola_client.data_science_client.create_data_app.assert_not_called()
     keboola_client.storage_client.configuration_update.assert_not_called()
 
