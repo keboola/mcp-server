@@ -1,7 +1,9 @@
+import copy
 import re
 import sys
 from types import ModuleType
 from typing import Literal, cast
+from unittest.mock import MagicMock
 
 import pytest
 from fastmcp import Context
@@ -28,15 +30,17 @@ from keboola_mcp_server.tools.data_apps import (
     DataAppSlugTooLongError,
     DataAppSummary,
     ModifiedDataAppOutput,
+    OidcAuthConfig,
     RuntimeImage,
+    _build_authorization,
     _build_data_app_config,
     _fetch_data_app,
     _fetch_latest_run,
-    _get_authorization,
     _get_data_app_slug,
     _get_query_function_code,
     _get_secrets,
     _inject_query_to_source_code,
+    _oidc_setup_required,
     _prune_empty_storage_objects,
     _resolve_app_image,
     _update_existing_data_app_config,
@@ -130,21 +134,139 @@ def test_get_data_app_slug_length_validation(name, expected_slug, expected_error
         assert slug == expected_slug
 
 
-def test_get_authorization_mapping():
-    auth_true = _get_authorization(True)
-    assert auth_true['app_proxy']['auth_providers'] == [{'id': 'simpleAuth', 'type': 'password'}]
-    assert auth_true['app_proxy']['auth_rules'] == [
-        {'type': 'pathPrefix', 'value': '/', 'auth_required': True, 'auth': ['simpleAuth']}
-    ]
+_SIMPLE_AUTH = {
+    'app_proxy': {
+        'auth_providers': [{'id': 'simpleAuth', 'type': 'password'}],
+        'auth_rules': [{'type': 'pathPrefix', 'value': '/', 'auth_required': True, 'auth': ['simpleAuth']}],
+    }
+}
+_STORED_OIDC = {
+    'id': 'oidc',
+    'type': 'oidc',
+    'client_id': 'old',
+    'issuer_url': 'https://old',
+    '#client_secret': 'KBC::ProjectSecure::x',
+    'logout_url': '',
+    'extra': 1,
+}
+_STORED_OIDC_ROLES = {
+    **_STORED_OIDC,
+    'logout_url': 'https://l',
+    'allowed_roles': ['a'],
+}
 
-    auth_false = _get_authorization(False)
-    assert auth_false['app_proxy']['auth_providers'] == []
-    assert auth_false['app_proxy']['auth_rules'] == [{'type': 'pathPrefix', 'value': '/', 'auth_required': False}]
+
+def _stored(provider: dict) -> dict:
+    return {'app_proxy': {'auth_providers': [provider], 'auth_rules': []}}
+
+
+_OIDC_WITH_SECRET = {**_STORED_OIDC, 'id': 'oidc-1'}
+_OIDC_NO_SECRET = {key: value for key, value in _OIDC_WITH_SECRET.items() if key != '#client_secret'}
+
+
+@pytest.mark.parametrize(
+    ('authentication_type', 'oidc', 'existing', 'expected_providers'),
+    [
+        ('basic-auth', None, None, [{'id': 'simpleAuth', 'type': 'password'}]),
+        ('no-auth', None, None, []),
+        (
+            'oidc',
+            OidcAuthConfig(client_id='c', issuer_url='https://i'),
+            None,
+            [{'id': 'oidc-1', 'type': 'oidc', 'client_id': 'c', 'issuer_url': 'https://i'}],
+        ),
+        (
+            'oidc',
+            OidcAuthConfig(client_id='c', issuer_url='https://i'),
+            _stored(_STORED_OIDC),
+            [{**_STORED_OIDC, 'id': 'oidc-1', 'client_id': 'c', 'issuer_url': 'https://i'}],
+        ),
+        (
+            'oidc',
+            OidcAuthConfig(client_id='c', issuer_url='https://i', logout_url=None, allowed_roles=None),
+            _stored(_STORED_OIDC_ROLES),
+            [{**_STORED_OIDC_ROLES, 'id': 'oidc-1', 'client_id': 'c', 'issuer_url': 'https://i'}],
+        ),
+        (
+            'oidc',
+            OidcAuthConfig(client_id='c', issuer_url='https://i', logout_url='', allowed_roles=[]),
+            _stored(_STORED_OIDC_ROLES),
+            [
+                {
+                    'id': 'oidc-1',
+                    'type': 'oidc',
+                    'client_id': 'c',
+                    'issuer_url': 'https://i',
+                    '#client_secret': 'KBC::ProjectSecure::x',
+                    'extra': 1,
+                }
+            ],
+        ),
+        (
+            'oidc',
+            OidcAuthConfig(client_id='c', issuer_url='https://i', logout_url='https://n', allowed_roles=['b']),
+            _stored(_STORED_OIDC_ROLES),
+            [
+                {
+                    **_STORED_OIDC_ROLES,
+                    'id': 'oidc-1',
+                    'client_id': 'c',
+                    'issuer_url': 'https://i',
+                    'logout_url': 'https://n',
+                    'allowed_roles': ['b'],
+                }
+            ],
+        ),
+        (
+            'oidc',
+            OidcAuthConfig(client_id='c', issuer_url='https://i'),
+            _SIMPLE_AUTH,
+            [{'id': 'oidc-1', 'type': 'oidc', 'client_id': 'c', 'issuer_url': 'https://i'}],
+        ),
+    ],
+    ids=[
+        'basic-auth',
+        'no-auth',
+        'oidc-new',
+        'oidc-keeps-secret-and-unknown-keys',
+        'oidc-null-keeps-optional',
+        'oidc-empty-removes-optional',
+        'oidc-replaces-optional',
+        'oidc-drops-simple-auth',
+    ],
+)
+def test_build_authorization(authentication_type, oidc, existing, expected_providers):
+    snapshot = copy.deepcopy(existing)
+
+    authorization = _build_authorization(authentication_type, oidc, existing)
+
+    proxy = authorization['app_proxy']
+    assert proxy['auth_providers'] == expected_providers
+    (rule,) = proxy['auth_rules']
+    assert rule['auth_required'] is ('auth' in rule)
+    assert set(rule.get('auth', [])) <= {p['id'] for p in proxy['auth_providers']}
+    assert existing == snapshot
+
+
+@pytest.mark.parametrize(
+    ('provider', 'expected'),
+    [
+        (None, False),
+        ({'id': 'simpleAuth', 'type': 'password'}, False),
+        ({'type': 'oidc'}, True),
+        ({'type': 'oidc', '#client_secret': ''}, True),
+        ({'type': 'oidc', '#client_secret': '   '}, True),
+        ({'type': 'oidc', '#client_secret': 'KBC::ProjectSecure::x'}, False),
+    ],
+    ids=['no-provider', 'other-provider', 'secret-missing', 'secret-empty', 'secret-blank', 'secret-set'],
+)
+def test_oidc_setup_required(provider, expected):
+    assert _oidc_setup_required(_stored(provider) if provider else {}) is expected
 
 
 def test_is_authorized_behavior():
-    assert _uses_basic_authentication(_get_authorization(True)) is True
-    assert _uses_basic_authentication(_get_authorization(False)) is False
+    assert _uses_basic_authentication(_build_authorization('basic-auth')) is True
+    assert _uses_basic_authentication(_build_authorization('no-auth')) is False
 
 
 @pytest.mark.parametrize(
@@ -344,7 +466,7 @@ def test_build_data_app_config_merges_defaults_and_secrets():
     # Secrets carried over
     assert params['dataApp']['secrets'] == secrets
     # Authentication reflects flag
-    assert config['authorization'] == _get_authorization(True)
+    assert config['authorization'] == _build_authorization('basic-auth')
 
 
 @pytest.mark.parametrize(
@@ -416,7 +538,7 @@ def test_update_existing_data_app_config():
     # Secrets merged
     assert new['parameters']['dataApp']['secrets'] == {'FOO': 'old', 'KEEP': 'x', 'NEW': 'y'}
     # Authentication updated
-    assert new['authorization'] == _get_authorization(True)
+    assert new['authorization'] == _build_authorization('basic-auth')
 
 
 def test_update_existing_data_app_config_preserves_existing_secrets():
@@ -564,8 +686,25 @@ def test_update_existing_data_app_config_no_authorization_key():
     assert 'authorization' not in new
 
 
-def test_update_existing_data_app_config_basic_auth_overwrites_oidc():
-    """Explicit 'basic-auth' must replace an existing OIDC block."""
+@pytest.mark.parametrize(
+    ('authentication_type', 'oidc', 'expected_provider_ids', 'expected_auth', 'expected_secret', 'expected_slug'),
+    [
+        ('basic-auth', None, ['simpleAuth'], ['simpleAuth'], None, 'renamed-app'),
+        (
+            'oidc',
+            OidcAuthConfig(client_id='new-client', issuer_url='https://issuer'),
+            ['oidc-1'],
+            ['oidc-1'],
+            'KBC::ProjectSecure::abc',
+            'x',
+        ),
+        ('default', None, ['oidc-1'], ['oidc-1'], 'KBC::ProjectSecure::abc', 'x'),
+    ],
+    ids=['basic-auth-overwrites-oidc', 'oidc-keeps-secret', 'default-keeps-block'],
+)
+def test_update_existing_data_app_config_authentication(
+    authentication_type, oidc, expected_provider_ids, expected_auth, expected_secret, expected_slug
+):
     existing = {
         'parameters': {
             'dataApp': {'slug': 'x', 'secrets': {}},
@@ -574,23 +713,39 @@ def test_update_existing_data_app_config_basic_auth_overwrites_oidc():
         },
         'authorization': {
             'app_proxy': {
-                'auth_providers': [{'id': 'oidc', 'type': 'oidc'}],
-                'auth_rules': [{'type': 'pathPrefix', 'value': '/', 'auth_required': True, 'auth': ['oidc']}],
+                'auth_providers': [
+                    {
+                        'id': 'oidc-1',
+                        'type': 'oidc',
+                        'client_id': 'old-client',
+                        'issuer_url': 'https://old',
+                        '#client_secret': 'KBC::ProjectSecure::abc',
+                    }
+                ],
+                'auth_rules': [{'type': 'pathPrefix', 'value': '/', 'auth_required': True, 'auth': ['oidc-1']}],
             }
         },
     }
     new = _update_existing_data_app_config(
         existing_config=existing,
-        name='',
+        name='Renamed App',
         source_code='',
         packages=[],
-        authentication_type='basic-auth',
+        authentication_type=authentication_type,
         secrets={},
         sql_dialect='snowflake',
+        oidc=oidc,
     )
-    assert new['authorization']['app_proxy']['auth_rules'] == [
-        {'type': 'pathPrefix', 'value': '/', 'auth_required': True, 'auth': ['simpleAuth']}
-    ]
+    # The callback URL contains the slug, so an OIDC app keeps it on a rename.
+    assert new['parameters']['dataApp']['slug'] == expected_slug
+    proxy = new['authorization']['app_proxy']
+    assert [p['id'] for p in proxy['auth_providers']] == expected_provider_ids
+    assert proxy['auth_rules'][0]['auth'] == expected_auth
+    assert proxy['auth_providers'][0].get('#client_secret') == expected_secret
+    if authentication_type == 'oidc':
+        assert proxy['auth_providers'][0]['client_id'] == 'new-client'
+    if authentication_type == 'default':
+        assert new['authorization'] == existing['authorization']
 
 
 def test_get_query_function_code_selects_snippets():
@@ -1327,26 +1482,77 @@ async def test_modify_python_js_data_app_create_prod_derives_or_honors_slug(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ('stored_name', 'stored_slug', 'is_draft', 'state', 'desired_deployment_id', 'kwargs', 'expected_slug'),
+    (
+        'stored_name',
+        'stored_slug',
+        'is_draft',
+        'state',
+        'desired_deployment_id',
+        'stored_oidc',
+        'kwargs',
+        'expected_slug',
+    ),
     [
         # Never deployed, generic slug from the UI → the slug follows the new name.
-        ('New App', 'new-app', False, 'notDeployed', None, {'name': 'Sales Dashboard'}, 'sales-dashboard'),
+        ('New App', 'new-app', False, 'notDeployed', None, None, {'name': 'Sales Dashboard'}, 'sales-dashboard'),
         # Never deployed and already renamed once → it keeps following.
-        ('Sales Dashboard', 'sales-dashboard', False, 'notDeployed', None, {'name': 'Revenue'}, 'revenue'),
+        ('Sales Dashboard', 'sales-dashboard', False, 'notDeployed', None, None, {'name': 'Revenue'}, 'revenue'),
         # A UI-derived slug that kept repeated hyphens still counts as following the name.
-        ('Sales & Ops', 'sales---ops', False, 'notDeployed', None, {'name': 'Ops Board'}, 'ops-board'),
+        ('Sales & Ops', 'sales---ops', False, 'notDeployed', None, None, {'name': 'Ops Board'}, 'ops-board'),
         # First deploy in progress → the URL is being served, the slug stays.
-        ('New App', 'new-app', False, 'starting', 'dep-1', {'name': 'Sales'}, 'new-app'),
+        ('New App', 'new-app', False, 'starting', 'dep-1', None, {'name': 'Sales'}, 'new-app'),
         # Deployed before → a rename keeps the slug.
-        ('New App', 'new-app', False, 'suspended', 'dep-1', {'name': 'Sales'}, 'new-app'),
+        ('New App', 'new-app', False, 'suspended', 'dep-1', None, {'name': 'Sales'}, 'new-app'),
         # A custom slug that never followed the name → a rename keeps it.
-        ('Sales Dashboard', 'sales', False, 'notDeployed', None, {'name': 'Revenue'}, 'sales'),
+        ('Sales Dashboard', 'sales', False, 'notDeployed', None, None, {'name': 'Revenue'}, 'sales'),
         # Drafts never change their slug on rename.
-        ('New App', 'new-app-draft-a1b2c3', True, 'notDeployed', None, {'name': 'Sales'}, 'new-app-draft-a1b2c3'),
+        (
+            'New App',
+            'new-app-draft-a1b2c3',
+            True,
+            'notDeployed',
+            None,
+            None,
+            {'name': 'Sales'},
+            'new-app-draft-a1b2c3',
+        ),
         # Same name → nothing to follow.
-        ('New App', 'new-app', False, 'notDeployed', None, {'name': 'New App'}, 'new-app'),
+        ('New App', 'new-app', False, 'notDeployed', None, None, {'name': 'New App'}, 'new-app'),
         # An explicit slug on a deployed prod app is written.
-        ('Sales', 'sales', False, 'running', 'dep-1', {'name': 'Sales', 'slug': 'kpis'}, 'kpis'),
+        ('Sales', 'sales', False, 'running', 'dep-1', None, {'name': 'Sales', 'slug': 'kpis'}, 'kpis'),
+        # The callback URL contains the slug, so a rename keeps it on an OIDC app...
+        ('New App', 'new-app', False, 'notDeployed', None, _OIDC_WITH_SECRET, {'name': 'Sales'}, 'new-app'),
+        # ...and on an app that is switched to OIDC by this update...
+        (
+            'New App',
+            'new-app',
+            False,
+            'notDeployed',
+            None,
+            None,
+            {
+                'name': 'Sales',
+                'authentication_type': 'oidc',
+                'oidc': OidcAuthConfig(client_id='c', issuer_url='https://i'),
+            },
+            'new-app',
+        ),
+        # ...but not on an app that is switched away from OIDC.
+        (
+            'New App',
+            'new-app',
+            False,
+            'notDeployed',
+            None,
+            _OIDC_WITH_SECRET,
+            {'name': 'Sales', 'authentication_type': 'basic-auth'},
+            'sales',
+        ),
+        # An explicit slug still moves an OIDC app.
+        ('Sales', 'sales', False, 'running', 'dep-1', _OIDC_WITH_SECRET, {'name': 'Sales', 'slug': 'kpis'}, 'kpis'),
+        # A retry after the secret page: the first round already wrote the explicit slug, yet the
+        # IdP warning must still reach the agent.
+        ('Sales', 'kpis', False, 'running', 'dep-1', _OIDC_NO_SECRET, {'name': 'Sales', 'slug': 'kpis'}, 'kpis'),
     ],
 )
 async def test_modify_python_js_data_app_update_slug(
@@ -1357,15 +1563,22 @@ async def test_modify_python_js_data_app_update_slug(
     is_draft: bool,
     state: str,
     desired_deployment_id: str | None,
+    stored_oidc: dict | None,
     kwargs: dict,
     expected_slug: str,
 ) -> None:
-    """Update path: a rename moves a name-following slug until first deploy; then only an explicit slug."""
+    """Update path: a rename moves a name-following slug until first deploy; then only an explicit slug.
+
+    An OIDC app keeps its slug on a rename, because the callback URL registered at the IdP contains it.
+    """
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.has_feature = mocker.AsyncMock(return_value=True)
     data_app_block: dict = {'slug': stored_slug}
     if is_draft:
         data_app_block |= {'isDraft': True, 'parentConfigurationId': 'cfg-prod'}
+    configuration: dict = {'parameters': {'autoSuspendAfterSeconds': 900, 'dataApp': data_app_block}}
+    if stored_oidc:
+        configuration['authorization'] = _stored(stored_oidc)
     existing = DataApp(
         name=stored_name,
         component_id=DATA_APP_COMPONENT_ID,
@@ -1375,7 +1588,7 @@ async def test_modify_python_js_data_app_update_slug(
         branch_id='branch-1',
         config_version='2',
         type='python-js',
-        configuration={'parameters': {'autoSuspendAfterSeconds': 900, 'dataApp': data_app_block}},
+        configuration=configuration,
         state=state,
         desired_deployment_id=desired_deployment_id,
     )
@@ -1391,13 +1604,19 @@ async def test_modify_python_js_data_app_update_slug(
 
     new_cfg = keboola_client.storage_client.configuration_update.await_args.kwargs['configuration']
     assert new_cfg['parameters']['dataApp']['slug'] == expected_slug
-    if expected_slug == stored_slug:
+    register_at_idp = stored_oidc is not None and 'slug' in kwargs
+    if expected_slug == stored_slug and not register_at_idp:
         assert 'slug' not in (result.change_summary or '')
-    else:
+    elif expected_slug != stored_slug:
         assert f"'{expected_slug}'" in result.change_summary
-        # The explicit-slug row is a deployed app; every other change is a rename of a never-deployed one.
+        # The explicit-slug rows are deployed apps; every other change is a rename of a never-deployed one.
         expected_phrase = 'old URL stops working' if 'slug' in kwargs else 'Nothing to do or undo'
         assert expected_phrase in result.change_summary
+    callback_url = f'https://{expected_slug}-app-1.hub.test.keboola.com/_proxy/callback'
+    assert result.oidc_callback_url == (None if is_draft else callback_url)
+    assert (callback_url in (result.change_summary or '')) is register_at_idp
+    if register_at_idp:
+        assert 'at the identity provider before you redeploy' in result.change_summary
 
 
 @pytest.mark.asyncio
@@ -1511,6 +1730,7 @@ async def test_modify_python_js_data_app_create_calls_full_provisioning_chain(
         ('default', True),
         ('basic-auth', True),
         ('no-auth', False),
+        ('oidc', True),
     ],
 )
 async def test_modify_python_js_data_app_create_authentication_type(
@@ -1521,7 +1741,10 @@ async def test_modify_python_js_data_app_create_authentication_type(
     expect_basic_auth: bool,
 ) -> None:
     """Create path translates authentication_type to the right authorization block:
-    'default' and 'basic-auth' → password-protected; 'no-auth' → public."""
+    'default' and 'basic-auth' → password-protected; 'no-auth' → public.
+
+    Any other type fails closed to password-protected. 'oidc' is rejected on create by validation,
+    which is skipped here to check that the create path never makes the app public by mistake."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
     keboola_client.has_feature = mocker.AsyncMock(return_value=True)
@@ -1539,14 +1762,19 @@ async def test_modify_python_js_data_app_create_authentication_type(
     )
     mocker.patch('keboola_mcp_server.tools.data_apps.set_cfg_creation_metadata', mocker.AsyncMock())
     mocker.patch('keboola_mcp_server.tools.data_apps.apply_configuration_folder', mocker.AsyncMock(return_value=None))
+    if authentication_type == 'oidc':
+        mocker.patch('keboola_mcp_server.tools.data_apps._validate_oidc_args')
 
-    _ = await modify_python_js_data_app(
+    result = await modify_python_js_data_app(
         ctx=mcp_context_client,
         name='My App',
         description='desc',
         slug='my-app',
-        authentication_type=cast(Literal['no-auth', 'basic-auth', 'default'], authentication_type),
+        authentication_type=cast(Literal['no-auth', 'basic-auth', 'default', 'oidc'], authentication_type),
     )
+
+    assert result.oidc_callback_url == 'https://my-app-app-pyjs-1.hub.test.keboola.com/_proxy/callback'
+    assert result.oidc_setup_required is False
 
     serialized = keboola_client.data_science_client.create_data_app.await_args.kwargs['configuration'].model_dump(
         by_alias=True, exclude_none=True
@@ -1640,6 +1868,302 @@ async def test_modify_python_js_data_app_no_auth_rejected_only_on_drafts(
         assert new_cfg['authorization']['app_proxy']['auth_rules'] == [
             {'type': 'pathPrefix', 'value': '/', 'auth_required': False}
         ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('configuration_id', 'parent_configuration_id', 'target_is_draft', 'authentication_type', 'with_oidc', 'match'),
+    [
+        ('cfg-prod-1', None, False, 'oidc', False, 'oidc.*settings|`oidc`'),
+        ('cfg-prod-1', None, False, 'basic-auth', True, "authentication_type='oidc'"),
+        ('', None, False, 'oidc', True, "'basic-auth' first"),
+        ('', 'cfg-prod-1', False, 'oidc', True, 'not allowed on draft data apps'),
+        ('cfg-draft-1', None, True, 'oidc', True, 'draft'),
+    ],
+    ids=[
+        'oidc_without_settings',
+        'settings_without_oidc',
+        'oidc_on_create',
+        'oidc_on_draft_create',
+        'oidc_on_draft_update',
+    ],
+)
+async def test_modify_python_js_data_app_oidc_rejected(
+    mocker,
+    mcp_context_client: Context,
+    workspace_manager,
+    configuration_id: str,
+    parent_configuration_id: str | None,
+    target_is_draft: bool,
+    authentication_type: str,
+    with_oidc: bool,
+    match: str,
+) -> None:
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.data_science_client = mocker.AsyncMock()
+    keboola_client.has_feature = mocker.AsyncMock(return_value=True)
+    workspace_manager.get_data_app_branch_id = mocker.AsyncMock(return_value='branch-1')
+    data_app_block: dict = {'slug': 'old-slug'}
+    if target_is_draft:
+        data_app_block.update(isDraft=True, parentConfigurationId='cfg-prod-1')
+    mocker.patch(
+        'keboola_mcp_server.tools.data_apps._fetch_data_app',
+        mocker.AsyncMock(
+            return_value=DataApp(
+                name='Old',
+                component_id=DATA_APP_COMPONENT_ID,
+                configuration_id=configuration_id or 'cfg-draft-1',
+                data_app_id='app-1',
+                project_id='proj-1',
+                branch_id='branch-1',
+                config_version='2',
+                type='python-js',
+                configuration={'parameters': {'autoSuspendAfterSeconds': 900, 'dataApp': data_app_block}},
+                state='stopped',
+            )
+        ),
+    )
+    keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value={})
+
+    with pytest.raises(ValueError, match=match):
+        await modify_python_js_data_app(
+            ctx=mcp_context_client,
+            name='My App',
+            description='desc',
+            configuration_id=configuration_id,
+            parent_configuration_id=parent_configuration_id,
+            authentication_type=cast(Literal['no-auth', 'basic-auth', 'oidc', 'default'], authentication_type),
+            oidc=OidcAuthConfig(client_id='c', issuer_url='https://i') if with_oidc else None,
+        )
+    keboola_client.data_science_client.create_data_app.assert_not_called()
+    keboola_client.storage_client.configuration_update.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('configuration_id', 'authentication_type', 'with_oidc', 'match'),
+    [
+        ('cfg-1', 'oidc', False, 'oidc.*settings|`oidc`'),
+        ('cfg-1', 'basic-auth', True, "authentication_type='oidc'"),
+        ('', 'oidc', True, "'basic-auth' first"),
+    ],
+    ids=['oidc_without_settings', 'settings_without_oidc', 'oidc_on_create'],
+)
+async def test_modify_streamlit_data_app_oidc_rejected(
+    mocker,
+    mcp_context_client: Context,
+    workspace_manager,
+    configuration_id: str,
+    authentication_type: str,
+    with_oidc: bool,
+    match: str,
+) -> None:
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.data_science_client = mocker.AsyncMock()
+    keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value={})
+    fetch = mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock())
+
+    with pytest.raises(ValueError, match=match):
+        await modify_streamlit_data_app(
+            ctx=mcp_context_client,
+            name='My App',
+            description='desc',
+            source_code='print(1)',
+            packages=[],
+            authentication_type=cast(Literal['no-auth', 'basic-auth', 'oidc', 'default'], authentication_type),
+            configuration_id=configuration_id,
+            oidc=OidcAuthConfig(client_id='c', issuer_url='https://i') if with_oidc else None,
+        )
+    fetch.assert_not_called()
+    keboola_client.data_science_client.create_data_app.assert_not_called()
+    keboola_client.storage_client.configuration_update.assert_not_called()
+
+
+_OIDC_OUTPUT_CASES = pytest.mark.parametrize(
+    ('stored_secret', 'allowed_roles', 'expect_setup_required', 'expected_phrases', 'unexpected_phrases'),
+    [
+        (None, None, True, ['data-apps/cfg-1', 'Authentication', 'client secret'], ['allowed_roles']),
+        (None, ['admin'], True, ['data-apps/cfg-1', 'client secret', 'allowed_roles'], []),
+        ('KBC::ProjectSecure::x', ['admin'], False, ['allowed_roles', 'removes'], ['client secret']),
+        ('KBC::ProjectSecure::x', None, False, [], ['client secret', 'allowed_roles']),
+    ],
+    ids=['setup_required', 'setup_required_with_roles', 'roles_after_setup', 'setup_done'],
+)
+
+
+def _assert_oidc_output(
+    result: ModifiedDataAppOutput | ModifiedPythonJsDataAppOutput,
+    written: dict,
+    callback_url: str,
+    offer_url: MagicMock,
+    expect_setup_required: bool,
+    expected_phrases: list[str],
+    unexpected_phrases: list[str],
+) -> None:
+    providers = written['authorization']['app_proxy']['auth_providers']
+    assert [(p['id'], p['type'], p['client_id']) for p in providers] == [('oidc-1', 'oidc', 'c')]
+    assert result.oidc_setup_required is expect_setup_required
+    assert result.oidc_callback_url == callback_url
+    summary = result.change_summary or ''
+    for phrase in expected_phrases:
+        assert phrase in summary
+    for phrase in unexpected_phrases:
+        assert phrase not in summary
+    if expect_setup_required:
+        offer_url.assert_called_once()
+        message, url = offer_url.call_args.args
+        assert 'client secret' in message
+        assert url.endswith('/data-apps/cfg-1')
+        assert url in summary
+    else:
+        offer_url.assert_not_called()
+
+
+def _stored_oidc_authorization(stored_secret: str | None) -> dict:
+    provider = {'id': 'oidc-1', 'type': 'oidc', 'client_id': 'old', 'issuer_url': 'https://old'}
+    if stored_secret:
+        provider['#client_secret'] = stored_secret
+    return _stored(provider)
+
+
+@pytest.mark.asyncio
+@_OIDC_OUTPUT_CASES
+async def test_modify_python_js_data_app_update_oidc_output(
+    mocker,
+    mcp_context_client: Context,
+    stored_secret: str | None,
+    allowed_roles: list[str] | None,
+    expect_setup_required: bool,
+    expected_phrases: list[str],
+    unexpected_phrases: list[str],
+) -> None:
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.has_feature = mocker.AsyncMock(return_value=True)
+    existing = _make_python_js_prod_data_app(configuration_id='cfg-1', data_app_id='app-1')
+    existing.configuration['authorization'] = _stored_oidc_authorization(stored_secret)
+    mocker.patch(
+        'keboola_mcp_server.tools.data_apps._fetch_data_app',
+        mocker.AsyncMock(side_effect=[existing, existing.model_copy(update={'config_version': '3'})]),
+    )
+    keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value={})
+    mocker.patch('keboola_mcp_server.tools.data_apps.set_cfg_update_metadata', mocker.AsyncMock())
+    mocker.patch('keboola_mcp_server.tools.data_apps.apply_configuration_folder', mocker.AsyncMock(return_value=None))
+    offer_url = mocker.patch('keboola_mcp_server.tools.data_apps.offer_url')
+
+    result = await modify_python_js_data_app(
+        ctx=mcp_context_client,
+        name=existing.name,
+        description='',
+        configuration_id='cfg-1',
+        authentication_type='oidc',
+        oidc=OidcAuthConfig(client_id='c', issuer_url='https://i', allowed_roles=allowed_roles),
+    )
+
+    written = keboola_client.storage_client.configuration_update.await_args.kwargs['configuration']
+    _assert_oidc_output(
+        result,
+        written,
+        'https://prod-app-1.hub.test.keboola.com/_proxy/callback',
+        offer_url,
+        expect_setup_required,
+        expected_phrases,
+        unexpected_phrases,
+    )
+
+
+@pytest.fixture
+def streamlit_client(mocker, mcp_context_client: Context, workspace_manager) -> KeboolaClient:
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    workspace_manager.get_data_app_workspace_id = mocker.AsyncMock(return_value=1)
+    workspace_manager.get_data_app_sql_dialect = mocker.AsyncMock(return_value='snowflake')
+    workspace_manager.get_data_app_branch_id = mocker.AsyncMock(return_value='default')
+    keboola_client.storage_client.project_id = mocker.AsyncMock(return_value='proj-1')
+    keboola_client.encryption_client = mocker.AsyncMock()
+    keboola_client.encryption_client.encrypt = mocker.AsyncMock(side_effect=lambda config, **_: config)
+    mocker.patch('keboola_mcp_server.tools.data_apps.set_cfg_creation_metadata', mocker.AsyncMock())
+    mocker.patch('keboola_mcp_server.tools.data_apps.set_cfg_update_metadata', mocker.AsyncMock())
+    mocker.patch('keboola_mcp_server.tools.data_apps.apply_configuration_folder', mocker.AsyncMock(return_value=None))
+    return keboola_client
+
+
+@pytest.mark.asyncio
+async def test_modify_streamlit_data_app_create_returns_callback_url(
+    mocker, mcp_context_client: Context, streamlit_client: KeboolaClient
+) -> None:
+    streamlit_client.data_science_client = mocker.AsyncMock()
+    streamlit_client.data_science_client.create_data_app = mocker.AsyncMock(
+        return_value=_make_data_app_response(data_app_id='app-1', config_id='cfg-1')
+    )
+    mocker.patch('keboola_mcp_server.tools.data_apps._config_version_or_blank', mocker.AsyncMock(return_value='1'))
+
+    result = await modify_streamlit_data_app(
+        ctx=mcp_context_client,
+        name='My App',
+        description='desc',
+        source_code='print(1)',
+        packages=[],
+        authentication_type='basic-auth',
+    )
+
+    assert result.oidc_callback_url == 'https://my-app-app-1.hub.test.keboola.com/_proxy/callback'
+    assert result.oidc_setup_required is False
+
+
+@pytest.mark.asyncio
+@_OIDC_OUTPUT_CASES
+async def test_modify_streamlit_data_app_update_oidc_output(
+    mocker,
+    mcp_context_client: Context,
+    streamlit_client: KeboolaClient,
+    stored_secret: str | None,
+    allowed_roles: list[str] | None,
+    expect_setup_required: bool,
+    expected_phrases: list[str],
+    unexpected_phrases: list[str],
+) -> None:
+    existing = DataApp(
+        name='My App',
+        component_id=DATA_APP_COMPONENT_ID,
+        configuration_id='cfg-1',
+        data_app_id='app-1',
+        project_id='proj-1',
+        branch_id='default',
+        config_version='2',
+        type='streamlit',
+        auto_suspend_after_seconds=900,
+        configuration={
+            'parameters': {'dataApp': {'slug': 'my-app', 'secrets': {}}, 'script': ['print(1)'], 'packages': []},
+            'authorization': _stored_oidc_authorization(stored_secret),
+        },
+        state='notDeployed',
+    )
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=existing))
+    streamlit_client.storage_client.configuration_update = mocker.AsyncMock(return_value={'version': 3})
+    offer_url = mocker.patch('keboola_mcp_server.tools.data_apps.offer_url')
+
+    result = await modify_streamlit_data_app(
+        ctx=mcp_context_client,
+        name='Renamed App',
+        description='desc',
+        source_code='print(2)',
+        packages=[],
+        authentication_type='oidc',
+        configuration_id='cfg-1',
+        oidc=OidcAuthConfig(client_id='c', issuer_url='https://i', allowed_roles=allowed_roles),
+    )
+
+    written = streamlit_client.storage_client.configuration_update.await_args.kwargs['configuration']
+    # The rename keeps the slug: the callback URL registered at the IdP contains it.
+    assert written['parameters']['dataApp']['slug'] == 'my-app'
+    _assert_oidc_output(
+        result,
+        written,
+        'https://my-app-app-1.hub.test.keboola.com/_proxy/callback',
+        offer_url,
+        expect_setup_required,
+        expected_phrases,
+        unexpected_phrases,
+    )
 
 
 @pytest.mark.asyncio
@@ -2469,6 +2993,47 @@ def test_update_existing_code_data_app_config_default_auth_preserves_existing() 
     assert new['authorization'] == existing_authorization
 
 
+@pytest.mark.parametrize(
+    ('existing_authorization', 'expected_provider'),
+    [
+        (
+            {'app_proxy': {'auth_providers': [{'id': 'simpleAuth', 'type': 'password'}], 'auth_rules': []}},
+            {'id': 'oidc-1', 'type': 'oidc', 'client_id': 'c', 'issuer_url': 'https://i'},
+        ),
+        (
+            {
+                'app_proxy': {
+                    'auth_providers': [{'id': 'oidc-1', 'type': 'oidc', '#client_secret': 'KBC::ProjectSecure::abc'}],
+                    'auth_rules': [],
+                }
+            },
+            {
+                'id': 'oidc-1',
+                'type': 'oidc',
+                '#client_secret': 'KBC::ProjectSecure::abc',
+                'client_id': 'c',
+                'issuer_url': 'https://i',
+            },
+        ),
+    ],
+    ids=['from_basic_auth', 'keeps_stored_secret'],
+)
+def test_update_existing_code_data_app_config_oidc(existing_authorization: dict, expected_provider: dict) -> None:
+    existing = {
+        'parameters': {'autoSuspendAfterSeconds': 900, 'dataApp': {'slug': 'x'}},
+        'authorization': existing_authorization,
+    }
+    new = _update_existing_code_data_app_config(
+        existing,
+        authentication_type='oidc',
+        oidc=OidcAuthConfig(client_id='c', issuer_url='https://i'),
+    )
+    assert new['authorization']['app_proxy']['auth_providers'] == [expected_provider]
+    assert new['authorization']['app_proxy']['auth_rules'] == [
+        {'type': 'pathPrefix', 'value': '/', 'auth_required': True, 'auth': ['oidc-1']}
+    ]
+
+
 def test_update_existing_code_data_app_config_basic_auth_overwrites() -> None:
     existing = {
         'parameters': {'autoSuspendAfterSeconds': 900, 'dataApp': {'slug': 'x'}},
@@ -2904,6 +3469,7 @@ async def test_modify_python_js_data_app_create_draft_uses_external_git(
     assert result.response == 'created'
     assert result.repo_url == parent_repo
     assert result.branch == 'iter-feat'
+    assert result.oidc_callback_url is None
     assert result.git_clone_url is not None
     assert result.git_clone_url.startswith('https://kai:token-xyz@managed.repo/')
 

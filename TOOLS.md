@@ -2653,6 +2653,21 @@ disable authentication to make the preview work -- the in-platform preview
 `authentication_type='default'` preserves the existing `authorization` block (including OIDC
 setups configured outside the MCP); `'basic-auth'` / `'no-auth'` overwrite it.
 
+`authentication_type='oidc'` (with the `oidc` argument) switches an existing prod app to OIDC. It is
+rejected on create and on drafts. The tool never takes a client secret: the user enters it in the Keboola UI.
+
+Set up OIDC in this order:
+1. Create the app with `'basic-auth'`. The output has `oidc_callback_url`.
+2. The user registers `oidc_callback_url` at the identity provider and gives you the `client_id`.
+3. Update the app with `authentication_type='oidc'` and `oidc` (`client_id`, `issuer_url`, and optionally
+   `logout_url`, `allowed_roles`).
+4. The user enters the client secret in the app's Authentication section in the Keboola UI. If the client
+   can open URLs, it is asked to open that page.
+5. Only if you use `allowed_roles`: update with `'oidc'` once more after the secret is saved.
+6. Call `deploy_data_app` last.
+If the output has `oidc_setup_required=true`, tell the user to follow `change_summary`. In `oidc`, null keeps
+the stored `logout_url` / `allowed_roles`; `''` or `[]` removes them. The slug stays fixed on OIDC apps.
+
 ## Slug constraint
 
 Must be DNS-label-safe (lowercase letters, digits, hyphens). Optional on create: when omitted it
@@ -2677,6 +2692,53 @@ working; tell the user both.
 **Input JSON Schema**:
 ```json
 {
+  "$defs": {
+    "OidcAuthConfig": {
+      "description": "OpenID Connect settings of a data app. The client secret is never part of it.",
+      "properties": {
+        "client_id": {
+          "description": "The OIDC client ID registered at the identity provider.",
+          "type": "string"
+        },
+        "issuer_url": {
+          "description": "The URL of the OIDC issuer, for example https://login.example.com.",
+          "type": "string"
+        },
+        "logout_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The URL where the user is sent after logout. Omit it or pass null to keep the stored value. Pass an empty string to remove it."
+        },
+        "allowed_roles": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The roles that may open the app. Omit it or pass null to keep the stored value. Pass an empty list to remove it."
+        }
+      },
+      "required": [
+        "client_id",
+        "issuer_url"
+      ],
+      "type": "object"
+    }
+  },
   "additionalProperties": false,
   "properties": {
     "name": {
@@ -2740,13 +2802,27 @@ working; tell the user both.
     },
     "authentication_type": {
       "default": "default",
-      "description": "Authentication type. \"no-auth\" removes authentication completely (the app becomes public -- only use it when the user explicitly asks for a public app; it is rejected on drafts, which inherit the prod app's data access), \"basic-auth\" secures the data app via HTTP basic authentication, and \"default\" means: on create, apply basic auth (safe default for new apps); on update, keep the existing authentication configuration (including OIDC setups configured outside the MCP). Never disable authentication to make a preview work -- the in-platform preview authenticates on top of the configured auth.",
+      "description": "Authentication type. \"no-auth\" removes authentication completely (the app becomes public -- only use it when the user explicitly asks for a public app; it is rejected on drafts, which inherit the prod app's data access), \"basic-auth\" secures the data app via HTTP basic authentication, \"oidc\" sets up OIDC login (update of a prod app only, needs the `oidc` argument), and \"default\" means: on create, apply basic auth (safe default for new apps); on update, keep the existing authentication configuration (including OIDC setups configured outside the MCP). Never disable authentication to make a preview work -- the in-platform preview authenticates on top of the configured auth.",
       "enum": [
         "no-auth",
         "basic-auth",
+        "oidc",
         "default"
       ],
       "type": "string"
+    },
+    "oidc": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/OidcAuthConfig",
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "OIDC settings. Required with authentication_type=\"oidc\" and not allowed with any other type. Only for updating an existing prod app, not for create or drafts. It has no secret field: the user enters the client secret in the Keboola UI."
     },
     "auto_suspend_after_seconds": {
       "anyOf": [
@@ -2866,6 +2942,19 @@ running the previous deployment without the latest changes.
 - New apps use the HTTP basic authentication by default for security unless explicitly specified otherwise; when
 updating, set `authentication_type` to `default` to keep the existing authentication type configuration
 (including OIDC setups) unless explicitly specified otherwise.
+- `authentication_type='oidc'` (with the `oidc` argument) switches an existing app to OIDC. It is rejected on
+create. The tool never takes a client secret: the user enters it in the Keboola UI.
+Set up OIDC in this order:
+1. Create the app with `'basic-auth'`. The output has `oidc_callback_url`.
+2. The user registers `oidc_callback_url` at the identity provider and gives you the `client_id`.
+3. Update the app with `authentication_type='oidc'` and `oidc` (`client_id`, `issuer_url`, and optionally
+   `logout_url`, `allowed_roles`).
+4. The user enters the client secret in the app's Authentication section in the Keboola UI. If the client
+   can open URLs, it is asked to open that page.
+5. Only if you use `allowed_roles`: update with `'oidc'` once more after the secret is saved.
+6. Call `deploy_data_app` last.
+If the output has `oidc_setup_required=true`, tell the user to follow `change_summary`. In `oidc`, null keeps
+the stored `logout_url` / `allowed_roles`; `''` or `[]` removes them. The slug stays fixed on OIDC apps.
 
 SQL & DATA TYPE RULES:
 - Use delimited identifiers for the current SQL dialect for all column names and aliases in SQL.
@@ -2878,6 +2967,53 @@ SQL & DATA TYPE RULES:
 **Input JSON Schema**:
 ```json
 {
+  "$defs": {
+    "OidcAuthConfig": {
+      "description": "OpenID Connect settings of a data app. The client secret is never part of it.",
+      "properties": {
+        "client_id": {
+          "description": "The OIDC client ID registered at the identity provider.",
+          "type": "string"
+        },
+        "issuer_url": {
+          "description": "The URL of the OIDC issuer, for example https://login.example.com.",
+          "type": "string"
+        },
+        "logout_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The URL where the user is sent after logout. Omit it or pass null to keep the stored value. Pass an empty string to remove it."
+        },
+        "allowed_roles": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The roles that may open the app. Omit it or pass null to keep the stored value. Pass an empty list to remove it."
+        }
+      },
+      "required": [
+        "client_id",
+        "issuer_url"
+      ],
+      "type": "object"
+    }
+  },
   "additionalProperties": false,
   "properties": {
     "name": {
@@ -2900,10 +3036,11 @@ SQL & DATA TYPE RULES:
       "type": "array"
     },
     "authentication_type": {
-      "description": "Authentication type, \"no-auth\" removes authentication completely, \"basic-auth\" sets the data app to be secured using the HTTP basic authentication, and \"default\" keeps the existing authentication type when updating.",
+      "description": "Authentication type, \"no-auth\" removes authentication completely, \"basic-auth\" sets the data app to be secured using the HTTP basic authentication, \"oidc\" sets up OIDC login (update only, needs the `oidc` argument), and \"default\" keeps the existing authentication type when updating.",
       "enum": [
         "no-auth",
         "basic-auth",
+        "oidc",
         "default"
       ],
       "type": "string"
@@ -2912,6 +3049,19 @@ SQL & DATA TYPE RULES:
       "default": "",
       "description": "The ID of existing data app configuration when updating, otherwise empty string.",
       "type": "string"
+    },
+    "oidc": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/OidcAuthConfig",
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "OIDC settings. Required with authentication_type=\"oidc\" and not allowed with any other type. Only for updating an existing app, not for create. It has no secret field: the user enters the client secret in the Keboola UI."
     },
     "change_description": {
       "default": "",
