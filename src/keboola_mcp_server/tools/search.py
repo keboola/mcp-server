@@ -528,9 +528,11 @@ async def search(
     client = KeboolaClient.from_state(ctx.session.state)
 
     # The global search counts and returns the tables that the reader may not read, so a project that enforces
-    # row-level security is always searched by the enumeration, which hides them.
+    # row-level security is always searched by the enumeration, which hides them. Whether it does is looked up only
+    # when a table can be in the result: a search for flows or configurations never touches the workspace.
     workspace_manager = WorkspaceManager.from_state(ctx.session.state)
-    governed = await workspace_manager.is_governed()
+    tables_in_result = not spec.item_types or 'table' in spec.item_types
+    governed = tables_in_result and await workspace_manager.is_governed()
 
     if not governed and search_type == 'textual' and await client.storage_client.is_enabled(GLOBAL_SEARCH_FEATURE):
         if mode == 'regex':

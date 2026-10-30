@@ -21,7 +21,11 @@ from keboola_mcp_server.tools.storage.tools import (
     get_tables,
 )
 from keboola_mcp_server.workspace import RlsScope, RlsScopeUnavailableError, WorkspaceManager
-from tests.tools.storage.test_tools import _bucket_detail_side_effect, _bucket_table_list_side_effect
+from tests.tools.storage.test_tools import (
+    _bucket_detail_side_effect,
+    _bucket_table_list_side_effect,
+    _table_detail_side_effect,
+)
 
 _UNAVAILABLE = 'Table metadata of this project is temporarily unavailable. Please try again later.'
 
@@ -50,6 +54,8 @@ def _detail(table_id: str, columns: list[str], primary_key: list[str]) -> TableD
         display_name=table_id.rsplit('.', 1)[1],
         created='2025-08-17T07:39:18+0200',
         primary_key=primary_key,
+        rows_count=42,
+        data_size_bytes=4096,
         columns=[
             TableColumnInfo(name=c, quoted_name=f'"{c}"', database_native_type='VARCHAR', nullable=True)
             for c in columns
@@ -72,6 +78,8 @@ async def test_get_tables_listing_shows_only_the_readable_tables_and_their_key_c
     # the primary key names a column that the column policy hides
     assert users.primary_key is None
     assert emails.primary_key == ['email_id']
+    # the counts include the rows that a row policy hides
+    assert [(t.rows_count, t.data_size_bytes) for t in result.tables] == [(None, None), (None, None)]
     assert result.tables_not_found is None
 
 
@@ -110,6 +118,7 @@ async def test_get_tables_by_id_reports_a_hidden_table_as_not_found_and_limits_t
     users = cast(TableDetail, result.tables[0])
     assert [c.name for c in users.columns or []] == ['user_id', 'name']
     assert users.primary_key == ['user_id']
+    assert (users.rows_count, users.data_size_bytes) == (None, None), 'the counts include the hidden rows'
     assert result.tables_not_found == [_EMAILS], 'a hidden table looks like a table that does not exist'
 
 
@@ -125,6 +134,7 @@ async def test_get_tables_of_an_ungoverned_project_is_unchanged(
     assert [t.id for t in result.tables] == [_USERS, _EMAILS]
     assert all(isinstance(t, TableSummary) for t in result.tables)
     assert result.tables[0].primary_key == ['user_id']
+    assert [(t.rows_count, t.data_size_bytes) for t in result.tables] == [(10, 10240), (33, 332211)]
 
 
 @pytest.mark.asyncio
@@ -289,3 +299,125 @@ async def test_search_of_a_governed_project_fails_when_the_scope_is_unavailable(
 
     with pytest.raises(ToolError, match=_UNAVAILABLE):
         await _search_tables_by(mcp_context_client, 'users')
+
+
+@pytest.mark.asyncio
+async def test_get_tables_on_a_development_branch_asks_for_the_production_ids(
+    mocker: MockerFixture, mcp_context_client: Context
+) -> None:
+    """The policies are keyed by the Storage id of the table on the production branch, whatever branch the session
+    works on: a table of a development branch bucket (`in.c-<branch>-foo`) is asked for as `in.c-foo.<table>`."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.branch_id = '1246948'
+    keboola_client.has_feature = mocker.AsyncMock(return_value=False)
+    keboola_client.storage_client.bucket_detail = mocker.AsyncMock(side_effect=_bucket_detail_side_effect)
+    keboola_client.storage_client.bucket_table_list = mocker.AsyncMock(side_effect=_bucket_table_list_side_effect)
+    manager = _workspace_manager(mcp_context_client)
+    manager.get_rls_scope.return_value = RlsScope(readable={})
+
+    await get_tables(mcp_context_client, ['in.c-foo'])
+
+    asked = manager.get_rls_scope.await_args.args[0]
+    assert asked, 'the tables of the bucket are asked for'
+    assert all(table_id.startswith('in.c-foo.') for table_id in asked)
+    assert not any('1246948' in table_id for table_id in asked)
+
+
+@pytest.mark.parametrize(
+    ('table_id', 'prod_id'),
+    [
+        ('in.c-foo.emails', 'in.c-foo.emails'),
+        ('in.c-1246948-foo.emails', 'in.c-foo.emails'),
+        ('in.c-1246948-foo.assets', 'in.c-foo.assets'),
+    ],
+)
+@pytest.mark.asyncio
+async def test_get_tables_by_id_on_a_development_branch_asks_for_the_production_id(
+    mocker: MockerFixture, mcp_context_client: Context, table_id: str, prod_id: str
+) -> None:
+    """A table of a development branch is found under the id of its production bucket or of its branch bucket, and
+    the scope asks for the production id that its policies are keyed by."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.branch_id = '1246948'
+    keboola_client.has_feature = mocker.AsyncMock(return_value=False)
+    keboola_client.storage_client.bucket_detail = mocker.AsyncMock(side_effect=_bucket_detail_side_effect)
+    keboola_client.storage_client.table_detail = mocker.AsyncMock(side_effect=_table_detail_side_effect)
+    manager = _workspace_manager(mcp_context_client)
+    manager.get_table_info.return_value = None
+    manager.get_quoted_name.side_effect = lambda name: f'"{name}"'
+    manager.get_sql_dialect.return_value = 'Snowflake'
+    manager.get_rls_scope.return_value = RlsScope(readable={prod_id: None})
+
+    result = await get_tables(mcp_context_client, table_ids=[table_id])
+
+    manager.get_rls_scope.assert_awaited_once_with([prod_id])
+    assert [t.id for t in result.tables] == [prod_id]
+    assert result.tables_not_found is None
+
+
+@pytest.mark.asyncio
+async def test_search_on_a_development_branch_asks_for_the_production_ids(
+    mcp_context_client: Context, searchable_project: KeboolaClient
+) -> None:
+    searchable_project.branch_id = '1246948'
+    searchable_project.storage_client.bucket_list.return_value = [
+        {'id': 'in.c-1246948-foo', 'name': 'foo', 'created': '2024-01-01T00:00:00Z'}
+    ]
+    searchable_project.storage_client.bucket_table_list.return_value = [
+        {'id': 'in.c-1246948-foo.users', 'name': 'users', 'created': '2024-01-01T00:00:00Z', 'columns': ['user_id']}
+    ]
+    manager = _workspace_manager(mcp_context_client)
+    manager.is_governed.return_value = True
+    manager.get_rls_scope.return_value = RlsScope(readable={'in.c-foo.users': None})
+
+    result = await _search_tables_by(mcp_context_client, 'users')
+
+    manager.get_rls_scope.assert_awaited_once_with(['in.c-foo.users'])
+    # the hit keeps the id that the branch reports, the scope is looked up by the production id
+    assert [h.table_id for h in result.hits] == ['in.c-1246948-foo.users']
+
+
+@pytest.mark.parametrize(
+    ('item_types', 'search_type', 'tables_possible'),
+    [
+        (('flow',), 'textual', False),
+        (('flow', 'bucket'), 'textual', False),
+        (('configuration', 'transformation'), 'config-based', False),
+        (('component',), 'textual', False),
+        (('table',), 'textual', True),
+        (('table', 'flow'), 'textual', True),
+        ((), 'textual', True),
+        ((), 'config-based', True),
+    ],
+)
+@pytest.mark.asyncio
+async def test_search_looks_up_the_governed_state_only_when_a_table_can_be_in_the_result(
+    mocker: MockerFixture,
+    mcp_context_client: Context,
+    searchable_project: KeboolaClient,
+    item_types: tuple[str, ...],
+    search_type: str,
+    tables_possible: bool,
+) -> None:
+    searchable_project.storage_client.is_enabled = mocker.AsyncMock(return_value=False)
+    manager = _workspace_manager(mcp_context_client)
+    # a workspace that cannot be resolved fails a search that reads tables, and must not fail any other search
+    manager.is_governed.side_effect = RlsScopeUnavailableError()
+
+    call = search(
+        mcp_context_client,
+        patterns=['users'],
+        item_types=cast(Any, item_types),
+        search_type=cast(Any, search_type),
+        limit=20,
+        offset=0,
+    )
+
+    if tables_possible:
+        with pytest.raises(ToolError, match=_UNAVAILABLE):
+            await call
+        manager.is_governed.assert_awaited_once()
+    else:
+        assert isinstance(await call, SearchOutput)
+        manager.is_governed.assert_not_awaited()
+        manager.get_rls_scope.assert_not_awaited()

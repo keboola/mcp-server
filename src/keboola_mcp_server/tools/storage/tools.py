@@ -755,7 +755,7 @@ async def get_tables(
         requested_ids = set(table_ids)
         for table_id in list(tables_by_id):
             if scope.is_readable(table_id):
-                tables_by_id[table_id] = _limit_columns(tables_by_id[table_id], scope.visible_columns(table_id))
+                tables_by_id[table_id] = _limit_to_policy(tables_by_id[table_id], scope.visible_columns(table_id))
             else:
                 del tables_by_id[table_id]
                 if table_id in requested_ids:
@@ -789,18 +789,20 @@ async def get_tables(
     ).pack_links()
 
 
-def _limit_columns(table: TableDetail | TableSummary, allowed: Sequence[str] | None) -> TableDetail | TableSummary:
-    """Keeps only the columns of the column policy (`allowed`, None means every column) in the column names that the
-    table carries: its column list and its primary key."""
-    if allowed is None:
-        return table
+def _limit_to_policy(table: TableDetail | TableSummary, allowed: Sequence[str] | None) -> TableDetail | TableSummary:
+    """Limits a readable table of a governed workspace to what the policies let the reader see.
 
-    allowed_set = set(allowed)
-    update: dict[str, Any] = {}
-    if table.primary_key:
-        update['primary_key'] = [column for column in table.primary_key if column in allowed_set] or None
-    if isinstance(table, TableDetail) and table.columns is not None:
-        update['columns'] = [column for column in table.columns if column.name in allowed_set]
+    The number of rows and the size count the rows that a row policy hides, so they are never shown. Of the column
+    names that the table carries, its column list and its primary key, only the columns of the column policy
+    (`allowed`, None means every column) are kept.
+    """
+    update: dict[str, Any] = {'rows_count': None, 'data_size_bytes': None}
+    if allowed is not None:
+        allowed_set = set(allowed)
+        if table.primary_key:
+            update['primary_key'] = [column for column in table.primary_key if column in allowed_set] or None
+        if isinstance(table, TableDetail) and table.columns is not None:
+            update['columns'] = [column for column in table.columns if column.name in allowed_set]
     return table.model_copy(update=update)
 
 

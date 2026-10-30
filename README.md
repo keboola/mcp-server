@@ -166,7 +166,8 @@ policies of the project. There is no rewriting in this server and no fallback: w
 - **Metadata.** The metadata tools show only what the Query Service lets the reader read. `get_tables` and `search`
   (which then does not use the global search, as its counts include the hidden tables) leave out a table the reader may
   not read, and `get_tables` reports one that was asked for by ID as not found; a table with a column policy shows only
-  the columns of the policy (also in its primary key and in what `search` matches). `get_buckets` still lists every
+  the columns of the policy (also in its primary key and in what `search` matches). A readable table is shown without
+  its number of rows and its size, which count the rows that a row policy hides. `get_buckets` still lists every
   bucket, but without the number of tables and the size, which count the hidden tables. This needs the Query Service
   endpoint `POST /api/v1/branches/{branch}/workspaces/{workspace}/rls/scope`, and fails closed: when the Query Service
   cannot say, a tool of a governed project returns an error with a short message and no table. A project without the
