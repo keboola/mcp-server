@@ -529,7 +529,9 @@ async def search(
 
     # The global search counts and returns the tables that the reader may not read, so a project that enforces
     # row-level security is always searched by the enumeration, which hides them. Whether it does is looked up only
-    # when a table can be in the result: a search for flows or configurations never touches the workspace.
+    # when a table can be in the result: a search for flows or configurations never touches the workspace. The
+    # global search counts (`total`, `by_type`) only the types that are asked for, so such a search carries no count
+    # of the tables either.
     workspace_manager = WorkspaceManager.from_state(ctx.session.state)
     tables_in_result = not spec.item_types or 'table' in spec.item_types
     governed = tables_in_result and await workspace_manager.is_governed()

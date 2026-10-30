@@ -8,6 +8,7 @@ from fastmcp.exceptions import ToolError
 from pytest_mock import MockerFixture
 
 from keboola_mcp_server.clients.client import KeboolaClient
+from keboola_mcp_server.clients.storage import GlobalSearchResponse
 from keboola_mcp_server.tools import search as search_module
 from keboola_mcp_server.tools.search import search
 from keboola_mcp_server.tools.search_models import SearchItemType, SearchOutput
@@ -421,3 +422,42 @@ async def test_search_looks_up_the_governed_state_only_when_a_table_can_be_in_th
         assert isinstance(await call, SearchOutput)
         manager.is_governed.assert_not_awaited()
         manager.get_rls_scope.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_global_search_that_does_not_ask_for_tables_carries_no_table_count(
+    mocker: MockerFixture, mcp_context_client: Context, searchable_project: KeboolaClient
+) -> None:
+    """The counts of the global search come straight from its answer, which counts only the types that the request
+    asks for (on a dev stack a flow-only search for a name that tables carry answers `total: 0`, `by_type: {}`). The
+    search, which does not look up whether the project is governed for it, therefore leaks no number of hidden
+    tables, as long as it never asks the endpoint for the `table` type."""
+    flow = {
+        'id': 'flow-1',
+        'name': 'orders flow',
+        'type': 'configuration',
+        'fullPath': {},
+        'componentId': 'keboola.flow',
+        'organizationId': 1,
+        'projectId': 69420,
+        'projectName': 'Test Project',
+        'created': '2024-01-01T00:00:00Z',
+    }
+    global_search = mocker.AsyncMock(
+        return_value=GlobalSearchResponse.model_validate(
+            {'all': 1, 'items': [flow], 'byType': {'configuration': 1}, 'byProject': {}}
+        )
+    )
+    searchable_project.storage_client.global_search = global_search
+    manager = _workspace_manager(mcp_context_client)
+    manager.is_governed.side_effect = RlsScopeUnavailableError()
+
+    result = await search(
+        mcp_context_client, patterns=['orders'], item_types=(cast(SearchItemType, 'flow'),), limit=20, offset=0
+    )
+
+    assert global_search.await_count >= 1
+    assert all('table' not in call.kwargs['types'] for call in global_search.await_args_list)
+    assert (result.total, result.by_type) == (1, {'configuration': 1})
+    assert [h.item_type for h in result.hits] == ['flow']
+    manager.is_governed.assert_not_awaited()
