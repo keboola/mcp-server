@@ -124,6 +124,25 @@ async def test_get_tables_by_id_reports_a_hidden_table_as_not_found_and_limits_t
 
 
 @pytest.mark.asyncio
+async def test_get_tables_by_branch_id_reports_a_hidden_table_under_the_requested_id(
+    mocker: MockerFixture, mcp_context_client: Context, keboola_client_in_branch_free_project: KeboolaClient
+) -> None:
+    branch_id = 'in.c-123-foo.emails'  # the table is returned under its production id `in.c-foo.emails`
+    mocker.patch(
+        'keboola_mcp_server.tools.storage.tools._get_table',
+        mocker.AsyncMock(return_value=_detail(_EMAILS, ['email_id', 'address'], ['email_id'])),
+    )
+    manager = _workspace_manager(mcp_context_client)
+    manager.get_workspace_id.return_value = 1
+    manager.get_rls_scope.return_value = RlsScope(readable={_USERS: None})
+
+    result = await get_tables(mcp_context_client, table_ids=[branch_id])
+
+    assert result.tables == []
+    assert result.tables_not_found == [branch_id], 'a hidden table is reported as the caller asked for it'
+
+
+@pytest.mark.asyncio
 async def test_get_tables_of_an_ungoverned_project_is_unchanged(
     mcp_context_client: Context, keboola_client_in_branch_free_project: KeboolaClient
 ) -> None:

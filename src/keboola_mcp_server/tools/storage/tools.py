@@ -747,6 +747,7 @@ async def get_tables(
 
     tables_by_id: dict[str, TableDetail | TableSummary] = {}
     missing_ids: list[str] = []
+    requested_as: dict[str, str] = {}  # production table id -> the id the caller asked for
 
     if bucket_ids:
         for table in await _list_tables(bucket_ids, client, links_manager):
@@ -756,6 +757,7 @@ async def get_tables(
 
         async def _fetch_table_detail(_table_id: str) -> TableDetail | str:
             if _table := await _get_table(_table_id, client, workspace_manager, links_manager):
+                requested_as[_table.id] = _table_id
                 return _table
             else:
                 return _table_id
@@ -774,14 +776,13 @@ async def get_tables(
     # A governed project shows only what Query Service lets the reader read, with the columns of its column policy.
     # A table that is hidden is reported exactly as a table that does not exist.
     if tables_by_id and (scope := await workspace_manager.get_rls_scope(list(tables_by_id))) is not None:
-        requested_ids = set(table_ids)
         for table_id in list(tables_by_id):
             if scope.is_readable(table_id):
                 tables_by_id[table_id] = _limit_to_policy(tables_by_id[table_id], scope.visible_columns(table_id))
             else:
                 del tables_by_id[table_id]
-                if table_id in requested_ids:
-                    missing_ids.append(table_id)
+                if table_id in requested_as:
+                    missing_ids.append(requested_as[table_id])
 
     # Add the component usage to the table detail
     if table_ids and include_usage:
