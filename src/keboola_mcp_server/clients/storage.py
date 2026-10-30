@@ -1,9 +1,13 @@
+import asyncio
 import logging
 import math
+import time
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime
+from http import HTTPStatus
 from typing import Any, Literal, cast
 
+import httpx
 from pydantic import AliasChoices, BaseModel, Field, field_validator
 
 from keboola_mcp_server.clients.base import InvalidArgumentError, JsonDict, KeboolaServiceClient, RawKeboolaClient
@@ -305,6 +309,12 @@ class CreateConfigurationAPIResponse(BaseModel):
 
 
 class AsyncStorageClient(KeboolaServiceClient):
+    JOB_TIMEOUT_SECONDS = 120.0
+    JOB_POLL_INTERVAL_SECONDS = 0.5
+    JOB_FINAL_STATUSES = frozenset({'success', 'warning', 'error', 'cancelled'})
+    JOB_SUCCESS_STATUSES = frozenset({'success', 'warning'})
+    DEFINITION_VALIDATION_ERROR_CODE = 'storage.tables.definitionUpdateValidationFailed'
+
     def __init__(
         self,
         raw_client: RawKeboolaClient,
@@ -982,6 +992,93 @@ class AsyncStorageClient(KeboolaServiceClient):
             payload['columnsMetadata'] = columns_metadata
 
         return cast(JsonDict, await self.post(endpoint=f'tables/{table_id}/metadata', data=payload))
+
+    async def table_definition_update(
+        self,
+        table_id: str,
+        description: str | None = None,
+        column_descriptions: Mapping[str, str] | None = None,
+        is_description_system_managed: bool = False,
+        branch_id: str | None = None,
+    ) -> JsonDict:
+        """
+        Updates the native description of a table and/or its columns and waits for the Storage job to finish.
+
+        :param table_id: The id of the table
+        :param description: The new table description; None leaves it unchanged.
+        :param column_descriptions: Mapping of column names to their new descriptions.
+        :param is_description_system_managed: Whether the table description is managed by the system. User edits
+            keep it False so that Output Mapping never overwrites them.
+        :param branch_id: Optional branch ID override (uses client's branch_id if not specified)
+        :return: The finished Storage job as a dictionary; empty if the values already matched the stored ones.
+        """
+        if description is None and not column_descriptions:
+            raise ValueError('At least one of the `description` or `column_descriptions` arguments must be provided.')
+
+        payload: dict[str, Any] = {}
+        if description is not None:
+            payload['description'] = description
+            payload['isDescriptionSystemManaged'] = is_description_system_managed
+        if column_descriptions:
+            payload['columns'] = [{'name': name, 'description': desc} for name, desc in column_descriptions.items()]
+
+        bid = branch_id or self._branch_id
+        try:
+            job = cast(JsonDict, await self.put(endpoint=f'branch/{bid}/tables/{table_id}/definition', data=payload))
+        except httpx.HTTPStatusError as e:
+            # Storage answers a request whose values equal the stored ones with a validation error that shares its
+            # code with other validation failures, so the stored values are compared before treating it as a no-op.
+            if await self._is_unchanged_rejection(e, table_id, bid, description, column_descriptions):
+                return {}
+            raise
+        return await self._wait_for_job(job)
+
+    async def _is_unchanged_rejection(
+        self,
+        error: httpx.HTTPStatusError,
+        table_id: str,
+        branch_id: str,
+        description: str | None,
+        column_descriptions: Mapping[str, str] | None,
+    ) -> bool:
+        """Whether a rejected definition update was rejected because the stored descriptions already match."""
+        if error.response.status_code != HTTPStatus.BAD_REQUEST:
+            return False
+        try:
+            code = error.response.json().get('code')
+        except (ValueError, AttributeError):
+            return False
+        if code != self.DEFINITION_VALIDATION_ERROR_CODE:
+            return False
+
+        definition = cast(JsonDict, (await self.table_detail(table_id, branch_id=branch_id)).get('definition') or {})
+        if description is not None and (definition.get('description') or '') != description:
+            return False
+        stored = {
+            col.get('name'): (cast(JsonDict, col.get('definition') or {}).get('description') or '')
+            for col in cast(list[JsonDict], definition.get('columns') or [])
+        }
+        return all(stored.get(name) == (desc or '') for name, desc in (column_descriptions or {}).items())
+
+    async def _wait_for_job(self, job: JsonDict) -> JsonDict:
+        """Polls an asynchronous Storage job until it reaches a final status; raises if it did not succeed."""
+        job_id = job['id']
+        deadline = time.monotonic() + self.JOB_TIMEOUT_SECONDS
+        while job.get('status') not in self.JOB_FINAL_STATUSES:
+            if time.monotonic() > deadline:
+                raise TimeoutError(
+                    f'Storage job "{job_id}" did not finish in time. It is not cancelled and may still complete; '
+                    'check the current values before retrying.'
+                )
+            await asyncio.sleep(self.JOB_POLL_INTERVAL_SECONDS)
+            job = await self.job_detail(job_id)
+        if job.get('status') not in self.JOB_SUCCESS_STATUSES:
+            error = cast(JsonDict, job.get('error') or {})
+            raise RuntimeError(
+                f'Storage job "{job_id}" ended with status "{job.get("status")}": '
+                f'{error.get("message") or "unknown error"}'
+            )
+        return job
 
     # TODO: no branch support
     async def trigger_event(

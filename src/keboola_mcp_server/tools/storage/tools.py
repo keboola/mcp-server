@@ -47,6 +47,9 @@ BUCKET_ID_PARTS = 2
 TABLE_ID_PARTS = 3
 COLUMN_ID_PARTS = 4
 
+# Backends whose tables support the native table definition endpoint; other backends keep KBC.* metadata.
+NATIVE_DEFINITION_BACKENDS = frozenset({'snowflake', 'bigquery'})
+
 
 def add_storage_tools(mcp: KeboolaMcpServer) -> None:
     """Adds tools to the MCP server."""
@@ -279,6 +282,22 @@ class GetBucketsOutput(BaseModel):
         return self.model_copy(update={'buckets': buckets, 'links': sorted(links, key=lambda x: (x.type, x.title))})
 
 
+def _has_native_definition(raw_table: dict[str, Any]) -> bool:
+    """Whether the table lives on a backend whose descriptions and types are held in the native definition."""
+    backend = get_nested(raw_table, 'bucket.backend')
+    return isinstance(backend, str) and backend.lower() in NATIVE_DEFINITION_BACKENDS
+
+
+def _metadata_table_description(values: dict[str, Any]) -> str | None:
+    """Table description from KBC.description metadata, which must win over the stale legacy `description` field."""
+    return (
+        get_metadata_property(values.get('metadata', []), MetadataField.DESCRIPTION)
+        or get_metadata_property(get_nested(values, 'sourceTable.metadata', default=[]), MetadataField.DESCRIPTION)
+        or values.get('description')
+        or None
+    )
+
+
 class TableColumnInfo(BaseModel):
     name: str = Field(description='Plain name of the column.')
     quoted_name: str = Field(
@@ -352,14 +371,7 @@ class TableSummary(BaseModel):
     @model_validator(mode='before')
     @classmethod
     def set_description(cls, values: dict[str, Any]) -> dict[str, Any]:
-        # KBC.description metadata holds the curated, user-editable description and must win over the
-        # legacy top-level `description` field, which is auto-generated and stale for linked tables.
-        description = (
-            get_metadata_property(values.get('metadata', []), MetadataField.DESCRIPTION)
-            or get_metadata_property(get_nested(values, 'sourceTable.metadata', default=[]), MetadataField.DESCRIPTION)
-            or values.get('description')
-        )
-        values['description'] = description or None
+        values['description'] = _metadata_table_description(values)
         return values
 
     @model_validator(mode='before')
@@ -415,6 +427,16 @@ class TableDetail(TableSummary):
     last_updated_by: ComponentUsageReference | None = Field(
         default=None, description='Configuration that last updated the table (component/config ID and timestamp).'
     )
+
+    @model_validator(mode='before')
+    @classmethod
+    def set_description(cls, values: dict[str, Any]) -> dict[str, Any]:
+        if _has_native_definition(values):
+            # The native table definition is the source the UI shows; Storage resolves alias inheritance there.
+            values['description'] = get_nested(values, 'definition.description') or None
+        else:
+            values['description'] = _metadata_table_description(values)
+        return values
 
     def with_lineage_metadata(self, values: dict[str, Any]) -> 'TableDetail':
         metadata = values.get('metadata', [])
@@ -787,44 +809,62 @@ async def _get_table(
     raw_source_column_metadata = cast(
         dict[str, list[dict[str, Any]]], get_nested(raw_table, 'sourceTable.columnMetadata', default={})
     )
+    native_definition = _has_native_definition(raw_table)
+    is_typed = bool(raw_table.get('isTyped'))
+    definition_columns = {
+        cast(str, col['name']): cast(dict[str, Any], col)
+        for col in cast(list[dict[str, Any]], get_nested(raw_table, 'definition.columns', default=[]) or [])
+        if 'name' in col
+    }
 
     sql_dialect = await workspace_manager.get_sql_dialect()
     db_table_info = await workspace_manager.get_table_info(raw_table)
 
     column_info = []
     for col_name in raw_columns:
+        definition_column = definition_columns.get(col_name, {})
+        column_definition = cast(dict[str, Any], definition_column.get('definition') or {})
+
         col_meta = raw_column_metadata.get(col_name, [])
         source_col_meta = raw_source_column_metadata.get(col_name, [])
 
-        description: str | None = get_metadata_property(col_meta, MetadataField.DESCRIPTION)
-        if not description:
-            description = get_metadata_property(source_col_meta, MetadataField.DESCRIPTION)
+        if native_definition:
+            description: str | None = column_definition.get('description') or None
+        else:
+            description = get_metadata_property(col_meta, MetadataField.DESCRIPTION)
+            if not description:
+                description = get_metadata_property(source_col_meta, MetadataField.DESCRIPTION)
 
-        base_type: str | None = get_metadata_property(
-            col_meta, MetadataField.DATATYPE_BASETYPE, preferred_providers=['user']
-        )
-        if not base_type:
-            base_type = get_metadata_property(
-                source_col_meta, MetadataField.DATATYPE_BASETYPE, preferred_providers=['user']
-            )
+        if native_definition and is_typed:
+            base_type: str | None = definition_column.get('basetype')
+            native_type: str | None = column_definition.get('type')
+            nullable = bool(column_definition.get('nullable', False))
+        else:
+            # Non-typed tables and non-native backends carry no types in the native definition, only the
+            # KBC.datatype.* metadata.
+            base_type = get_metadata_property(col_meta, MetadataField.DATATYPE_BASETYPE, preferred_providers=['user'])
+            if not base_type:
+                base_type = get_metadata_property(
+                    source_col_meta, MetadataField.DATATYPE_BASETYPE, preferred_providers=['user']
+                )
 
-        native_type: str | None = get_metadata_property(col_meta, MetadataField.DATATYPE_TYPE)
-        if not native_type:
-            native_type = get_metadata_property(source_col_meta, MetadataField.DATATYPE_TYPE)
+            native_type = get_metadata_property(col_meta, MetadataField.DATATYPE_TYPE)
+            if not native_type:
+                native_type = get_metadata_property(source_col_meta, MetadataField.DATATYPE_TYPE)
 
-        nullable_str: str | None = get_metadata_property(col_meta, MetadataField.DATATYPE_NULLABLE)
-        if not nullable_str:
-            nullable_str = get_metadata_property(source_col_meta, MetadataField.DATATYPE_NULLABLE)
+            nullable_str: str | None = get_metadata_property(col_meta, MetadataField.DATATYPE_NULLABLE)
+            if not nullable_str:
+                nullable_str = get_metadata_property(source_col_meta, MetadataField.DATATYPE_NULLABLE)
+
+            # KBC.datatype.nullable is stored as '1'/'true' for nullable, '0'/'false' (or absent) for non-nullable
+            nullable = str(nullable_str).lower() in ('1', 'true') if nullable_str is not None else False
 
         if native_type is None:
             native_type = 'STRING' if sql_dialect == 'BigQuery' else 'VARCHAR'
             LOG.warning(
-                f'No KBC.datatype.type in columnMetadata: '
-                f'col_name={col_name}, sql_dialect={sql_dialect}, table_id={table_id}'
+                f'No native column type: col_name={col_name}, sql_dialect={sql_dialect}, '
+                f'table_id={table_id}, is_typed={is_typed}'
             )
-
-        # KBC.datatype.nullable is stored as '1'/'true' for nullable, '0'/'false' (or absent) for non-nullable
-        nullable = str(nullable_str).lower() in ('1', 'true') if nullable_str is not None else False
 
         column_info.append(
             TableColumnInfo(
@@ -962,61 +1002,71 @@ async def _update_bucket_description(client: KeboolaClient, bucket_id: str, desc
         return UpdateItemResult(item_id=bucket_id, success=False, error=str(e))
 
 
-async def _update_table_description(client: KeboolaClient, table_id: str, description: str) -> UpdateItemResult:
-    """Update a table description."""
-    try:
-        response = await client.storage_client.table_metadata_update(
-            table_id=table_id,
-            metadata={MetadataField.DESCRIPTION: description},
-            columns_metadata={},
-        )
-        raw_metadata = cast(list[JsonDict], response.get('metadata', []))
-        description_entry = next(entry for entry in raw_metadata if entry.get('key') == MetadataField.DESCRIPTION)
-        return UpdateItemResult(item_id=table_id, success=True, timestamp=description_entry['timestamp'])
-    except Exception as e:
-        return UpdateItemResult(item_id=table_id, success=False, error=str(e))
+def _job_timestamp(job: JsonDict) -> datetime | None:
+    raw = job.get('endTime') or job.get('createdTime')
+    return parse_iso_timestamp(raw) if isinstance(raw, str) else None
 
 
-async def _update_column_descriptions(
-    client: KeboolaClient, table_id: str, column_updates: dict[str, str]
+async def _resolve_write_target(client: KeboolaClient, table_id: str) -> tuple[str, bool]:
+    """
+    Resolve where a table description is written.
+
+    Returns the branch ID and whether the native table definition is used (otherwise the KBC.description metadata).
+    The dev branch is written only when the table exists in it; legacy dev branches and production-only tables are
+    written in the default branch.
+    """
+    prod_table, dev_table = await merged_table_detail(client, table_id)
+    table = dev_table or prod_table
+    if not table:
+        raise ValueError(f'Table "{table_id}" not found.')
+    branch_id = cast(str, client.branch_id) if dev_table and await has_storage_branches(client) else 'default'
+    return branch_id, _has_native_definition(table)
+
+
+async def _update_table_descriptions(
+    client: KeboolaClient, table_id: str, description: str | None, column_updates: dict[str, str]
 ) -> list[UpdateItemResult]:
-    """Update multiple column descriptions for a single table."""
+    """
+    Update the description of a table and the descriptions of its columns in one write.
+
+    The write target is resolved once per table. The native table definition takes the table and column descriptions
+    in a single Storage job; backends without it take them in a single metadata request.
+    """
+    item_ids = ([table_id] if description is not None else []) + [f'{table_id}.{name}' for name in column_updates]
     try:
-        columns_metadata = {
-            column_name: [{'key': MetadataField.DESCRIPTION, 'value': description, 'columnName': column_name}]
-            for column_name, description in column_updates.items()
-        }
+        branch_id, native_definition = await _resolve_write_target(client, table_id)
+        if native_definition:
+            job = await client.storage_client.table_definition_update(
+                table_id=table_id, description=description, column_descriptions=column_updates, branch_id=branch_id
+            )
+            timestamp = _job_timestamp(job)
+            return [UpdateItemResult(item_id=item_id, success=True, timestamp=timestamp) for item_id in item_ids]
 
         response = await client.storage_client.table_metadata_update(
             table_id=table_id,
-            columns_metadata=columns_metadata,
+            metadata={MetadataField.DESCRIPTION: description} if description is not None else None,
+            columns_metadata={
+                name: [{'key': MetadataField.DESCRIPTION, 'value': desc, 'columnName': name}]
+                for name, desc in column_updates.items()
+            },
         )
-
-        column_metadata = cast(dict[str, list[JsonDict]], response.get('columnsMetadata', {}))
-        results = []
-
-        for column_name in column_updates:
-            try:
-                description_entry = next(
-                    entry
-                    for entry in column_metadata.get(column_name, [])
-                    if entry.get('key') == MetadataField.DESCRIPTION
-                )
-                results.append(
-                    UpdateItemResult(
-                        item_id=f'{table_id}.{column_name}', success=True, timestamp=description_entry['timestamp']
-                    )
-                )
-            except Exception as e:
-                results.append(UpdateItemResult(item_id=f'{table_id}.{column_name}', success=False, error=str(e)))
-
-        return results
     except Exception as e:
-        # If the entire table update fails, mark all columns as failed
-        return [
-            UpdateItemResult(item_id=f'{table_id}.{column_name}', success=False, error=str(e))
-            for column_name in column_updates
-        ]
+        # The table and its columns are written together, so a failure applies to every item of the table.
+        return [UpdateItemResult(item_id=item_id, success=False, error=str(e)) for item_id in item_ids]
+
+    results = []
+    table_metadata = cast(list[JsonDict], response.get('metadata', []))
+    columns_metadata = cast(dict[str, list[JsonDict]], response.get('columnsMetadata', {}))
+    entries = ([(table_id, table_metadata)] if description is not None else []) + [
+        (f'{table_id}.{name}', columns_metadata.get(name, [])) for name in column_updates
+    ]
+    for item_id, metadata in entries:
+        try:
+            entry = next(m for m in metadata if m.get('key') == MetadataField.DESCRIPTION)
+            results.append(UpdateItemResult(item_id=item_id, success=True, timestamp=entry['timestamp']))
+        except Exception as e:
+            results.append(UpdateItemResult(item_id=item_id, success=False, error=str(e)))
+    return results
 
 
 @tool_errors()
@@ -1067,13 +1117,15 @@ async def update_descriptions(
         result = await _update_bucket_description(client, bucket_id, description)
         results.append(result)
 
-    for table_id, description in grouped_updates.table_updates.items():
-        result = await _update_table_description(client, table_id, description)
-        results.append(result)
-
-    for table_id, column_updates in grouped_updates.column_updates_by_table.items():
-        table_results = await _update_column_descriptions(client, table_id, column_updates)
-        results.extend(table_results)
+    for table_id in dict.fromkeys([*grouped_updates.table_updates, *grouped_updates.column_updates_by_table]):
+        results.extend(
+            await _update_table_descriptions(
+                client,
+                table_id,
+                grouped_updates.table_updates.get(table_id),
+                grouped_updates.column_updates_by_table.get(table_id, {}),
+            )
+        )
 
     successful = sum(1 for r in results if r.success)
     failed = len(results) - successful
