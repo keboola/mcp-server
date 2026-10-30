@@ -9,6 +9,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Any, Literal, cast
 from urllib.parse import urlunparse
 
+from fastmcp.exceptions import ToolError
 from httpx import HTTPStatusError
 from pydantic import Field
 from pydantic.dataclasses import dataclass
@@ -29,6 +30,34 @@ RLS_FEATURE = 'row-level-security'
 # Service applies the project's RLS/CLS policies from the Metastore to every query and refuses every table of it that
 # no policy grants. This server does not rewrite or filter anything itself.
 GOVERNED_LOGIN_TYPE = 'governed'
+
+# Query Service answers at most this many tables in one scope request, and each key is `<bucket>.<table>`.
+_RLS_SCOPE_MAX_TABLES = 100
+_RLS_SCOPE_MAX_CONCURRENCY = 5
+_RLS_TABLE_KEY_RE = re.compile(r'[A-Za-z0-9_.\-]+\.[A-Za-z0-9_\-]+')
+
+
+class RlsScopeUnavailableError(ToolError):
+    """Query Service could not say which tables of a governed workspace the reader may read. The message is the one
+    a client sees: it never says why, as the answer of Query Service does not either."""
+
+    def __init__(self) -> None:
+        super().__init__('Table metadata of this project is temporarily unavailable. Please try again later.')
+
+
+@dataclass(frozen=True)
+class RlsScope:
+    """The tables of a governed workspace that the reader may read, and the columns of each one."""
+
+    # table id -> the columns the reader may see, None when it may see every column
+    readable: Mapping[str, Sequence[str] | None]
+
+    def is_readable(self, table_id: str) -> bool:
+        return table_id in self.readable
+
+    def visible_columns(self, table_id: str) -> Sequence[str] | None:
+        """The column allowlist of a readable table, None when every column is readable."""
+        return self.readable.get(table_id)
 
 
 @dataclass(frozen=True)
@@ -153,10 +182,56 @@ class _Workspace(abc.ABC):
         self._workspace_id = workspace_id
         self._client = client
         self._qsclient: QueryServiceClient | None = None
+        # Set by `WorkspaceManager` from the `loginType` of the workspace detail.
+        self.governed: bool = False
 
     @property
     def id(self) -> int:
         return self._workspace_id
+
+    async def get_rls_scope(self, table_ids: Sequence[str]) -> RlsScope | None:
+        """
+        Asks Query Service which of the tables the reader may read in this governed workspace.
+
+        :return: None when Query Service says the workspace is not governed (HTTP 409), nothing is hidden then.
+        :raises RlsScopeUnavailableError: when Query Service cannot say; the caller must show nothing (fail closed).
+        """
+        # The policies are keyed by the Storage id of the table, a key Query Service cannot read is not readable.
+        keys = list(dict.fromkeys(t for t in table_ids if _RLS_TABLE_KEY_RE.fullmatch(t)))
+        if not keys:
+            return RlsScope(readable={})
+
+        if not self._qsclient:
+            self._qsclient = await self._create_qs_client()
+        qsclient = self._qsclient
+        semaphore = asyncio.Semaphore(_RLS_SCOPE_MAX_CONCURRENCY)
+
+        async def _ask(chunk: list[str]) -> JsonDict:
+            async with semaphore:
+                return await qsclient.get_rls_scope(workspace_id=str(self.id), tables=chunk)
+
+        chunks = [keys[i : i + _RLS_SCOPE_MAX_TABLES] for i in range(0, len(keys), _RLS_SCOPE_MAX_TABLES)]
+        try:
+            answers = await asyncio.gather(*(_ask(chunk) for chunk in chunks))
+        except HTTPStatusError as e:
+            if e.response.status_code == 409:
+                return None
+            LOG.warning(f'RLS scope request failed: workspace_id={self.id}, status={e.response.status_code}')
+            raise RlsScopeUnavailableError() from e
+        except Exception as e:
+            LOG.warning(f'RLS scope request failed: workspace_id={self.id}, error={type(e).__name__}')
+            raise RlsScopeUnavailableError() from e
+
+        readable: dict[str, Sequence[str] | None] = {}
+        try:
+            for answer in answers:
+                for entry in answer['readable']:
+                    columns = entry['columns']
+                    readable[entry['table']] = None if columns is None else list(columns)
+        except (KeyError, TypeError) as e:
+            LOG.warning(f'RLS scope answer has an unexpected shape: workspace_id={self.id}')
+            raise RlsScopeUnavailableError() from e
+        return RlsScope(readable=readable)
 
     @abc.abstractmethod
     def get_sql_dialect(self) -> str:
@@ -908,6 +983,12 @@ class WorkspaceManager:
                 await asyncio.sleep(min(5.0, remaining_time))
 
     def _init_workspace(self, info: _WspInfo, *, client: KeboolaClient | None = None) -> _Workspace:
+        """Creates a new `Workspace` instance based on the workspace info and marks it governed when it is."""
+        workspace = self._build_workspace(info, client=client)
+        workspace.governed = info.login_type == GOVERNED_LOGIN_TYPE
+        return workspace
+
+    def _build_workspace(self, info: _WspInfo, *, client: KeboolaClient | None = None) -> _Workspace:
         """Creates a new `Workspace` instance based on the workspace info.
 
         :param client: the client the workspace's queries should run through; defaults to this
@@ -1076,6 +1157,38 @@ class WorkspaceManager:
             self._table_info_cache[table_id] = info
 
         return info
+
+    async def _get_governed_workspace(self) -> _Workspace | None:
+        """The workspace of a project that enforces row-level security, None for any other project (no workspace is
+        created for it)."""
+        if not await self._client.has_feature(RLS_FEATURE):
+            return None
+        try:
+            workspace = await self._get_workspace()
+        except Exception as e:
+            # With the policy enforced a failure to reach the workspace must never mean "show everything".
+            LOG.warning(f'Cannot resolve the workspace for the RLS scope: {type(e).__name__}')
+            raise RlsScopeUnavailableError() from e
+        return workspace if workspace.governed else None
+
+    async def is_governed(self) -> bool:
+        """Whether Query Service enforces the RLS/CLS policies in the workspace of this session.
+
+        :raises RlsScopeUnavailableError: when the project enforces them and the workspace cannot be resolved.
+        """
+        return await self._get_governed_workspace() is not None
+
+    async def get_rls_scope(self, table_ids: Sequence[str]) -> RlsScope | None:
+        """
+        Tells which of the tables the reader may read, and the columns of each, when the project enforces
+        row-level security; the metadata tools show nothing else.
+
+        :return: None when nothing is hidden: the project does not enforce row-level security (no Query Service call
+            is made) or Query Service says the workspace is not governed.
+        :raises RlsScopeUnavailableError: when the project is governed and Query Service cannot say (fail closed).
+        """
+        workspace = await self._get_governed_workspace()
+        return await workspace.get_rls_scope(table_ids) if workspace else None
 
     async def get_quoted_name(self, name: str) -> str:
         workspace = await self._get_workspace()

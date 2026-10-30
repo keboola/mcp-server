@@ -114,6 +114,19 @@ class QueryServiceClient(KeboolaServiceClient):
                 await asyncio.sleep(_SUBMIT_JOB_RETRY_DELAY_SECONDS * attempt)
         raise AssertionError('unreachable: loop always returns or raises')
 
+    async def get_rls_scope(self, workspace_id: str, tables: list[str]) -> JsonDict:
+        """
+        Asks which of the tables the reader of this client may read in a governed workspace.
+
+        :param workspace_id: The id of the governed workspace.
+        :param tables: The table keys (`<bucket>.<table>`), 1 to 100 of them.
+        :return: `{"readable": [{"table": ..., "columns": [...] | null}]}`; `columns` is the column policy of the
+            table, null when every column is readable. A table that is not readable is left out of the answer.
+            An ungoverned workspace answers 409, any failure to find out 403 or 503 (`httpx.HTTPStatusError`).
+        """
+        endpoint = f'branches/{self._branch_id}/workspaces/{workspace_id}/rls/scope'
+        return cast(JsonDict, await self.post(endpoint=endpoint, data={'tables': tables}))
+
     async def get_job_status(self, job_id: str) -> JsonDict:
         """
         Gets the status of a job by its job ID.
