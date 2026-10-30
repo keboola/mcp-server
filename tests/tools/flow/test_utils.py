@@ -867,9 +867,14 @@ _DATA_APP_CONFIG = {'id': 'cfg-1', 'configuration': {'parameters': {'id': 'app-1
 async def test_normalize_data_app_tasks(
     task: dict[str, Any], control_component: Any, expected_task: dict[str, Any], checks_stack: bool, mocker: Any
 ):
+    async def configuration_detail(component_id: str, configuration_id: str) -> dict[str, Any]:
+        if (component_id, configuration_id) == ('keboola.data-apps', 'cfg-1'):
+            return _DATA_APP_CONFIG
+        raise _status_error(404)
+
     client = mocker.Mock()
     client.storage_client.component_detail = mocker.AsyncMock(side_effect=[control_component])
-    client.storage_client.configuration_detail = mocker.AsyncMock(return_value=_DATA_APP_CONFIG)
+    client.storage_client.configuration_detail = mocker.AsyncMock(side_effect=configuration_detail)
     flow_configuration = {'phases': [], 'tasks': [_data_app_task(task)]}
 
     await normalize_data_app_tasks(client, flow_configuration)
