@@ -24,6 +24,7 @@ from keboola_mcp_server.clients.data_science import (
     RuntimeResponse,
 )
 from keboola_mcp_server.clients.storage import ConfigurationAPIResponse
+from keboola_mcp_server.elicitation import offer_url
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
 from keboola_mcp_server.mcp import PlainFunctionTool as FunctionTool
@@ -167,7 +168,38 @@ INJECTED_BLOCK_RE = re.compile(
 )
 
 # Type of the authentication used in the data app
-AuthenticationType = Literal['no-auth', 'basic-auth', 'default']
+AuthenticationType = Literal['no-auth', 'basic-auth', 'oidc', 'default']
+
+OIDC_PROVIDER_ID = 'oidc-1'
+
+
+class OidcAuthConfig(BaseModel):
+    """OpenID Connect settings of a data app. The client secret is never part of it."""
+
+    client_id: str = Field(description='The OIDC client ID registered at the identity provider.')
+    issuer_url: str = Field(description='The URL of the OIDC issuer, for example https://login.example.com.')
+    logout_url: str | None = Field(
+        default=None,
+        description=(
+            'The URL where the user is sent after logout. '
+            'Omit it or pass null to keep the stored value. Pass an empty string to remove it.'
+        ),
+    )
+    allowed_roles: list[str] | None = Field(
+        default=None,
+        description=(
+            'The roles that may open the app. '
+            'Omit it or pass null to keep the stored value. Pass an empty list to remove it.'
+        ),
+    )
+
+
+def _type_object_on_ref(schema: dict[str, Any]) -> None:
+    """Add `type: object` to the `$ref` member of the schema, as some MCP clients need every member typed."""
+    for member in schema.get('anyOf', []):
+        if '$ref' in member:
+            member['type'] = 'object'
+
 
 _NO_AUTH_ON_DRAFT_MESSAGE = (
     "authentication_type='no-auth' is not allowed on draft data apps. A draft inherits the prod "
@@ -182,6 +214,36 @@ _NO_AUTH_ON_DRAFT_MESSAGE = (
 def _reject_no_auth_on_draft(authentication_type: str) -> None:
     if authentication_type == 'no-auth':
         raise ValueError(_NO_AUTH_ON_DRAFT_MESSAGE)
+
+
+_OIDC_ON_DRAFT_MESSAGE = (
+    "authentication_type='oidc' is not allowed on draft data apps. A draft has its own URL and so its "
+    'own callback URL, which the identity provider does not know. Set up OIDC on the prod app instead.'
+)
+
+
+def _reject_oidc_on_draft(authentication_type: AuthenticationType) -> None:
+    if authentication_type == 'oidc':
+        raise ValueError(_OIDC_ON_DRAFT_MESSAGE)
+
+
+def _validate_oidc_args(
+    authentication_type: AuthenticationType, oidc: OidcAuthConfig | None, *, is_create: bool
+) -> None:
+    if authentication_type == 'oidc':
+        if is_create:
+            raise ValueError(
+                "authentication_type='oidc' is not allowed when creating a data app, because the callback URL "
+                "needs the app ID. Create the app with authentication_type='basic-auth' first, "
+                "then update it with 'oidc'."
+            )
+        if oidc is None:
+            raise ValueError("authentication_type='oidc' needs the `oidc` settings (client_id and issuer_url).")
+    elif oidc is not None:
+        raise ValueError(
+            "The `oidc` settings are only used with authentication_type='oidc'. "
+            'Set that authentication type or drop `oidc`.'
+        )
 
 
 SECRET_WORKSPACE_ID = 'WORKSPACE_ID'
@@ -554,6 +616,20 @@ class ModifiedDataAppOutput(BaseModel):
     change_summary: str | None = Field(default=None, description='Additional notes or hints about the operation.')
     data_app: DataAppSummary = Field(description='The data app.')
     links: list[Link] = Field(description='Navigation links for the web interface.')
+    oidc_callback_url: str | None = Field(
+        default=None,
+        description=(
+            'The OIDC redirect URI of the app (`https://<slug>-<app id>.hub.<stack>/_proxy/callback`). Register it '
+            'at the identity provider before you switch the app to OIDC. None for drafts.'
+        ),
+    )
+    oidc_setup_required: bool = Field(
+        default=False,
+        description=(
+            'True when the app uses OIDC but has no client secret yet: it cannot log anyone in. '
+            'Tell the user to follow `change_summary` before deploying.'
+        ),
+    )
 
 
 class ModifiedPythonJsDataAppOutput(BaseModel):
@@ -562,6 +638,20 @@ class ModifiedPythonJsDataAppOutput(BaseModel):
     response: str = Field(description='The response of the action performed with potential additional information.')
     change_summary: str | None = Field(default=None, description='Additional notes or hints about the operation.')
     data_app: DataAppSummary = Field(description='The data app.')
+    oidc_callback_url: str | None = Field(
+        default=None,
+        description=(
+            'The OIDC redirect URI of the app (`https://<slug>-<app id>.hub.<stack>/_proxy/callback`). Register it '
+            'at the identity provider before you switch the app to OIDC. None for drafts.'
+        ),
+    )
+    oidc_setup_required: bool = Field(
+        default=False,
+        description=(
+            'True when the app uses OIDC but has no client secret yet: it cannot log anyone in. '
+            'Tell the user to follow `change_summary` before deploying.'
+        ),
+    )
     repo_url: str | None = Field(
         default=None,
         description=(
@@ -704,14 +794,26 @@ async def modify_streamlit_data_app(
         Field(
             description=(
                 'Authentication type, "no-auth" removes authentication completely, "basic-auth" sets the data '
-                'app to be secured using the HTTP basic authentication, and "default" keeps the existing '
-                'authentication type when updating.'
+                'app to be secured using the HTTP basic authentication, "oidc" sets up OIDC login (update '
+                'only, needs the `oidc` argument), and "default" keeps the existing authentication type '
+                'when updating.'
             )
         ),
     ],
     configuration_id: Annotated[
         str, Field(description='The ID of existing data app configuration when updating, otherwise empty string.')
     ] = '',
+    oidc: Annotated[
+        OidcAuthConfig | None,
+        Field(
+            description=(
+                'OIDC settings. Required with authentication_type="oidc" and not allowed with any other '
+                'type. Only for updating an existing app, not for create. It has no secret '
+                'field: the user enters the client secret in the Keboola UI.'
+            ),
+            json_schema_extra=_type_object_on_ref,
+        ),
+    ] = None,
     change_description: Annotated[
         str,
         Field(description='The description of the change when updating (e.g. "Update Code"), otherwise empty string.'),
@@ -755,6 +857,19 @@ async def modify_streamlit_data_app(
     - New apps use the HTTP basic authentication by default for security unless explicitly specified otherwise; when
     updating, set `authentication_type` to `default` to keep the existing authentication type configuration
     (including OIDC setups) unless explicitly specified otherwise.
+    - `authentication_type='oidc'` (with the `oidc` argument) switches an existing app to OIDC. It is rejected on
+    create. The tool never takes a client secret: the user enters it in the Keboola UI.
+    Set up OIDC in this order:
+    1. Create the app with `'basic-auth'`. The output has `oidc_callback_url`.
+    2. The user registers `oidc_callback_url` at the identity provider and gives you the `client_id`.
+    3. Update the app with `authentication_type='oidc'` and `oidc` (`client_id`, `issuer_url`, and optionally
+       `logout_url`, `allowed_roles`).
+    4. The user enters the client secret in the app's Authentication section in the Keboola UI. If the client
+       can open URLs, it is asked to open that page.
+    5. Only if you use `allowed_roles`: update with `'oidc'` once more after the secret is saved.
+    6. Call `deploy_data_app` last.
+    If the output has `oidc_setup_required=true`, tell the user to follow `change_summary`. In `oidc`, null keeps
+    the stored `logout_url` / `allowed_roles`; `''` or `[]` removes them. The slug stays fixed on OIDC apps.
 
     SQL & DATA TYPE RULES:
     - Use delimited identifiers for the current SQL dialect for all column names and aliases in SQL.
@@ -763,6 +878,7 @@ async def modify_streamlit_data_app(
     `df["col"] = pd.to_numeric(df["col"], errors="coerce").fillna(0)` and
     `df["date"] = pd.to_datetime(df["date"], errors="coerce")`.
     """
+    _validate_oidc_args(authentication_type, oidc, is_create=not configuration_id)
     client = KeboolaClient.from_state(ctx.session.state)
     workspace_manager = WorkspaceManager.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
@@ -793,6 +909,7 @@ async def modify_streamlit_data_app(
             source_code=source_code,
             packages=packages,
             authentication_type=authentication_type,
+            oidc=oidc,
             configuration_id=configuration_id,
             change_description=change_description,
         )
@@ -831,11 +948,22 @@ async def modify_streamlit_data_app(
                 uses_basic_authentication=_uses_basic_authentication(data_app.configuration.get('authorization') or {}),
             )
             response = _update_response(data_app)
+            written_authorization = updated_config.get('authorization') or {}
+            config_link = links_manager.get_data_app_config_link(configuration_id, name, False).url
+            oidc_hint = _oidc_change_summary(
+                written_authorization,
+                config_link=config_link,
+                roles_requested=bool(oidc and oidc.allowed_roles),
+            )
+            if _oidc_setup_required(written_authorization):
+                offer_url(_OIDC_SECRET_PAGE_MESSAGE, config_link)
             return ModifiedDataAppOutput(
                 response=response,
-                change_summary=folder_hint,
+                change_summary='\n'.join(note for note in (folder_hint, oidc_hint) if note) or None,
                 data_app=DataAppSummary.model_validate(data_app.model_dump()),
                 links=links,
+                oidc_callback_url=_oidc_callback_url(client, data_app_pre.data_app_id, updated_config),
+                oidc_setup_required=_oidc_setup_required(written_authorization),
             )
         except Exception:
             LOG.exception(
@@ -892,6 +1020,7 @@ async def modify_streamlit_data_app(
                     data_app_resp, await _config_version_or_blank(client, data_app_resp.config_id)
                 ),
                 links=links,
+                oidc_callback_url=_oidc_callback_url(client, data_app_resp.id, config),
             )
         except Exception:
             LOG.exception(
@@ -920,6 +1049,7 @@ async def modify_streamlit_data_app_internal(
     configuration_id: str,
     change_description: str = '',
     folder: str | None = None,
+    oidc: OidcAuthConfig | None = None,
 ) -> tuple[DataApp, JsonDict, dict | None]:
     secrets = _get_secrets(
         workspace_id=str(await workspace_manager.get_data_app_workspace_id()),
@@ -935,6 +1065,7 @@ async def modify_streamlit_data_app_internal(
         authentication_type,
         secrets,
         await workspace_manager.get_data_app_sql_dialect(),
+        oidc,
     )
     updated_config = cast(
         JsonDict,
@@ -1132,7 +1263,8 @@ async def modify_python_js_data_app(
                 'Authentication type. "no-auth" removes authentication completely (the app becomes '
                 'public -- only use it when the user explicitly asks for a public app; it is rejected '
                 'on drafts, which inherit the prod app\'s data access), "basic-auth" secures the data '
-                'app via HTTP basic authentication, and "default" means: on create, apply basic auth '
+                'app via HTTP basic authentication, "oidc" sets up OIDC login (update of a prod app only, '
+                'needs the `oidc` argument), and "default" means: on create, apply basic auth '
                 '(safe default for new apps); on update, keep the existing authentication configuration '
                 '(including OIDC setups configured outside the MCP). Never disable authentication to '
                 'make a preview work -- the in-platform preview authenticates on top of the configured '
@@ -1140,6 +1272,17 @@ async def modify_python_js_data_app(
             ),
         ),
     ] = 'default',
+    oidc: Annotated[
+        OidcAuthConfig | None,
+        Field(
+            description=(
+                'OIDC settings. Required with authentication_type="oidc" and not allowed with any other '
+                'type. Only for updating an existing prod app, not for create or drafts. It has no secret '
+                'field: the user enters the client secret in the Keboola UI.'
+            ),
+            json_schema_extra=_type_object_on_ref,
+        ),
+    ] = None,
     auto_suspend_after_seconds: Annotated[
         int | None,
         Field(
@@ -1333,6 +1476,21 @@ async def modify_python_js_data_app(
     `authentication_type='default'` preserves the existing `authorization` block (including OIDC
     setups configured outside the MCP); `'basic-auth'` / `'no-auth'` overwrite it.
 
+    `authentication_type='oidc'` (with the `oidc` argument) switches an existing prod app to OIDC. It is
+    rejected on create and on drafts. The tool never takes a client secret: the user enters it in the Keboola UI.
+
+    Set up OIDC in this order:
+    1. Create the app with `'basic-auth'`. The output has `oidc_callback_url`.
+    2. The user registers `oidc_callback_url` at the identity provider and gives you the `client_id`.
+    3. Update the app with `authentication_type='oidc'` and `oidc` (`client_id`, `issuer_url`, and optionally
+       `logout_url`, `allowed_roles`).
+    4. The user enters the client secret in the app's Authentication section in the Keboola UI. If the client
+       can open URLs, it is asked to open that page.
+    5. Only if you use `allowed_roles`: update with `'oidc'` once more after the secret is saved.
+    6. Call `deploy_data_app` last.
+    If the output has `oidc_setup_required=true`, tell the user to follow `change_summary`. In `oidc`, null keeps
+    the stored `logout_url` / `allowed_roles`; `''` or `[]` removes them. The slug stays fixed on OIDC apps.
+
     ## Slug constraint
 
     Must be DNS-label-safe (lowercase letters, digits, hyphens). Optional on create: when omitted it
@@ -1353,6 +1511,10 @@ async def modify_python_js_data_app(
     After an explicit `slug` the new URL applies on the next `deploy_data_app` and the old URL stops
     working; tell the user both.
     """
+    if not configuration_id and parent_configuration_id:
+        # Checked first so a draft with 'oidc' gets the draft message, not the create-with-basic-auth one.
+        _reject_oidc_on_draft(authentication_type)
+    _validate_oidc_args(authentication_type, oidc, is_create=not configuration_id)
     if configuration_id:
         if slug:
             _validate_explicit_slug(slug)
@@ -1395,8 +1557,13 @@ async def modify_python_js_data_app(
         data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
         if _is_draft_config(data_app.configuration):
             _reject_no_auth_on_draft(authentication_type)
+            _reject_oidc_on_draft(authentication_type)
         normalized_branch = _validate_branch_update(branch, data_app, configuration_id) if branch else None
-        new_slug = _resolve_slug_update(data_app, name=name, explicit_slug=slug)
+        oidc_app = authentication_type == 'oidc' or (
+            authentication_type == 'default'
+            and _oidc_provider(data_app.configuration.get('authorization') or {}) is not None
+        )
+        new_slug = _resolve_slug_update(data_app, name=name, explicit_slug=slug, oidc_app=oidc_app)
         if (
             not has_storage_workspace
             and wants_storage_access
@@ -1413,6 +1580,7 @@ async def modify_python_js_data_app(
             existing_config=data_app.configuration,
             auto_suspend_after_seconds=auto_suspend_after_seconds,
             authentication_type=authentication_type,
+            oidc=oidc,
             storage_access=storage_access,
             has_storage_workspace=has_storage_workspace,
             legacy_workspace_id=legacy_workspace_id,
@@ -1439,15 +1607,29 @@ async def modify_python_js_data_app(
         folder_hint = await apply_configuration_folder(
             client, DATA_APP_COMPONENT_ID, configuration_id, folder, 'data apps', 'modify_python_js_data_app'
         )
+        written_authorization = updated_config.get('authorization') or {}
+        oidc_callback_url = _oidc_callback_url(client, data_app.data_app_id, updated_config)
         # Without an explicit `slug`, a new slug is a never-deployed app's slug following its name.
         if new_slug is None:
             slug_hint = None
+            # On a retry after URL elicitation the first round already wrote the explicit slug, so
+            # nothing moves now, but the agent has not yet seen the IdP warning.
+            if slug and oidc_app:
+                slug_hint = (
+                    f"The URL slug is '{slug}'. The app uses OIDC login: register the callback URL "
+                    f'{oidc_callback_url} at the identity provider before you redeploy, or every login fails.'
+                )
         elif slug:
             slug_hint = (
                 f"Changed the URL slug to '{new_slug}'. The app keeps its current URL until it is redeployed "
                 '(deploy_data_app); from then on it is served under the new slug and the old URL stops working. '
                 'Tell the user both.'
             )
+            if oidc_app:
+                slug_hint += (
+                    f' The app uses OIDC login: register the new callback URL {oidc_callback_url} at the '
+                    'identity provider before you redeploy, or every login fails.'
+                )
         else:
             slug_hint = (
                 f"The URL slug followed the new name to '{new_slug}': the app has never been deployed, so its "
@@ -1465,6 +1647,14 @@ async def modify_python_js_data_app(
             if storage_access is not None
             else None
         )
+        config_link = links_manager.get_data_app_config_link(configuration_id, name or data_app.name, False).url
+        oidc_hint = _oidc_change_summary(
+            written_authorization,
+            config_link=config_link,
+            roles_requested=bool(oidc and oidc.allowed_roles),
+        )
+        if _oidc_setup_required(written_authorization):
+            offer_url(_OIDC_SECRET_PAGE_MESSAGE, config_link)
         change_summary = (
             '\n'.join(
                 note
@@ -1475,6 +1665,7 @@ async def modify_python_js_data_app(
                     storage_access_hint,
                     _image_version_hint(image_version),
                     legacy_fallback_hint,
+                    oidc_hint,
                 )
                 if note
             )
@@ -1499,6 +1690,8 @@ async def modify_python_js_data_app(
             data_app=data_app_summary,
             repo_url=repo_url,
             links=links,
+            oidc_callback_url=oidc_callback_url,
+            oidc_setup_required=_oidc_setup_required(written_authorization),
         )
     else:
         # Create new python-js data app — either a prod app (own managed repo) or a draft
@@ -1509,9 +1702,12 @@ async def modify_python_js_data_app(
             legacy_workspace_id, legacy_fallback_hint = await _resolve_legacy_workspace_fallback(
                 ctx, client, configuration_id=None
             )
-        # On create, treat 'default' as 'basic-auth' (safe-by-default) to match modify_streamlit_data_app.
-        uses_basic_auth = authentication_type in ('basic-auth', 'default')
-        authorization_model = DataAppConfig.Authorization.model_validate(_get_authorization(uses_basic_auth))
+        # On create, anything but an explicit 'no-auth' becomes 'basic-auth' (fail closed), to match
+        # modify_streamlit_data_app.
+        uses_basic_auth = authentication_type != 'no-auth'
+        authorization_model = DataAppConfig.Authorization.model_validate(
+            _build_authorization('basic-auth' if uses_basic_auth else 'no-auth')
+        )
 
         git_clone_url: str | None = None
         draft_branch: str | None = None
@@ -1650,6 +1846,9 @@ async def modify_python_js_data_app(
             git_clone_url=git_clone_url,
             branch=draft_branch,
             links=links,
+            oidc_callback_url=_oidc_callback_url(
+                client, data_app_resp.id, config.model_dump(by_alias=True, exclude_none=True)
+            ),
         )
 
 
@@ -1913,6 +2112,7 @@ def _update_existing_code_data_app_config(
     branch: str | None = None,
     slug: str | None = None,
     image_version: str | None = None,
+    oidc: OidcAuthConfig | None = None,
 ) -> dict[str, Any]:
     """Apply requested updates to the existing python-js data app storage configuration.
 
@@ -1923,7 +2123,8 @@ def _update_existing_code_data_app_config(
     `image_version` pins `runtime.image.version`; '' drops the pin (both it and the legacy
     `parameters.imageVersion`) so the app follows the platform default; None leaves the stored pin as is.
     `authentication_type='default'` preserves the existing `authorization` block (including OIDC
-    setups configured outside the MCP); 'no-auth' / 'basic-auth' overwrite it.
+    setups configured outside the MCP); 'no-auth' / 'basic-auth' overwrite it; 'oidc' rewrites the
+    OIDC provider from `oidc` and keeps the stored client secret.
     `storage_access` moves the app's read-only Storage access, through whichever mechanism the
     project supports: `runtime.workspace.enabled` when `has_storage_workspace` is true, and the
     legacy `parameters.dataApp.secrets.WORKSPACE_ID` entry (taken from `legacy_workspace_id`) when
@@ -1945,7 +2146,9 @@ def _update_existing_code_data_app_config(
     if auto_suspend_after_seconds is not None:
         new_config['parameters']['autoSuspendAfterSeconds'] = auto_suspend_after_seconds
     if authentication_type != 'default':
-        new_config['authorization'] = _get_authorization(authentication_type == 'basic-auth')
+        new_config['authorization'] = _build_authorization(
+            authentication_type, oidc, existing_config.get('authorization')
+        )
     if branch is not None:
         data_app_block = new_config['parameters'].get('dataApp')
         git_block = data_app_block.get('git') if isinstance(data_app_block, dict) else None
@@ -2450,7 +2653,7 @@ def _build_data_app_config(
         'packages': packages,
     }
     # By default secure with basic authorization
-    authorization = _get_authorization(authentication_type in ['basic-auth', 'default'])
+    authorization = _build_authorization('no-auth' if authentication_type == 'no-auth' else 'basic-auth')
     return {'parameters': parameters, 'authorization': authorization}
 
 
@@ -2462,11 +2665,18 @@ def _update_existing_data_app_config(
     authentication_type: AuthenticationType,
     secrets: dict[str, Any],
     sql_dialect: str,
+    oidc: OidcAuthConfig | None = None,
 ) -> dict[str, Any]:
     new_config = cast(dict[str, Any], copy.deepcopy(existing_config))
-    new_config['parameters']['dataApp']['slug'] = (
-        _get_data_app_slug(name) or existing_config['parameters']['dataApp']['slug']
-    )
+    if authentication_type != 'default':
+        new_config['authorization'] = _build_authorization(
+            authentication_type, oidc, existing_config.get('authorization')
+        )
+    # The OIDC callback URL contains the slug, so a rename must not move it.
+    if _oidc_provider(new_config.get('authorization') or {}) is None:
+        new_config['parameters']['dataApp']['slug'] = (
+            _get_data_app_slug(name) or existing_config['parameters']['dataApp']['slug']
+        )
     if source_code:
         new_config['parameters']['script'] = [_inject_query_to_source_code(source_code, sql_dialect)]
     new_config['parameters']['packages'] = (
@@ -2483,8 +2693,6 @@ def _update_existing_data_app_config(
 
     new_config['parameters']['dataApp']['secrets'] = updated_secrets
 
-    if authentication_type != 'default':
-        new_config['authorization'] = _get_authorization(authentication_type == 'basic-auth')
     # Clean up any empty/array-shaped storage left behind by earlier MCP/CLI/KAI writes so the
     # Writable Tables editor keeps working after a re-save (AI-3135).
     _normalize_config_storage(new_config)
@@ -2819,14 +3027,37 @@ async def _fetch_latest_run(client: KeboolaClient, data_app_id: str) -> AppRunIn
         return None
 
 
-def _get_authorization(auth_with_password: bool) -> dict[str, Any]:
-    if auth_with_password:
-        return {
-            'app_proxy': {
-                'auth_providers': [{'id': 'simpleAuth', 'type': 'password'}],
-                'auth_rules': [{'type': 'pathPrefix', 'value': '/', 'auth_required': True, 'auth': ['simpleAuth']}],
-            },
-        }
+def _oidc_provider(authorization: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    providers = (authorization.get('app_proxy') or {}).get('auth_providers') or []
+    return next((p for p in providers if p.get('type') == 'oidc'), None)
+
+
+def _oidc_setup_required(authorization: Mapping[str, Any]) -> bool:
+    provider = _oidc_provider(authorization)
+    return provider is not None and not str(provider.get('#client_secret') or '').strip()
+
+
+def _build_authorization(
+    authentication_type: Literal['no-auth', 'basic-auth', 'oidc'],
+    oidc: OidcAuthConfig | None = None,
+    existing: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    if authentication_type == 'basic-auth':
+        provider_id, providers = 'simpleAuth', [{'id': 'simpleAuth', 'type': 'password'}]
+    elif authentication_type == 'oidc':
+        if oidc is None:
+            raise ValueError('The OIDC settings are required for the OIDC authentication.')
+        # keep the stored secret and unknown keys, so an update does not wipe them
+        provider = dict(_oidc_provider(existing or {}) or {})
+        provider.update(id=OIDC_PROVIDER_ID, type='oidc', client_id=oidc.client_id, issuer_url=oidc.issuer_url)
+        for key, value in (('logout_url', oidc.logout_url), ('allowed_roles', oidc.allowed_roles)):
+            if value is None:
+                continue
+            if value in ('', []):
+                provider.pop(key, None)
+            else:
+                provider[key] = value
+        provider_id, providers = OIDC_PROVIDER_ID, [provider]
     else:
         return {
             'app_proxy': {
@@ -2834,6 +3065,12 @@ def _get_authorization(auth_with_password: bool) -> dict[str, Any]:
                 'auth_rules': [{'type': 'pathPrefix', 'value': '/', 'auth_required': False}],
             }
         }
+    return {
+        'app_proxy': {
+            'auth_providers': providers,
+            'auth_rules': [{'type': 'pathPrefix', 'value': '/', 'auth_required': True, 'auth': [provider_id]}],
+        },
+    }
 
 
 # Maximum length for DNS labels per RFC 1035
@@ -2899,6 +3136,11 @@ def _update_response(data_app: 'DataApp') -> str:
     return 'updated (redeploy required to apply changes in the running app)'
 
 
+def _hub_url(client: KeboolaClient, data_app_id: str, slug: str) -> str:
+    """The app address `https://<slug>-<app id>.hub.<stack>`. The formula is the operator's."""
+    return f'https://{slug}-{data_app_id}.hub.{client.hostname_suffix}'
+
+
 def _app_url(client: KeboolaClient, data_app_id: str, configuration: Mapping[str, Any]) -> str | None:
     """A draft's address, `https://<slug>-<app id>.hub.<stack>`; None for a prod app or without a slug.
 
@@ -2908,7 +3150,43 @@ def _app_url(client: KeboolaClient, data_app_id: str, configuration: Mapping[str
     slug = _config_slug(configuration)
     if not slug or not _is_draft_config(configuration):
         return None
-    return f'https://{slug}-{data_app_id}.hub.{client.hostname_suffix}'
+    return _hub_url(client, data_app_id, slug)
+
+
+def _oidc_callback_url(client: KeboolaClient, data_app_id: str, configuration: Mapping[str, Any]) -> str | None:
+    """The OIDC redirect URI of a prod app; None for a draft (drafts cannot use OIDC) or without a slug."""
+    slug = _config_slug(configuration)
+    if not slug or _is_draft_config(configuration):
+        return None
+    return f'{_hub_url(client, data_app_id, slug)}/_proxy/callback'
+
+
+_OIDC_SECRET_PAGE_MESSAGE = (
+    "Open the data app's configuration page, go to the Authentication section, enter the OIDC client secret and save."
+)
+
+
+def _oidc_change_summary(authorization: Mapping[str, Any], config_link: str, roles_requested: bool) -> str | None:
+    """The next steps for an OIDC app, or None when there is nothing to tell."""
+    if _oidc_setup_required(authorization):
+        roles_step = (
+            "After that, run this update again with authentication_type='oidc' and the same `allowed_roles`: "
+            'saving the form in the UI removes them. '
+            if roles_requested
+            else ''
+        )
+        return (
+            'OIDC login is set, but the app cannot log anyone in yet: the client secret is missing. '
+            f'Ask the user to open {config_link}, go to the Authentication section, enter the client secret '
+            f'and save. {roles_step}Deploy the app (deploy_data_app) only as the last step.'
+        )
+    if roles_requested:
+        return (
+            'The UI form does not show `allowed_roles`, so any later save of the Authentication section in the UI '
+            "removes them. After such a save, run this update again with authentication_type='oidc' and "
+            '`allowed_roles`, then redeploy.'
+        )
+    return None
 
 
 def _config_git_branch(configuration: Mapping[str, Any]) -> str | None:
@@ -2918,14 +3196,16 @@ def _config_git_branch(configuration: Mapping[str, Any]) -> str | None:
     return branch if isinstance(branch, str) and branch else None
 
 
-def _resolve_slug_update(data_app: 'DataApp', *, name: str, explicit_slug: str | None) -> str | None:
+def _resolve_slug_update(data_app: 'DataApp', *, name: str, explicit_slug: str | None, oidc_app: bool) -> str | None:
     """The slug a python-js update writes, or None to keep the stored one.
 
     1. An explicit slug on a draft raises — draft slugs never change.
     2. An explicit slug on a prod app is written as given.
-    3. A rename of a prod app that was never deployed moves the slug to `_derive_slug_from_name(name)`
+    3. An app whose written authorization has an OIDC provider (`oidc_app`) keeps its slug, because
+       the callback URL registered at the IdP contains it.
+    4. A rename of a prod app that was never deployed moves the slug to `_derive_slug_from_name(name)`
        when the stored slug still follows the current name.
-    4. Anything else keeps the stored slug.
+    5. Anything else keeps the stored slug.
 
     - "Follows the name" compares both through `_derive_slug_from_name`, so a slug the UI derived
       (`prepareSlug`, which keeps repeated hyphens) counts as well.
@@ -2938,7 +3218,7 @@ def _resolve_slug_update(data_app: 'DataApp', *, name: str, explicit_slug: str |
     current_slug = _config_slug(data_app.configuration)
     if explicit_slug:
         return None if explicit_slug == current_slug else explicit_slug
-    if not name or name == data_app.name or current_slug is None or not _is_never_deployed(data_app):
+    if oidc_app or not name or name == data_app.name or current_slug is None or not _is_never_deployed(data_app):
         return None
     if _derive_slug_from_name(current_slug, draft=False) != _derive_slug_from_name(data_app.name, draft=False):
         return None

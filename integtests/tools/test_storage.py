@@ -9,6 +9,7 @@ from fastmcp import Client, Context
 from integtests.conftest import BucketDef, TableDef
 from keboola_mcp_server.clients.client import KeboolaClient, get_metadata_property
 from keboola_mcp_server.config import MetadataField
+from keboola_mcp_server.tools.components.utils import get_nested
 from keboola_mcp_server.tools.storage.tools import (
     BucketDetail,
     DescriptionUpdate,
@@ -205,9 +206,11 @@ async def test_update_descriptions_table(mcp_context: Context, mcp_client: Clien
     assert table_result.error is None
     assert table_result.timestamp is not None
 
-    # Verify the description was actually updated
+    # Verify the description was written to the native definition and not as a user KBC.description row
+    table_detail = await storage_client.table_detail(table.table_id)
+    assert get_nested(table_detail, 'definition.description') == 'New Table Description'
     metadata = await storage_client.table_metadata_get(table.table_id)
-    assert get_metadata_property(metadata, MetadataField.DESCRIPTION) == 'New Table Description'
+    assert not [m for m in metadata if m.get('key') == MetadataField.DESCRIPTION and m.get('provider') == 'user']
 
 
 @pytest.mark.asyncio
@@ -292,34 +295,24 @@ async def test_update_descriptions_mixed_types(mcp_context: Context, buckets: li
             assert bucket_entry['value'] == 'Mixed Bucket Description'
             md_ids.append(('bucket', bucket.bucket_id, str(bucket_entry['id'])))
 
-        # Verify table description was updated
-        table_metadata = await client.storage_client.table_metadata_get(table.table_id)
-        table_entry = next((entry for entry in table_metadata if entry.get('key') == MetadataField.DESCRIPTION), None)
-        if table_entry:
-            assert table_entry['value'] == 'Mixed Table Description'
-            md_ids.append(('table', table.table_id, str(table_entry['id'])))
-
-        # Verify column description was updated
+        # Verify table and column descriptions were written to the native definition
         table_detail = await client.storage_client.table_detail(table.table_id)
-        assert 'columnMetadata' in table_detail
-        column_metadata = cast(dict[str, list[dict[str, Any]]], table_detail['columnMetadata'])
-        assert column_name in column_metadata
-        column_entry = next(
-            (entry for entry in column_metadata[column_name] if entry.get('key') == MetadataField.DESCRIPTION), None
-        )
-        if column_entry:
-            assert column_entry['value'] == 'Mixed Column Description'
-            md_ids.append(('column', f'{table.table_id}.{column_name}', str(column_entry['id'])))
+        assert get_nested(table_detail, 'definition.description') == 'Mixed Table Description'
+        definition_columns = cast(list[dict[str, Any]], get_nested(table_detail, 'definition.columns'))
+        column_definition = next(col for col in definition_columns if col['name'] == column_name)
+        assert column_definition['definition']['description'] == 'Mixed Column Description'
+
+        # No user KBC.description rows were created for the table
+        table_metadata = await client.storage_client.table_metadata_get(table.table_id)
+        assert not [
+            m for m in table_metadata if m.get('key') == MetadataField.DESCRIPTION and m.get('provider') == 'user'
+        ]
 
     finally:
         # Clean up metadata
         for md_type, item_id, md_id in md_ids:
             if md_type == 'bucket':
                 await client.storage_client.bucket_metadata_delete(bucket_id=item_id, metadata_id=md_id)
-            elif md_type == 'table':
-                await client.storage_client.table_metadata_delete(table_id=item_id, metadata_id=md_id)
-            elif md_type == 'column':
-                await client.storage_client.column_metadata_delete(column_id=item_id, metadata_id=md_id)
 
 
 @pytest.mark.asyncio
