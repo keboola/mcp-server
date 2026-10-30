@@ -354,31 +354,46 @@ class TestTableDefinitionUpdate:
             await client.table_definition_update('in.c-b.t', description='x')
 
     @pytest.mark.parametrize(
-        ('status_code', 'error', 'is_noop'),
+        ('status_code', 'code', 'stored_description', 'stored_column', 'is_noop'),
         [
-            (400, 'No table definition changes were provided.', True),
-            # the same error code is used for other validation failures
-            (400, "'abc' is not valid length for VARCHAR", False),
-            (404, 'No table definition changes were provided.', False),
+            (400, 'storage.tables.definitionUpdateValidationFailed', 'x', 'c', True),
+            # the same code covers other validation failures, so differing stored values are not a no-op
+            (400, 'storage.tables.definitionUpdateValidationFailed', 'other', 'c', False),
+            (400, 'storage.tables.definitionUpdateValidationFailed', 'x', 'other', False),
+            (400, 'storage.other', 'x', 'c', False),
+            (404, 'storage.tables.definitionUpdateValidationFailed', 'x', 'c', False),
         ],
     )
     @pytest.mark.asyncio
     async def test_unchanged_values_are_a_noop(
-        self, raw_client: RawKeboolaClient, status_code: int, error: str, is_noop: bool
+        self,
+        raw_client: RawKeboolaClient,
+        status_code: int,
+        code: str,
+        stored_description: str,
+        stored_column: str,
+        is_noop: bool,
     ) -> None:
         response = httpx.Response(
             status_code,
-            json={'error': error, 'code': 'storage.tables.definitionUpdateValidationFailed', 'exceptionId': 'x'},
+            json={'error': 'rejected', 'code': code, 'exceptionId': 'x'},
             request=httpx.Request('PUT', 'https://x'),
         )
         try:
             RawKeboolaClient._raise_for_status(response)
         except httpx.HTTPStatusError as e:
             raw_client.put.side_effect = e
+        raw_client.get.return_value = {
+            'definition': {
+                'description': stored_description,
+                'columns': [{'name': 'a', 'definition': {'description': stored_column}}],
+            }
+        }
         client = AsyncStorageClient(raw_client=raw_client)
 
+        call = client.table_definition_update('in.c-b.t', description='x', column_descriptions={'a': 'c'})
         if is_noop:
-            assert await client.table_definition_update('in.c-b.t', description='x') == {}
+            assert await call == {}
         else:
             with pytest.raises(httpx.HTTPStatusError):
-                await client.table_definition_update('in.c-b.t', description='x')
+                await call

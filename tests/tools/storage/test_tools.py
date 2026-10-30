@@ -1617,7 +1617,10 @@ async def test_update_descriptions_table_success(mocker: MockerFixture, mcp_cont
     assert table_result.timestamp == parse_iso_timestamp('2024-01-01T00:00:00Z')
 
     keboola_client.storage_client.table_definition_update.assert_called_once_with(
-        table_id='in.c-test.test-table', description='Updated table description', branch_id='default'
+        table_id='in.c-test.test-table',
+        description='Updated table description',
+        column_descriptions={},
+        branch_id='default',
     )
     keboola_client.storage_client.table_metadata_update.assert_not_called()
 
@@ -1652,6 +1655,7 @@ async def test_update_descriptions_column_success(mocker: MockerFixture, mcp_con
 
     keboola_client.storage_client.table_definition_update.assert_called_once_with(
         table_id='in.c-test.test-table',
+        description=None,
         column_descriptions={'column_name': 'Updated column description'},
         branch_id='default',
     )
@@ -1704,7 +1708,10 @@ async def test_update_descriptions_mixed_types_success(
         metadata={MetadataField.DESCRIPTION: 'Updated bucket description'},
     )
     keboola_client.storage_client.table_definition_update.assert_called_once_with(
-        table_id='in.c-test.test-table', description='Updated table description', branch_id='default'
+        table_id='in.c-test.test-table',
+        description='Updated table description',
+        column_descriptions={},
+        branch_id='default',
     )
 
 
@@ -2136,7 +2143,7 @@ async def test_update_descriptions_definition_branch(
 
     assert result.successful == 1
     keboola_client.storage_client.table_definition_update.assert_called_once_with(
-        table_id='in.c-test.test-table', description='Desc', branch_id=expected_branch_id
+        table_id='in.c-test.test-table', description='Desc', column_descriptions={}, branch_id=expected_branch_id
     )
 
 
@@ -2151,9 +2158,10 @@ async def test_update_descriptions_definition_branch(
         (
             'in.c-test.test-table.column_name',
             {
+                'metadata': None,
                 'columns_metadata': {
                     'column_name': [{'key': MetadataField.DESCRIPTION, 'value': 'Desc', 'columnName': 'column_name'}]
-                }
+                },
             },
         ),
     ],
@@ -2188,3 +2196,42 @@ async def test_update_descriptions_backend_without_definition(
         table_id='in.c-test.test-table', **expected_metadata_call
     )
     keboola_client.storage_client.table_definition_update.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('backend', ['snowflake', 'synapse'])
+async def test_update_descriptions_table_and_columns_in_one_write(
+    backend: str, mocker: MockerFixture, mcp_context_client, merged_table
+) -> None:
+    """Test that a table and its columns are written once, with the target resolved once."""
+    lookup = merged_table(backend=backend)
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.storage_client.table_definition_update = mocker.AsyncMock(
+        return_value={'id': '1', 'status': 'success', 'endTime': '2024-01-01T00:00:00Z'}
+    )
+    keboola_client.storage_client.table_metadata_update = mocker.AsyncMock(
+        return_value={
+            'metadata': [{'key': MetadataField.DESCRIPTION, 'timestamp': '2024-01-01T00:00:00Z'}],
+            'columnsMetadata': {'c': [{'key': MetadataField.DESCRIPTION, 'timestamp': '2024-01-01T00:00:00Z'}]},
+        }
+    )
+
+    result = await update_descriptions(
+        ctx=mcp_context_client,
+        updates=[
+            DescriptionUpdate(item_id='in.c-test.test-table', description='T'),
+            DescriptionUpdate(item_id='in.c-test.test-table.c', description='C'),
+        ],
+    )
+
+    assert [(r.item_id, r.success) for r in result.results] == [
+        ('in.c-test.test-table', True),
+        ('in.c-test.test-table.c', True),
+    ]
+    lookup.assert_called_once()
+    written = (
+        keboola_client.storage_client.table_definition_update
+        if backend == 'snowflake'
+        else keboola_client.storage_client.table_metadata_update
+    )
+    written.assert_called_once()

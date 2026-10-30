@@ -1023,77 +1023,49 @@ async def _resolve_write_target(client: KeboolaClient, table_id: str) -> tuple[s
     return branch_id, _has_native_definition(table)
 
 
-async def _update_table_description(client: KeboolaClient, table_id: str, description: str) -> UpdateItemResult:
-    """Update a table description."""
+async def _update_table_descriptions(
+    client: KeboolaClient, table_id: str, description: str | None, column_updates: dict[str, str]
+) -> list[UpdateItemResult]:
+    """
+    Update the description of a table and the descriptions of its columns in one write.
+
+    The write target is resolved once per table. The native table definition takes the table and column descriptions
+    in a single Storage job; backends without it take them in a single metadata request.
+    """
+    item_ids = ([table_id] if description is not None else []) + [f'{table_id}.{name}' for name in column_updates]
     try:
         branch_id, native_definition = await _resolve_write_target(client, table_id)
-        if not native_definition:
-            response = await client.storage_client.table_metadata_update(
-                table_id=table_id,
-                metadata={MetadataField.DESCRIPTION: description},
-                columns_metadata={},
+        if native_definition:
+            job = await client.storage_client.table_definition_update(
+                table_id=table_id, description=description, column_descriptions=column_updates, branch_id=branch_id
             )
-            raw_metadata = cast(list[JsonDict], response.get('metadata', []))
-            entry = next(entry for entry in raw_metadata if entry.get('key') == MetadataField.DESCRIPTION)
-            return UpdateItemResult(item_id=table_id, success=True, timestamp=entry['timestamp'])
+            timestamp = _job_timestamp(job)
+            return [UpdateItemResult(item_id=item_id, success=True, timestamp=timestamp) for item_id in item_ids]
 
-        job = await client.storage_client.table_definition_update(
-            table_id=table_id, description=description, branch_id=branch_id
+        response = await client.storage_client.table_metadata_update(
+            table_id=table_id,
+            metadata={MetadataField.DESCRIPTION: description} if description is not None else None,
+            columns_metadata={
+                name: [{'key': MetadataField.DESCRIPTION, 'value': desc, 'columnName': name}]
+                for name, desc in column_updates.items()
+            },
         )
-        return UpdateItemResult(item_id=table_id, success=True, timestamp=_job_timestamp(job))
     except Exception as e:
-        return UpdateItemResult(item_id=table_id, success=False, error=str(e))
+        # The table and its columns are written together, so a failure applies to every item of the table.
+        return [UpdateItemResult(item_id=item_id, success=False, error=str(e)) for item_id in item_ids]
 
-
-async def _update_column_descriptions(
-    client: KeboolaClient, table_id: str, column_updates: dict[str, str]
-) -> list[UpdateItemResult]:
-    """Update multiple column descriptions for a single table."""
-    try:
-        branch_id, native_definition = await _resolve_write_target(client, table_id)
-        if not native_definition:
-            return await _update_column_descriptions_metadata(client, table_id, column_updates)
-
-        job = await client.storage_client.table_definition_update(
-            table_id=table_id, column_descriptions=column_updates, branch_id=branch_id
-        )
-        timestamp = _job_timestamp(job)
-        return [
-            UpdateItemResult(item_id=f'{table_id}.{column_name}', success=True, timestamp=timestamp)
-            for column_name in column_updates
-        ]
-    except Exception as e:
-        # The definition update is a single job, so a failure applies to every column of the table.
-        return [
-            UpdateItemResult(item_id=f'{table_id}.{column_name}', success=False, error=str(e))
-            for column_name in column_updates
-        ]
-
-
-async def _update_column_descriptions_metadata(
-    client: KeboolaClient, table_id: str, column_updates: dict[str, str]
-) -> list[UpdateItemResult]:
-    """Update column descriptions through KBC.description metadata, for backends without a native definition."""
-    columns_metadata = {
-        column_name: [{'key': MetadataField.DESCRIPTION, 'value': description, 'columnName': column_name}]
-        for column_name, description in column_updates.items()
-    }
-    response = await client.storage_client.table_metadata_update(table_id=table_id, columns_metadata=columns_metadata)
-
-    column_metadata = cast(dict[str, list[JsonDict]], response.get('columnsMetadata', {}))
     results = []
-    for column_name in column_updates:
+    table_metadata = cast(list[JsonDict], response.get('metadata', []))
+    columns_metadata = cast(dict[str, list[JsonDict]], response.get('columnsMetadata', {}))
+    entries = ([(table_id, table_metadata)] if description is not None else []) + [
+        (f'{table_id}.{name}', columns_metadata.get(name, [])) for name in column_updates
+    ]
+    for item_id, metadata in entries:
         try:
-            description_entry = next(
-                entry for entry in column_metadata.get(column_name, []) if entry.get('key') == MetadataField.DESCRIPTION
-            )
-            results.append(
-                UpdateItemResult(
-                    item_id=f'{table_id}.{column_name}', success=True, timestamp=description_entry['timestamp']
-                )
-            )
+            entry = next(m for m in metadata if m.get('key') == MetadataField.DESCRIPTION)
+            results.append(UpdateItemResult(item_id=item_id, success=True, timestamp=entry['timestamp']))
         except Exception as e:
-            results.append(UpdateItemResult(item_id=f'{table_id}.{column_name}', success=False, error=str(e)))
+            results.append(UpdateItemResult(item_id=item_id, success=False, error=str(e)))
     return results
 
 
@@ -1145,13 +1117,15 @@ async def update_descriptions(
         result = await _update_bucket_description(client, bucket_id, description)
         results.append(result)
 
-    for table_id, description in grouped_updates.table_updates.items():
-        result = await _update_table_description(client, table_id, description)
-        results.append(result)
-
-    for table_id, column_updates in grouped_updates.column_updates_by_table.items():
-        table_results = await _update_column_descriptions(client, table_id, column_updates)
-        results.extend(table_results)
+    for table_id in dict.fromkeys([*grouped_updates.table_updates, *grouped_updates.column_updates_by_table]):
+        results.extend(
+            await _update_table_descriptions(
+                client,
+                table_id,
+                grouped_updates.table_updates.get(table_id),
+                grouped_updates.column_updates_by_table.get(table_id, {}),
+            )
+        )
 
     successful = sum(1 for r in results if r.success)
     failed = len(results) - successful

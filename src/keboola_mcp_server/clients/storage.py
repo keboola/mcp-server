@@ -4,6 +4,7 @@ import math
 import time
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime
+from http import HTTPStatus
 from typing import Any, Literal, cast
 
 import httpx
@@ -312,7 +313,7 @@ class AsyncStorageClient(KeboolaServiceClient):
     JOB_POLL_INTERVAL_SECONDS = 0.5
     JOB_FINAL_STATUSES = frozenset({'success', 'warning', 'error', 'cancelled'})
     JOB_SUCCESS_STATUSES = frozenset({'success', 'warning'})
-    NO_CHANGES_ERROR_MESSAGE = 'No table definition changes were provided'
+    DEFINITION_VALIDATION_ERROR_CODE = 'storage.tables.definitionUpdateValidationFailed'
 
     def __init__(
         self,
@@ -1025,11 +1026,39 @@ class AsyncStorageClient(KeboolaServiceClient):
         try:
             job = cast(JsonDict, await self.put(endpoint=f'branch/{bid}/tables/{table_id}/definition', data=payload))
         except httpx.HTTPStatusError as e:
-            # Storage rejects a request whose values equal the stored ones; for an idempotent write that is a success.
-            if e.response.status_code == 400 and self.NO_CHANGES_ERROR_MESSAGE in str(e):
+            # Storage answers a request whose values equal the stored ones with a validation error that shares its
+            # code with other validation failures, so the stored values are compared before treating it as a no-op.
+            if await self._is_unchanged_rejection(e, table_id, bid, description, column_descriptions):
                 return {}
             raise
         return await self._wait_for_job(job)
+
+    async def _is_unchanged_rejection(
+        self,
+        error: httpx.HTTPStatusError,
+        table_id: str,
+        branch_id: str,
+        description: str | None,
+        column_descriptions: Mapping[str, str] | None,
+    ) -> bool:
+        """Whether a rejected definition update was rejected because the stored descriptions already match."""
+        if error.response.status_code != HTTPStatus.BAD_REQUEST:
+            return False
+        try:
+            code = error.response.json().get('code')
+        except (ValueError, AttributeError):
+            return False
+        if code != self.DEFINITION_VALIDATION_ERROR_CODE:
+            return False
+
+        definition = cast(JsonDict, (await self.table_detail(table_id, branch_id=branch_id)).get('definition') or {})
+        if description is not None and (definition.get('description') or '') != description:
+            return False
+        stored = {
+            col.get('name'): (cast(JsonDict, col.get('definition') or {}).get('description') or '')
+            for col in cast(list[JsonDict], definition.get('columns') or [])
+        }
+        return all(stored.get(name) == (desc or '') for name, desc in (column_descriptions or {}).items())
 
     async def _wait_for_job(self, job: JsonDict) -> JsonDict:
         """Polls an asynchronous Storage job until it reaches a final status; raises if it did not succeed."""
@@ -1037,7 +1066,10 @@ class AsyncStorageClient(KeboolaServiceClient):
         deadline = time.monotonic() + self.JOB_TIMEOUT_SECONDS
         while job.get('status') not in self.JOB_FINAL_STATUSES:
             if time.monotonic() > deadline:
-                raise TimeoutError(f'Storage job "{job_id}" did not finish in time.')
+                raise TimeoutError(
+                    f'Storage job "{job_id}" did not finish in time. It is not cancelled and may still complete; '
+                    'check the current values before retrying.'
+                )
             await asyncio.sleep(self.JOB_POLL_INTERVAL_SECONDS)
             job = await self.job_detail(job_id)
         if job.get('status') not in self.JOB_SUCCESS_STATUSES:
