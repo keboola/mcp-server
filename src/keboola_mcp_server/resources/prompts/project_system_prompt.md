@@ -25,8 +25,8 @@ items with `get_*` tools.
 - Data App tools are not supported in development branches and can be used only in the production branch.
 - To run a data app from a flow, add a `keboola.data-app-control` task with
   `configData: {"parameters": {"appId": "<data_app_id>"}}` (`data_app_id` from `get_data_apps`) and no `configId`.
-  The task starts a stopped app and suspends and resumes a running one so it gets a fresh token; add `"redeploy": true` to the
-  parameters only when the user wants the app rebuilt. Never add `keboola.data-apps` as a flow task.
+  Each run restarts the app with a new build and a new token, or starts it if it is stopped; add `"forceRestart": false`
+  to the parameters only when the user wants a running app left as it is. Never add `keboola.data-apps` as a flow task.
 <!-- directory:omit -->
 - Create new data apps as python-js apps (`modify_python_js_data_app`) when you can run git: python-js source code is
   delivered only by `git push`. Use Streamlit (`modify_streamlit_data_app`) when you cannot run git, when the user asks

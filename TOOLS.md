@@ -2334,7 +2334,7 @@ Streamlit apps have no managed git repo, so `mode` has no effect on the deployed
   visit) or `disabled` (failed to start; only a deploy brings it back).
 - After deployment, the deployment info includes the app URL and the latest logs to help diagnose in-app
   errors.
-- To start or redeploy an app on a schedule or after other jobs, add it to a flow as a `keboola.data-app-control`
+- To start or restart an app on a schedule or after other jobs, add it to a flow as a `keboola.data-app-control`
   task (see the flow tools) instead of calling this tool.
 
 
@@ -3162,7 +3162,8 @@ RULES:
 - Always share the returned links with the user
 - Run a data app from a flow with a `keboola.data-app-control` task whose `configData` is
 `{"parameters": {"appId": "<data_app_id>"}}` (`data_app_id` from `get_data_apps`), with no `configId`; never use
-`keboola.data-apps` + `configId`. Add `"redeploy": true` to the parameters only if the user wants the app rebuilt
+`keboola.data-apps` + `configId`. Each run restarts the app with a new build and a new token, or starts it if it
+is stopped; add `"forceRestart": false` to the parameters only if the user wants a running app left as it is
 
 WHEN TO USE:
 - Flows needing branching, conditions, retries, or notifications
@@ -3248,7 +3249,8 @@ RULES:
 - Always share the returned links with the user
 - Run a data app from a flow with a `keboola.data-app-control` task whose `configData` is
 `{"parameters": {"appId": "<data_app_id>"}}` (`data_app_id` from `get_data_apps`), with no `configId`; never use
-`keboola.data-apps` + `configId`. Add `"redeploy": true` to the parameters only if the user wants the app rebuilt
+`keboola.data-apps` + `configId`. Each run restarts the app with a new build and a new token, or starts it if it
+is stopped; add `"forceRestart": false` to the parameters only if the user wants a running app left as it is
 
 WHEN TO USE:
 - Simple/linear orchestrations without branching or conditions
@@ -3460,7 +3462,8 @@ RULES (ALL FLOWS):
 dependencies consistent
 - Run a data app from a flow with a `keboola.data-app-control` task whose `configData` is
 `{"parameters": {"appId": "<data_app_id>"}}` (`data_app_id` from `get_data_apps`), with no `configId`; never use
-`keboola.data-apps` + `configId`. Add `"redeploy": true` to the parameters only if the user wants the app rebuilt
+`keboola.data-apps` + `configId`. Each run restarts the app with a new build and a new token, or starts it if it
+is stopped; add `"forceRestart": false` to the parameters only if the user wants a running app left as it is
 - Always provide a clear `change_description` and surface any links returned in the response to the user
 - A flow can have multiple schedules for automation runs. Add/update/remove schedules only if requested.
 - When updating a flow or a schedule, specify only the fields you want to update, others will be kept unchanged.
@@ -3689,7 +3692,8 @@ RULES (ALL FLOWS):
 dependencies consistent
 - Run a data app from a flow with a `keboola.data-app-control` task whose `configData` is
 `{"parameters": {"appId": "<data_app_id>"}}` (`data_app_id` from `get_data_apps`), with no `configId`; never use
-`keboola.data-apps` + `configId`. Add `"redeploy": true` to the parameters only if the user wants the app rebuilt
+`keboola.data-apps` + `configId`. Each run restarts the app with a new build and a new token, or starts it if it
+is stopped; add `"forceRestart": false` to the parameters only if the user wants a running app left as it is
 - Always provide a clear `change_description` and surface any links returned in the response to the user
 
 CONDITIONAL FLOWS (`keboola.flow`):

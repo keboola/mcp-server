@@ -2332,7 +2332,7 @@ async def deploy_data_app(
       visit) or `disabled` (failed to start; only a deploy brings it back).
     - After deployment, the deployment info includes the app URL and the latest logs to help diagnose in-app
       errors.
-    - To start or redeploy an app on a schedule or after other jobs, add it to a flow as a `keboola.data-app-control`
+    - To start or restart an app on a schedule or after other jobs, add it to a flow as a `keboola.data-app-control`
       task (see the flow tools) instead of calling this tool.
     """
     client = KeboolaClient.from_state(ctx.session.state)
