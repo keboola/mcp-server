@@ -284,6 +284,54 @@ class TestCreateFlowTool:
 
         keboola_client.storage_client.configuration_create.assert_called_once()
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ('tool', 'phases', 'task'),
+        [
+            (
+                create_flow,
+                [{'id': 1, 'name': 'Refresh', 'dependsOn': []}],
+                {'id': 20001, 'name': 'Dashboard', 'phase': 1, 'task': {'mode': 'run'}},
+            ),
+            (
+                create_conditional_flow,
+                [{'id': 'phase1', 'name': 'Refresh', 'next': [{'id': 'end', 'goto': None}]}],
+                {'id': 'task1', 'name': 'Dashboard', 'phase': 'phase1', 'task': {'type': 'job', 'mode': 'run'}},
+            ),
+        ],
+        ids=['legacy_flow', 'conditional_flow'],
+    )
+    async def test_create_flow_writes_data_app_control_task(
+        self,
+        tool: Any,
+        phases: list[dict[str, Any]],
+        task: dict[str, Any],
+        mocker: MockerFixture,
+        mcp_context_client: Context,
+        mock_legacy_flow_create_update: dict[str, Any],
+        conditional_flow_schema: dict,
+    ):
+        """A data app task passed in the legacy keboola.data-apps shape is created as keboola.data-app-control."""
+        component = mocker.Mock()
+        component.configuration_schema = conditional_flow_schema
+        mocker.patch('keboola_mcp_server.tools.flow.utils.fetch_component', mocker.AsyncMock(return_value=component))
+        keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+        keboola_client.storage_client.configuration_detail = mocker.AsyncMock(
+            return_value={'id': 'cfg-1', 'configuration': {'parameters': {'id': 'app-1'}}}
+        )
+        keboola_client.storage_client.component_detail = mocker.AsyncMock(return_value={})
+        keboola_client.storage_client.configuration_create = mocker.AsyncMock(
+            return_value=mock_legacy_flow_create_update
+        )
+        task['task'].update({'componentId': 'keboola.data-apps', 'configId': 'cfg-1'})
+
+        await tool(ctx=mcp_context_client, name='Dashboard refresh', description='', phases=phases, tasks=[task])
+
+        saved_task = keboola_client.storage_client.configuration_create.call_args.kwargs['configuration']['tasks'][0]
+        assert saved_task['task']['componentId'] == 'keboola.data-app-control'
+        assert saved_task['task']['configData'] == {'parameters': {'appId': 'app-1'}}
+        assert 'configId' not in saved_task['task']
+
 
 # =============================================================================
 # UPDATE_FLOW TOOL TESTS
@@ -343,6 +391,53 @@ class TestUpdateFlowTool:
         assert result.version == updated_config['version']
 
         keboola_client.storage_client.configuration_update.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_modify_flow_writes_data_app_control_task(
+        self,
+        mocker: MockerFixture,
+        mcp_context_client: Context,
+        mock_legacy_flow_create_update: dict[str, Any],
+    ):
+        """A data app task passed in the legacy keboola.data-apps shape is saved as keboola.data-app-control."""
+        mock_project_info = mocker.Mock()
+        mock_project_info.conditional_flows = True
+        mocker.patch('keboola_mcp_server.tools.flow.tools.get_project_info', return_value=mock_project_info)
+
+        async def configuration_detail(component_id: str, configuration_id: str) -> dict[str, Any]:
+            if component_id == 'keboola.data-apps':
+                return {'id': configuration_id, 'configuration': {'parameters': {'id': 'app-1'}}}
+            return {}
+
+        keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+        keboola_client.storage_client.configuration_detail = mocker.AsyncMock(side_effect=configuration_detail)
+        keboola_client.storage_client.component_detail = mocker.AsyncMock(return_value={})
+        keboola_client.storage_client.configuration_update = mocker.AsyncMock(
+            return_value=mock_legacy_flow_create_update
+        )
+
+        await modify_flow(
+            ctx=mcp_context_client,
+            configuration_id='legacy_flow_123',
+            flow_type=ORCHESTRATOR_COMPONENT_ID,
+            change_description='Refresh the dashboard after the load',
+            phases=[{'id': 1, 'name': 'Refresh', 'dependsOn': []}],
+            tasks=[
+                {
+                    'id': 20001,
+                    'name': 'Dashboard',
+                    'phase': 1,
+                    'task': {'componentId': 'keboola.data-apps', 'configId': 'cfg-1', 'mode': 'run'},
+                }
+            ],
+        )
+
+        saved_task = keboola_client.storage_client.configuration_update.call_args.kwargs['configuration']['tasks'][0]
+        assert saved_task['task'] == {
+            'componentId': 'keboola.data-app-control',
+            'configData': {'parameters': {'appId': 'app-1'}},
+            'mode': 'run',
+        }
 
     @pytest.mark.asyncio
     async def test_update_conditional_flow(
