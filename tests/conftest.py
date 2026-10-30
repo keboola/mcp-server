@@ -65,8 +65,11 @@ def keboola_client(mocker) -> KeboolaClient:
 
 @pytest.fixture
 def workspace_manager(mocker) -> WorkspaceManager:
-    """Creates mocked `WorkspaceManager` instance."""
-    return mocker.MagicMock(WorkspaceManager)
+    """Creates mocked `WorkspaceManager` instance of a project that does not enforce row-level security."""
+    manager = mocker.MagicMock(WorkspaceManager)
+    manager.is_governed.return_value = False
+    manager.get_rls_scope.return_value = None
+    return manager
 
 
 @pytest.fixture
