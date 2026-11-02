@@ -3,7 +3,7 @@
   "mcpServers": {
     "keboola": {
       "type": "streamable-http",
-      "url": "https://mcp.keboola.com/mcp",
+      "url": "https://mcp-router.keboola.com/mcp",
       "extensions": {
         "com.openai": {
           "auth": {
