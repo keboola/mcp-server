@@ -89,7 +89,7 @@
               },
               "configData": {
                 "type": "object",
-                "description": "Configuration data can replace configuration and component ids, but is used seldomly"
+                "description": "Inline configuration used instead of configId. A data app task uses componentId keboola.data-app-control and configData {\"parameters\": {\"appId\": \"<data_app_id>\"}} with no configId"
               },
               "mode": {
                 "type": "string",

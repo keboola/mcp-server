@@ -12,6 +12,8 @@ import httpx
 
 from keboola_mcp_server.clients.client import (
     CONDITIONAL_FLOW_COMPONENT_ID,
+    DATA_APP_COMPONENT_ID,
+    DATA_APP_CONTROL_COMPONENT_ID,
     FLOW_TYPES,
     ORCHESTRATOR_COMPONENT_ID,
     FlowType,
@@ -139,6 +141,93 @@ def validate_flow_structure(
             phases=[ConditionalFlowPhase.model_validate(phase) for phase in flow_configuration.get('phases', [])],
             tasks=[ConditionalFlowTask.model_validate(task) for task in flow_configuration.get('tasks', [])],
         )
+
+
+async def normalize_data_app_tasks(client: KeboolaClient, flow_configuration: JsonDict) -> None:
+    """
+    Rewrites data app tasks in place from the legacy ``keboola.data-apps`` + ``configId`` shape to
+    ``keboola.data-app-control`` + ``configData.parameters.appId``, the shape the UI writes. The legacy shape
+    is kept on stacks without ``keboola.data-app-control``.
+
+    :param client: Authenticated Keboola client instance.
+    :param flow_configuration: The flow configuration with ``tasks`` to normalize.
+    :raises ValueError: If a data app task cannot be resolved to a data app, or uses ``keboola.data-app-control``
+        on a stack without it.
+    """
+    tasks = flow_configuration.get('tasks') or []
+    control_tasks = [
+        task for task in tasks if (task.get('task') or {}).get('componentId') == DATA_APP_CONTROL_COMPONENT_ID
+    ]
+    legacy_tasks = [task for task in tasks if (task.get('task') or {}).get('componentId') == DATA_APP_COMPONENT_ID]
+
+    for task in control_tasks:
+        task_config = task['task']
+        parameters = (task_config.get('configData') or {}).get('parameters') or {}
+        app_id = parameters.get('appId')
+        if app_id:
+            # The component reads `appId` as a string.
+            parameters['appId'] = str(app_id)
+        elif not task_config.get('configId'):
+            raise ValueError(
+                f'Task "{task.get("id")}" uses "{DATA_APP_CONTROL_COMPONENT_ID}" without '
+                '"configData.parameters.appId". Set it to the `data_app_id` returned by `get_data_apps`.'
+            )
+
+    if not control_tasks and not legacy_tasks:
+        return
+    if not await _is_data_app_control_available(client):
+        if control_tasks:
+            raise ValueError(
+                f'Component "{DATA_APP_CONTROL_COMPONENT_ID}" is not available on this stack. Reference data apps '
+                f'as "{DATA_APP_COMPONENT_ID}" tasks with "configId" set to the data app\'s `configuration_id`.'
+            )
+        return
+
+    for task in legacy_tasks:
+        task_config = task['task']
+        app_id = await _resolve_data_app_id(client, task.get('id'), task_config.get('configId'))
+        task_config.pop('configId', None)
+        task_config['componentId'] = DATA_APP_CONTROL_COMPONENT_ID
+        task_config['configData'] = {'parameters': {'appId': app_id}}
+
+
+async def _is_data_app_control_available(client: KeboolaClient) -> bool:
+    try:
+        await client.storage_client.component_detail(component_id=DATA_APP_CONTROL_COMPONENT_ID)
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == HTTPStatus.NOT_FOUND:
+            LOG.info(f'Component "{DATA_APP_CONTROL_COMPONENT_ID}" is not available, keeping legacy data app tasks.')
+            return False
+        raise
+    return True
+
+
+async def _resolve_data_app_id(client: KeboolaClient, task_id: Any, config_id: str | int | None) -> str:
+    if not config_id:
+        raise ValueError(
+            f'Data app task "{task_id}" has no "configId". Reference the data app as '
+            f'"{DATA_APP_CONTROL_COMPONENT_ID}" with "configData.parameters.appId" set to the `data_app_id` '
+            'returned by `get_data_apps`.'
+        )
+    try:
+        config = await client.storage_client.configuration_detail(
+            component_id=DATA_APP_COMPONENT_ID, configuration_id=str(config_id)
+        )
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == HTTPStatus.NOT_FOUND:
+            raise ValueError(
+                f'Data app task "{task_id}" references data app configuration "{config_id}", which does not exist. '
+                'Find the app with `get_data_apps`.'
+            )
+        raise
+
+    app_id = ((config.get('configuration') or {}).get('parameters') or {}).get('id')
+    if not app_id:
+        raise ValueError(
+            f'Data app configuration "{config_id}" (task "{task_id}") has no data app ID (`parameters.id`), so a flow '
+            'cannot start it. Only apps listed with a `data_app_id` by `get_data_apps` can be added to a flow.'
+        )
+    return str(app_id)
 
 
 def ensure_legacy_phase_ids(phases: list[dict[str, Any]]) -> list[FlowPhase]:
