@@ -37,7 +37,7 @@ from keboola_mcp_server.tools.search_models import (
     SearchSpec,
     SearchType,
 )
-from keboola_mcp_server.tools.storage_helpers import merged_bucket_list, merged_bucket_table_list
+from keboola_mcp_server.tools.storage_helpers import merged_bucket_list, merged_bucket_table_list, prod_storage_id
 from keboola_mcp_server.workspace import RlsScope, RlsScopeUnavailableError, WorkspaceManager
 
 LOG = logging.getLogger(__name__)
@@ -171,13 +171,15 @@ async def _fetch_tables(
 
     scope: RlsScope | None = None
     if workspace_manager and raw_tables:
-        scope = await workspace_manager.get_rls_scope([_prod_table_id(client, table['id']) for table in raw_tables])
+        scope = await workspace_manager.get_rls_scope(
+            [prod_storage_id(table['id'], client.branch_id) for table in raw_tables]
+        )
 
     hits = []
     for table in raw_tables:
         table_id = table['id']
         if scope is not None:
-            prod_id = _prod_table_id(client, table_id)
+            prod_id = prod_storage_id(table_id, client.branch_id)
             if not scope.is_readable(prod_id):
                 continue
             table = _limit_raw_columns(table, scope.visible_columns(prod_id))
@@ -200,11 +202,6 @@ async def _fetch_tables(
                 ).set_matches(matches)
             )
     return hits
-
-
-def _prod_table_id(client: KeboolaClient, table_id: str) -> str:
-    """The ID of the table as it appears on the production branch, which is the key of its policies."""
-    return table_id.replace(f'c-{client.branch_id}-', 'c-') if client.branch_id else table_id
 
 
 async def fetch_configurations(client: KeboolaClient, spec: SearchSpec) -> list[SearchHit]:

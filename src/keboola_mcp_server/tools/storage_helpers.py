@@ -13,6 +13,7 @@ the storage client bucket/table methods directly.
 
 import asyncio
 import logging
+import re
 from typing import Any
 
 from keboola_mcp_server.clients.base import JsonDict
@@ -22,6 +23,20 @@ from keboola_mcp_server.config import MetadataField
 LOG = logging.getLogger(__name__)
 
 STORAGE_BRANCHES_FEATURE = 'storage-branches'
+
+
+def prod_storage_id(storage_id: str, branch_id: str | None) -> str:
+    """
+    Maps the Storage ID of a bucket (`in.c-123-crm`) or a table (`in.c-123-crm.orders`) of the development branch
+    `branch_id` to its production ID (`in.c-crm`, `in.c-crm.orders`).
+
+    Only the `c-<branch_id>-` prefix of the bucket segment (right after the `in`/`out` stage) is dropped, which is how
+    Query Service folds it. Any other ID is returned as it is: a production ID, a bucket of another branch, a
+    non-`c-` bucket, or a table whose name merely contains `c-<branch_id>-`.
+    """
+    if not branch_id:
+        return storage_id
+    return re.sub(rf'^((?:in|out)\.c-){re.escape(branch_id)}-', r'\1', storage_id, count=1, flags=re.IGNORECASE)
 
 
 async def has_storage_branches(client: KeboolaClient) -> bool:
