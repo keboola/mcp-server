@@ -35,6 +35,7 @@ from keboola_mcp_server.tools.storage_helpers import (
     merged_bucket_detail,
     merged_bucket_list,
     merged_table_detail,
+    prod_storage_id,
 )
 from keboola_mcp_server.utils import parse_iso_timestamp
 from keboola_mcp_server.workspace import WorkspaceManager
@@ -237,7 +238,7 @@ class BucketDetail(BaseModel):
         branch_id = get_metadata_property(values.get('metadata', []), MetadataField.FAKE_DEVELOPMENT_BRANCH)
         if branch_id:
             values['branch_id'] = branch_id
-            values['prod_id'] = values['id'].replace(f'c-{branch_id}-', 'c-')
+            values['prod_id'] = prod_storage_id(values['id'], branch_id)
         else:
             values['branch_id'] = None
             values['prod_id'] = values['id']
@@ -380,7 +381,7 @@ class TableSummary(BaseModel):
         branch_id = get_metadata_property(values.get('metadata', []), MetadataField.FAKE_DEVELOPMENT_BRANCH)
         if branch_id:
             values['branch_id'] = branch_id
-            values['prod_id'] = values['id'].replace(f'c-{branch_id}-', 'c-')
+            values['prod_id'] = prod_storage_id(values['id'], branch_id)
         else:
             values['branch_id'] = None
             values['prod_id'] = values['id']
@@ -539,7 +540,7 @@ async def _find_buckets(client: KeboolaClient, bucket_id: str) -> tuple[BucketDe
     if not prod_bucket and client.branch_id and f'.c-{client.branch_id}-' in bucket_id:
         from keboola_mcp_server.tools.storage_helpers import _safe_bucket_detail
 
-        prod_id = bucket_id.replace(f'c-{client.branch_id}-', 'c-')
+        prod_id = prod_storage_id(bucket_id, client.branch_id)
         if raw := await _safe_bucket_detail(client, prod_id, branch_id='default'):
             bucket = BucketDetail.model_validate(raw).with_lineage_metadata(raw)
             if not bucket.branch_id:

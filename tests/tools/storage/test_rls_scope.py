@@ -375,26 +375,34 @@ async def test_get_tables_by_id_on_a_development_branch_asks_for_the_production_
     assert result.tables_not_found is None
 
 
+@pytest.mark.parametrize(
+    ('bucket_id', 'table_id', 'prod_id'),
+    [
+        ('in.c-1246948-foo', 'in.c-1246948-foo.users', 'in.c-foo.users'),
+        # the table name only looks like the branch prefix: it is not a different table
+        ('in.c-foo', 'in.c-foo.c-1246948-users', 'in.c-foo.c-1246948-users'),
+    ],
+)
 @pytest.mark.asyncio
 async def test_search_on_a_development_branch_asks_for_the_production_ids(
-    mcp_context_client: Context, searchable_project: KeboolaClient
+    mcp_context_client: Context, searchable_project: KeboolaClient, bucket_id: str, table_id: str, prod_id: str
 ) -> None:
     searchable_project.branch_id = '1246948'
     searchable_project.storage_client.bucket_list.return_value = [
-        {'id': 'in.c-1246948-foo', 'name': 'foo', 'created': '2024-01-01T00:00:00Z'}
+        {'id': bucket_id, 'name': 'foo', 'created': '2024-01-01T00:00:00Z'}
     ]
     searchable_project.storage_client.bucket_table_list.return_value = [
-        {'id': 'in.c-1246948-foo.users', 'name': 'users', 'created': '2024-01-01T00:00:00Z', 'columns': ['user_id']}
+        {'id': table_id, 'name': 'users', 'created': '2024-01-01T00:00:00Z', 'columns': ['user_id']}
     ]
     manager = _workspace_manager(mcp_context_client)
     manager.is_governed.return_value = True
-    manager.get_rls_scope.return_value = RlsScope(readable={'in.c-foo.users': None})
+    manager.get_rls_scope.return_value = RlsScope(readable={prod_id: None})
 
     result = await _search_tables_by(mcp_context_client, 'users')
 
-    manager.get_rls_scope.assert_awaited_once_with(['in.c-foo.users'])
+    manager.get_rls_scope.assert_awaited_once_with([prod_id])
     # the hit keeps the id that the branch reports, the scope is looked up by the production id
-    assert [h.table_id for h in result.hits] == ['in.c-1246948-foo.users']
+    assert [h.table_id for h in result.hits] == [table_id]
 
 
 @pytest.mark.parametrize(
