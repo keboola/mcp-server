@@ -3782,23 +3782,41 @@ async def test_modify_python_js_data_app_create_draft_rejects_when_parent_is_str
 
 
 @pytest.mark.asyncio
-async def test_modify_python_js_data_app_create_draft_rejects_when_parent_is_draft(
+@pytest.mark.parametrize(
+    ('parent_kind', 'error_match'),
+    [
+        pytest.param('draft', r'is itself a python-js \*\*draft\*\*', id='draft_parent'),
+        pytest.param(
+            'organization',
+            r'clones a customer GitHub repository.*drafts of such an app are not supported',
+            id='organization_auth_parent',
+        ),
+    ],
+)
+async def test_modify_python_js_data_app_create_draft_rejects_unsupported_parent(
     mocker,
     mcp_context_client: Context,
     workspace_manager,
+    parent_kind: str,
+    error_match: str,
 ) -> None:
-    """A python-js *draft* parent is rejected with a clear message (not the misleading 'no repo URL'
-    error): drafts can't parent another draft, so no credential is minted."""
+    """A parent with no managed repo of its own is rejected with a clear message before any credential is minted:
+    - a python-js *draft* (not the misleading 'no repo URL' error) — drafts can't parent another draft;
+    - an app on a customer GitHub repo — its repo_url is set, so only this guard stops the mint."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
     keboola_client.has_feature = mocker.AsyncMock(return_value=True)
     workspace_manager.get_data_app_branch_id = mocker.AsyncMock(return_value='branch-1')
 
     # A draft has no repo_url of its own; the guard must fire before the repo_url check below.
-    draft_parent = _make_python_js_parent_data_app(is_draft=True, repo_url=None)
-    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=draft_parent))
+    parent = (
+        _make_python_js_parent_data_app(is_draft=True, repo_url=None)
+        if parent_kind == 'draft'
+        else _make_organization_git_data_app()
+    )
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=parent))
 
-    with pytest.raises(ValueError, match=r'is itself a python-js \*\*draft\*\*'):
+    with pytest.raises(ValueError, match=error_match):
         await modify_python_js_data_app(
             ctx=mcp_context_client,
             name='Draft',
@@ -5274,39 +5292,63 @@ async def test_deploy_data_app_switches_organization_git_app_to_production(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ('api_error', 'error_match'),
+    ('organization_auth', 'status', 'api_error', 'error_match'),
     [
         pytest.param(
+            True,
+            400,
             'No GitHub App is registered for "github.com" on this stack.',
-            'no GitHub App registered for the repository\'s host.*contact Keboola support',
+            "no GitHub App registered for the repository's host.*contact Keboola support",
             id='no_github_app',
         ),
         pytest.param(
+            True,
+            400,
             'No GitHub connection for "acme" in organization "42".',
             'Control UI → Organization → GitHub',
             id='not_connected',
         ),
+        # The hint is only for organization-auth apps, and only for errors about the GitHub connection;
+        # anything else passes through as the original HTTP error.
+        pytest.param(
+            False,
+            400,
+            'No GitHub connection for "acme" in organization "42".',
+            None,
+            id='credential_app_passes_through',
+        ),
+        pytest.param(True, 500, 'Internal Server Error occurred.', None, id='unrelated_error_passes_through'),
     ],
 )
 async def test_deploy_data_app_maps_organization_git_errors(
-    mocker, mcp_context_client: Context, api_error: str, error_match: str
+    mocker,
+    mcp_context_client: Context,
+    organization_auth: bool,
+    status: int,
+    api_error: str,
+    error_match: str | None,
 ) -> None:
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
-    keboola_client.data_science_client.deploy_data_app_in_mode.side_effect = _http_error(
-        400, _sandboxes_error(400, api_error)
-    )
+    error = _http_error(status, _sandboxes_error(status, api_error))
+    # An organization-auth app deploys through the mode endpoint, any other app through /v2 deployments.
+    keboola_client.data_science_client.deploy_data_app_in_mode.side_effect = error
+    keboola_client.data_science_client.deploy_data_app.side_effect = error
     keboola_client.storage_client.configuration_version_latest = mocker.AsyncMock(return_value=5)
-    mocker.patch(
-        'keboola_mcp_server.tools.data_apps._fetch_data_app',
-        mocker.AsyncMock(return_value=_make_organization_git_data_app()),
-    )
+    data_app = _make_organization_git_data_app() if organization_auth else _make_external_git_data_app()
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=data_app))
+
+    if error_match is None:
+        with pytest.raises(httpx.HTTPStatusError) as passthrough:
+            await deploy_data_app(ctx=mcp_context_client, action='deploy', configuration_id=data_app.configuration_id)
+        assert passthrough.value is error
+        return
 
     with pytest.raises(ValueError, match=error_match) as exc_info:
-        await deploy_data_app(ctx=mcp_context_client, action='deploy', configuration_id='cfg-org-1')
+        await deploy_data_app(ctx=mcp_context_client, action='deploy', configuration_id=data_app.configuration_id)
 
     assert api_error in str(exc_info.value)
-    assert isinstance(exc_info.value.__cause__, httpx.HTTPStatusError)
+    assert exc_info.value.__cause__ is error
 
 
 @pytest.mark.parametrize(

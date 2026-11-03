@@ -373,6 +373,8 @@ def test_organization_git_block_accepts_github_repository(repository: str) -> No
         ),
         pytest.param({'repository': 'https://github.com/acme/%2e%2e'}, 'not a GitHub repository URL', id='percent'),
         pytest.param({'repository': 'https://github.com/acme/.git'}, 'not a GitHub repository URL', id='bare_suffix'),
+        pytest.param({'repository': 'https://github.com/acme/..'}, 'not a GitHub repository URL', id='dot_dot_segment'),
+        pytest.param({'repository': 'https://github.com/acme/.'}, 'not a GitHub repository URL', id='dot_segment'),
     ],
 )
 def test_organization_git_block_rejects_invalid_block(git_block: dict, error_match: str) -> None:

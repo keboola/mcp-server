@@ -1812,6 +1812,14 @@ async def modify_python_js_data_app(
                     "not a prod app. Drafts iterate against the prod app's repo and cannot parent another "
                     "draft — pass the prod app's configuration_id (a draft's parentConfigurationId points to it)."
                 )
+            if _uses_organization_git_auth(parent.configuration):
+                # Its repo_url is the customer's GitHub URL, so the check below would pass and a credential
+                # would be minted on an app that has no managed repo.
+                raise ValueError(
+                    f'parent_configuration_id "{parent_configuration_id}" clones a customer GitHub repository '
+                    "through the Keboola organization's GitHub connection, and drafts of such an app are not "
+                    'supported yet. Change the prod app itself and deploy it in production mode.'
+                )
             if not parent.repo_url:
                 raise ValueError(
                     f'Parent python-js data app "{parent_configuration_id}" has no managed git repo URL. '
