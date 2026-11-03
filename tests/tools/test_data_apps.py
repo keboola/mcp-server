@@ -5254,7 +5254,7 @@ async def test_deploy_data_app_rejects_dev_mode_on_organization_git_app(mocker, 
     [
         pytest.param(
             'No GitHub App is registered for "github.com" on this stack.',
-            'No GitHub App is registered for this repository\'s host',
+            'no GitHub App registered for the repository\'s host.*contact Keboola support',
             id='no_github_app',
         ),
         pytest.param(
@@ -5286,8 +5286,8 @@ async def test_deploy_data_app_maps_organization_git_errors(
 @pytest.mark.parametrize(
     ('message', 'expected_fragment'),
     [
-        ('No GitHub App is registered for "slsp.ghe.com" on this stack.', 'No GitHub App is registered'),
-        ('The OAuth service cannot issue Git tokens for "x" on this stack yet.', 'No GitHub App is registered'),
+        ('No GitHub App is registered for "slsp.ghe.com" on this stack.', 'no GitHub App registered'),
+        ('The OAuth service cannot issue Git tokens for "x" on this stack yet.', 'no GitHub App registered'),
         ('No GitHub connection for "acme" in organization "42".', 'Control UI'),
         ('The requested repository is not covered by this GitHub installation.', 'Control UI'),
         ('The GitHub App is not installed on "acme".', 'Control UI'),

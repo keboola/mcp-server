@@ -3165,8 +3165,9 @@ _ORGANIZATION_CONNECTION_HINT = (
     'Organization → GitHub and installs the App.'
 )
 _NO_GITHUB_APP_HINT = (
-    "No GitHub App is registered for this repository's host on this stack, so organization git auth cannot "
-    'reach it here. Use a repository on a host the stack supports (github.com), or contact Keboola support.'
+    "This Keboola stack has no GitHub App registered for the repository's host, so organization git auth is "
+    'not available for it on this stack yet. Neither the user nor an organization admin can fix that: tell the '
+    'user to contact Keboola support. Until then the app can only run from a Keboola-managed repository.'
 )
 # Fragments of the platform's refusals to mint an organization git token (see `_organization_git_error_hint`).
 _NO_GITHUB_APP_ERRORS = ('no github app is registered', 'cannot issue git tokens')
