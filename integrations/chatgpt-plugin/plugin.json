@@ -32,6 +32,61 @@
         "brandColor": "#0072EF",
         "composerIcon": "./assets/icon.png",
         "logo": "./assets/icon.png"
+      },
+      "review": {
+        "test_cases": {
+          "positive": [
+            {
+              "description": "Explore tables in the demo project",
+              "prompt": "Which tables do I have in my Keboola project, and what is in the orders table?",
+              "tools_triggered": "get_accessible_projects, set_project_scope, get_project_info, search, get_tables",
+              "expected_behavior": "Names the demo project OpenAI DEMO, lists its tables with row counts, and describes in.c-sales.orders (600 rows) with its columns, description and sample rows. Changes nothing."
+            },
+            {
+              "description": "Answer a question with a read-only SQL query",
+              "prompt": "In Keboola, what are the top 5 category values by total amount in orders?",
+              "tools_triggered": "get_accessible_projects, set_project_scope, get_project_info, get_tables, query_data",
+              "expected_behavior": "Runs one SELECT with GROUP BY, ORDER BY and LIMIT 5 and returns the categories ranked by total amount. The demo data has 4 categories, so the answer has 4 rows, led by Bikes. Changes nothing."
+            },
+            {
+              "description": "Create and run a SQL transformation",
+              "prompt": "Create a Keboola SQL transformation that builds a table review_daily_summary with total amount per day from orders, then run it.",
+              "tools_triggered": "get_accessible_projects, set_project_scope, get_project_info, get_tables, query_data, create_sql_transformation, run_job, get_jobs",
+              "expected_behavior": "Uses the demo project, saves a transformation with a name and description, runs it as asked, and reports a successful job and the output table review_daily_summary with one row per day."
+            },
+            {
+              "description": "Explain a failed job",
+              "prompt": "Why did the last failed job in my Keboola project fail?",
+              "tools_triggered": "get_accessible_projects, set_project_scope, get_jobs, get_configs",
+              "expected_behavior": "Finds the failed job of the transformation Customer lifetime value, quotes the error \"Unrecognized name: total_price\", explains that the column is called amount, and proposes a fix. Does not change or rerun anything."
+            },
+            {
+              "description": "Create a flow from existing configurations",
+              "prompt": "Create a Keboola flow that first runs Prepare orders and then Revenue by category.",
+              "tools_triggered": "get_accessible_projects, set_project_scope, get_project_info, search, get_flow_schema, get_flow_examples, create_conditional_flow",
+              "expected_behavior": "Finds both transformations and creates a flow with two phases in this order: Prepare orders, then Revenue by category. Returns the flow name. Does not run the flow."
+            }
+          ],
+          "negative": [
+          {
+            "description": "General data engineering question that needs no project data",
+            "prompt": "Explain the difference between ETL and ELT pipelines and when to use each."
+          },
+          {
+            "description": "Generic SQL writing for a schema the user describes",
+            "prompt": "Write a SQL query that returns the top 5 customers by revenue from a table orders(customer_id, amount)."
+          },
+          {
+            "description": "Data warehouse outside Keboola",
+            "prompt": "List the tables in my own Snowflake account and show the row counts."
+          }
+        ]
+        },
+        "commerce": false,
+        "commerce_description": "This plugin does not sell products, credits or subscriptions and does not process payments."
+      },
+      "publication": {
+        "release_notes": "Keboola 1.0.0 — first public release. Connect ChatGPT to your Keboola projects on any Keboola multi-tenant region: choose your region, log in to Keboola and approve access. Four workflows: explore project data with read-only SQL, build Snowflake or BigQuery SQL transformations, debug failed jobs, and build flows from existing configurations. The plugin confirms the project before every change and asks before running a job. Not included in this version: Python and JavaScript data apps, creating new projects, and running arbitrary component actions."
       }
     }
   }
