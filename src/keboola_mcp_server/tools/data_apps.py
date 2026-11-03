@@ -2416,7 +2416,8 @@ async def deploy_data_app(
     - The branch a draft deploys from is pinned in `parameters.dataApp.git.branch` at create time;
       there is no deploy-time override.
     - An app on a customer GitHub repository (`git_auth_type='organization'`) deploys in production
-      mode only: `mode='dev'` is rejected before anything is deployed.
+      mode only: `mode='dev'` is rejected before anything is deployed, and a deploy without `mode`
+      switches an app left in dev mode back to production.
 
     ## Configuration publishing
     - Every deploy **publishes the latest saved configuration version** (for both python-js and
@@ -2445,8 +2446,13 @@ async def deploy_data_app(
     links_manager = await ProjectLinksManager.from_client(client)
     if action == 'deploy':
         data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
-        if mode == 'dev' and _uses_organization_git_auth(data_app.configuration):
-            raise ValueError(_organization_git_dev_mode_message(data_app.configuration_id))
+        if _uses_organization_git_auth(data_app.configuration):
+            if mode == 'dev':
+                raise ValueError(_organization_git_dev_mode_message(data_app.configuration_id))
+            # An app keeps the mode of its last deploy, and the platform refuses organization auth in dev
+            # mode: an external-repo app once deployed in dev mode would stay there on a deploy without
+            # `mode`, so switch it to production explicitly.
+            mode = 'production'
         # Always pin the latest config version (python-js included): without `configVersion` the data-app
         # service keeps the previously published version, so config-only changes (secrets, Storage access,
         # git branch, ...) would never go live.

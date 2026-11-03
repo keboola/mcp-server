@@ -5249,6 +5249,30 @@ async def test_deploy_data_app_rejects_dev_mode_on_organization_git_app(mocker, 
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('mode', [None, 'production'])
+async def test_deploy_data_app_switches_organization_git_app_to_production(
+    mocker, mcp_context_client: Context, mode: Literal['production'] | None
+) -> None:
+    """A deploy without `mode` still sets production mode explicitly: an app keeps the mode of its last deploy,
+    so an external-repo app once deployed in dev mode would otherwise be refused for organization auth."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.data_science_client = mocker.AsyncMock()
+    keboola_client.data_science_client.list_runtimes = mocker.AsyncMock(return_value=_RUNTIMES)
+    keboola_client.storage_client.configuration_version_latest = mocker.AsyncMock(return_value=5)
+    mocker.patch(
+        'keboola_mcp_server.tools.data_apps._fetch_data_app',
+        mocker.AsyncMock(return_value=_make_organization_git_data_app()),
+    )
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_logs', mocker.AsyncMock(return_value=[]))
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_latest_run', mocker.AsyncMock(return_value=None))
+
+    await deploy_data_app(ctx=mcp_context_client, action='deploy', configuration_id='cfg-org-1', mode=mode)
+
+    keboola_client.data_science_client.deploy_data_app_in_mode.assert_awaited_once_with('app-org-1', '5', 'prod')
+    keboola_client.data_science_client.deploy_data_app.assert_not_called()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ('api_error', 'error_match'),
     [
@@ -5269,7 +5293,9 @@ async def test_deploy_data_app_maps_organization_git_errors(
 ) -> None:
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
-    keboola_client.data_science_client.deploy_data_app.side_effect = _http_error(400, _sandboxes_error(400, api_error))
+    keboola_client.data_science_client.deploy_data_app_in_mode.side_effect = _http_error(
+        400, _sandboxes_error(400, api_error)
+    )
     keboola_client.storage_client.configuration_version_latest = mocker.AsyncMock(return_value=5)
     mocker.patch(
         'keboola_mcp_server.tools.data_apps._fetch_data_app',

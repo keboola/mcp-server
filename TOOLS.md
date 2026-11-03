@@ -2327,7 +2327,8 @@ branch-delete — is yours. This tool only triggers deploys against existing git
 - The branch a draft deploys from is pinned in `parameters.dataApp.git.branch` at create time;
   there is no deploy-time override.
 - An app on a customer GitHub repository (`git_auth_type='organization'`) deploys in production
-  mode only: `mode='dev'` is rejected before anything is deployed.
+  mode only: `mode='dev'` is rejected before anything is deployed, and a deploy without `mode`
+  switches an app left in dev mode back to production.
 
 ## Configuration publishing
 - Every deploy **publishes the latest saved configuration version** (for both python-js and
