@@ -362,6 +362,16 @@ def test_organization_git_block_accepts_github_repository(repository: str) -> No
             'only available for GitHub repositories',
             id='lookalike_host',
         ),
+        pytest.param(
+            {'repository': 'https://evilgithub.com/acme/app'},
+            'only available for GitHub repositories',
+            id='github_suffix_host',
+        ),
+        pytest.param(
+            {'repository': 'https://evilghe.com/acme/app'},
+            'only available for GitHub repositories',
+            id='ghe_suffix_without_dot',
+        ),
         pytest.param({'repository': 'https://user:pat@github.com/acme/app'}, 'must not embed credentials', id='creds'),
         pytest.param({'repository': 'https://github.com:8443/acme/app'}, 'port, query or fragment', id='port'),
         pytest.param({'repository': 'https://github.com/acme/app?ref=x'}, 'port, query or fragment', id='query'),

@@ -18,6 +18,7 @@ from keboola_mcp_server.clients.data_science import (
     RuntimeResponse,
 )
 from keboola_mcp_server.clients.storage import ConfigurationAPIResponse
+from keboola_mcp_server.errors import is_caller_error
 from keboola_mcp_server.links import Link
 from keboola_mcp_server.tools.data_apps import (
     _APP_RUN_LOG_LINES,
@@ -3490,6 +3491,8 @@ async def test_modify_python_js_data_app_create_draft_uses_external_git(
     # `origin/iter-feat` and serve its stale tip.
     assert result.change_summary is not None
     assert 'git checkout -B iter-feat --no-track origin/main' in result.change_summary
+    # A draft clones the parent's managed repo with a credential, never through the organization connection.
+    assert 'GitHub connection' not in result.change_summary
     assert 'git rev-list --count iter-feat..origin/main' in result.change_summary
     # On an empty repo `main` goes first, so the draft branch never becomes the repo's undeletable default.
     assert (
@@ -5308,6 +5311,13 @@ async def test_deploy_data_app_switches_organization_git_app_to_production(
             'Control UI → Organization → GitHub',
             id='not_connected',
         ),
+        pytest.param(
+            True,
+            502,
+            'The OAuth service cannot issue Git tokens for "acme" on this stack yet.',
+            "no GitHub App registered for the repository's host",
+            id='hinted_server_error',
+        ),
         # The hint is only for organization-auth apps, and only for errors about the GitHub connection;
         # anything else passes through as the original HTTP error.
         pytest.param(
@@ -5348,7 +5358,10 @@ async def test_deploy_data_app_maps_organization_git_errors(
         await deploy_data_app(ctx=mcp_context_client, action='deploy', configuration_id=data_app.configuration_id)
 
     assert api_error in str(exc_info.value)
+    assert f'HTTP {status}' in str(exc_info.value)
     assert exc_info.value.__cause__ is error
+    # A 4xx refusal stays a caller error after the hint is added, a 5xx stays an internal one.
+    assert is_caller_error(exc_info.value) is (status < 500)
 
 
 @pytest.mark.parametrize(
@@ -5371,11 +5384,19 @@ def test_organization_git_error_hint(message: str | None, expected_fragment: str
         assert hint is not None and expected_fragment in hint
 
 
-@pytest.mark.parametrize(('organization_auth', 'hinted'), [(True, True), (False, False)])
-def test_with_deployment_info_hints_at_organization_connection(organization_auth: bool, hinted: bool) -> None:
-    """A failed run of an organization-auth app gets the connection hint appended; other apps are untouched."""
+@pytest.mark.parametrize(
+    ('organization_auth', 'message', 'hinted'),
+    [
+        (True, 'No GitHub connection for "acme" in organization "42".', True),
+        (False, 'No GitHub connection for "acme" in organization "42".', False),
+        (True, 'Startup probe failed.', False),
+    ],
+)
+def test_with_deployment_info_hints_at_organization_connection(
+    organization_auth: bool, message: str, hinted: bool
+) -> None:
+    """A GitHub-connection failure of an organization-auth app gets the hint appended; anything else is untouched."""
     data_app = _make_organization_git_data_app() if organization_auth else _make_python_js_prod_data_app()
-    message = 'No GitHub connection for "acme" in organization "42".'
     last_run = AppRunInfo(state='failed', failure_reason='GitCredentialFailed', failure_message=message)
 
     data_app.with_deployment_info([], last_run=last_run)
@@ -5384,6 +5405,8 @@ def test_with_deployment_info_hints_at_organization_connection(organization_auth
     failure_message = data_app.deployment_info.last_run.failure_message
     assert failure_message is not None and failure_message.startswith(message)
     assert ('Control UI' in failure_message) is hinted
+    if not hinted:
+        assert failure_message == message
 
 
 @pytest.mark.asyncio

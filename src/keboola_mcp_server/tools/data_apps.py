@@ -14,7 +14,7 @@ from fastmcp import Context, FastMCP
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, Field, PrivateAttr
 
-from keboola_mcp_server.clients.base import JsonDict
+from keboola_mcp_server.clients.base import InvalidArgumentError, JsonDict
 from keboola_mcp_server.clients.client import DATA_APP_COMPONENT_ID, KeboolaClient
 from keboola_mcp_server.clients.data_science import (
     ORGANIZATION_GIT_AUTH,
@@ -28,7 +28,7 @@ from keboola_mcp_server.clients.data_science import (
 )
 from keboola_mcp_server.clients.storage import ConfigurationAPIResponse
 from keboola_mcp_server.elicitation import offer_url
-from keboola_mcp_server.errors import tool_errors
+from keboola_mcp_server.errors import is_caller_error, tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
 from keboola_mcp_server.mcp import PlainFunctionTool as FunctionTool
 from keboola_mcp_server.mcp import ToonCompactFunctionTool, process_concurrently
@@ -2530,7 +2530,12 @@ async def _trigger_deploy(
             raise ValueError(_legacy_workload_message(data_app)) from e
         hint = _organization_git_error_hint(api_error) if _uses_organization_git_auth(data_app.configuration) else None
         if hint:
-            raise ValueError(f'Deploying data app "{data_app.configuration_id}" failed: {api_error} {hint}') from e
+            # Keep the original classification: a 4xx stays a caller error, a 5xx an internal one.
+            error_class = InvalidArgumentError if is_caller_error(e) else ValueError
+            raise error_class(
+                f'Deploying data app "{data_app.configuration_id}" failed with HTTP {e.response.status_code}: '
+                f'{api_error} {hint}'
+            ) from e
         raise
 
 
