@@ -145,15 +145,15 @@ policies of the project. There is no rewriting in this server and no fallback: w
   or `X-Workspace-Id` pin is accepted only for a governed workspace (an ordinary one would read around the
   policies), so a pin to the old workspace, or to a data app's own ordinary workspace, is refused; delete the old one.
 - **Deny by default.** A table that neither an `rls-policy` nor a `cls-policy` covers is refused for an administrator
-  (the agent sees `Row-level security does not allow this query`) and reads as no rows for a data app user (a `"*"` rule
-  opens a table to every identified reader). A `cls-policy` alone opens its table: all rows, only its columns, for the
+  (the agent sees `Row-level security does not allow this query`) and reads as no rows for an ordinary reader such as a data app end user (a
+  `"*"` rule opens a table to every identified reader). A `cls-policy` alone opens its table: all rows, only its columns, for the
   readers it names; any other reader is refused. A statement that reads no table (`SELECT 1`) runs.
 - **Refused statements.** A governed statement is refused (403, the same generic text for every reason) when it uses
   `IDENTIFIER()`, `TABLE()` outside `FROM`, an AI function (`AI_*`, BigQuery `AI.*`), `TO_FILE`, `READ_CSV` / `READ_PARQUET`, `SECRET`, a
   session-context function (`CURRENT_USER`, `CURRENT_ROLE`, `CURRENT_STATEMENT`, ...), `NEXTVAL`, `$x` or `@@x`, a control
   character, or an unquoted name with a non-ASCII character or `$$`, or when it is over 32 KiB, 200 CTEs or 300 table
-  references. `CURRENT_DATE`, `CURRENT_TIME` and `CURRENT_TIMESTAMP` stay allowed (Query Service 1.25, policy engine
-  0.1.8). A 503 `Row-level security could not be applied to this workspace` means nothing ran because the policies could
+  references. `CURRENT_DATE`, `CURRENT_TIME` and `CURRENT_TIMESTAMP` stay allowed (as of Query Service 1.25 and policy
+  engine 0.1.8). A 503 `Row-level security could not be applied to this workspace` means nothing ran because the policies could
   not be applied; it can be transient. A failed governed statement returns `The statement failed. Its error text is not
   shown for a workspace with row-level security`.
 - **Who is the reader.** The Query Service resolves the reader from the administrator's own token of the project:
@@ -168,7 +168,7 @@ policies of the project. There is no rewriting in this server and no fallback: w
   the workspace id is in the `get_project_info` output, and
   a `policy-binding` Metastore object with that KID writes the binding (no kbagent command for it is released yet). A
   binding is an allowlist: it keeps only the policies it lists, so it can leave out any policy, an organization-scope one
-  included, and loosen access. One that lists no `rls-policy` drops every row policy, so a table a kept `cls-policy` covers
+  included, and loosen access. One that lists no `rls-policy` drops every row policy, so a table covered by a kept `cls-policy`
   opens with all rows. A binding applies to the next query and does not follow the session to another workspace: a branch
   session, or a workspace that is recreated, has a new KID and starts again with every policy.
 - **Limits.** The workspace id of the server's workspace is also what a data app gets as `WORKSPACE_ID` when no
