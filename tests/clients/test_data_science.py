@@ -316,6 +316,84 @@ def test_code_data_app_config_serializes_to_expected_shape() -> None:
     }
 
 
+def test_code_data_app_config_serializes_organization_git_block() -> None:
+    """An organization-auth git block keeps `authType` and `private` and carries no credential keys."""
+    git = CodeDataAppConfig.Parameters.DataApp.Git(
+        repository='https://github.com/acme/app', branch='main', auth_type='organization', private=True
+    )
+    assert git.model_dump(by_alias=True, exclude_none=True) == {
+        'repository': 'https://github.com/acme/app',
+        'authType': 'organization',
+        'private': True,
+        'branch': 'main',
+    }
+    # A stored block read back from Storage keeps the same shape.
+    stored = CodeDataAppConfig.Parameters.DataApp.Git.model_validate(git.model_dump(by_alias=True))
+    assert stored == git
+
+
+@pytest.mark.parametrize(
+    'repository',
+    [
+        'https://github.com/acme/app',
+        'https://github.com/acme/app.git',
+        'https://github.com/acme/app/',
+        'https://GitHub.com/Acme/my_app.v2',
+        'https://slsp.ghe.com/acme/app',
+    ],
+)
+def test_organization_git_block_accepts_github_repository(repository: str) -> None:
+    git = CodeDataAppConfig.Parameters.DataApp.Git(repository=repository, auth_type='organization')
+    assert git.repository == repository
+
+
+@pytest.mark.parametrize(
+    ('git_block', 'error_match'),
+    [
+        pytest.param({'username': 'kai', '#password': 'secret'}, 'not both', id='password_credentials'),
+        pytest.param({'#sshKey': 'key'}, 'not both', id='ssh_key'),
+        pytest.param({'repository': 'http://github.com/acme/app'}, 'https:// URL is required', id='http'),
+        pytest.param({'repository': 'git@github.com:acme/app.git'}, 'https:// URL is required', id='ssh_url'),
+        pytest.param(
+            {'repository': 'https://gitlab.com/acme/app'}, 'only available for GitHub repositories', id='gitlab'
+        ),
+        pytest.param(
+            {'repository': 'https://github.com.evil.io/acme/app'},
+            'only available for GitHub repositories',
+            id='lookalike_host',
+        ),
+        pytest.param({'repository': 'https://user:pat@github.com/acme/app'}, 'must not embed credentials', id='creds'),
+        pytest.param({'repository': 'https://github.com:8443/acme/app'}, 'port, query or fragment', id='port'),
+        pytest.param({'repository': 'https://github.com/acme/app?ref=x'}, 'port, query or fragment', id='query'),
+        pytest.param({'repository': 'https://github.com/acme/app#main'}, 'port, query or fragment', id='fragment'),
+        pytest.param({'repository': 'https://github.com/acme/app\n'}, 'whitespace', id='trailing_newline'),
+        pytest.param({'repository': 'https://github.com/acme'}, 'not a GitHub repository URL', id='owner_only'),
+        pytest.param(
+            {'repository': 'https://github.com/acme/app/tree/main'}, 'not a GitHub repository URL', id='deep_path'
+        ),
+        pytest.param({'repository': 'https://github.com/acme/%2e%2e'}, 'not a GitHub repository URL', id='percent'),
+        pytest.param({'repository': 'https://github.com/acme/.git'}, 'not a GitHub repository URL', id='bare_suffix'),
+    ],
+)
+def test_organization_git_block_rejects_invalid_block(git_block: dict, error_match: str) -> None:
+    payload = {'repository': 'https://github.com/acme/app', 'authType': 'organization'} | git_block
+    with pytest.raises(ValueError, match=error_match):
+        CodeDataAppConfig.Parameters.DataApp.Git.model_validate(payload)
+
+
+def test_credential_git_block_skips_organization_checks() -> None:
+    """A credential-based block (e.g. a draft on a managed repo) is not subject to the GitHub URL rules."""
+    git = CodeDataAppConfig.Parameters.DataApp.Git.model_validate(
+        {'repository': 'https://managed.repo/org/prod.git', 'username': 'kai', '#password': 'secret'}
+    )
+    assert git.auth_type is None
+    assert git.model_dump(by_alias=True, exclude_none=True) == {
+        'repository': 'https://managed.repo/org/prod.git',
+        'username': 'kai',
+        '#password': 'secret',
+    }
+
+
 @pytest.mark.asyncio
 async def test_list_app_runs_gets_expected_endpoint_and_parses_failure_reason() -> None:
     client = DataScienceClient.create('https://api.example.com', token=None)

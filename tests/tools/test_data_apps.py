@@ -1372,6 +1372,7 @@ from keboola_mcp_server.tools.data_apps import (  # noqa: E402
     CreatedGitCredentialOutput,
     ModifiedPythonJsDataAppOutput,
     _is_draft_config,
+    _organization_git_error_hint,
     _update_existing_code_data_app_config,
     _validate_branch_update,
     create_python_js_data_app_git_credential,
@@ -3349,15 +3350,25 @@ def test_data_app_from_api_responses_reports_a_rollout_as_starting(
 
 
 @pytest.mark.parametrize(
-    ('configuration', 'expected'),
+    ('configuration', 'expected_branch', 'expected_auth_type'),
     [
-        pytest.param({'parameters': {'dataApp': {'git': {'branch': 'draft-6cf279'}}}}, 'draft-6cf279', id='branch'),
-        pytest.param({'parameters': {'dataApp': {'slug': 'app'}}}, None, id='no_git_block'),
-        pytest.param({'parameters': {'dataApp': {'git': {'branch': ''}}}}, None, id='empty_branch'),
-        pytest.param({'parameters': {'dataApp': {'git': 'corrupted'}}}, None, id='git_not_mapping'),
+        pytest.param(
+            {'parameters': {'dataApp': {'git': {'branch': 'draft-6cf279'}}}}, 'draft-6cf279', None, id='branch'
+        ),
+        pytest.param({'parameters': {'dataApp': {'slug': 'app'}}}, None, None, id='no_git_block'),
+        pytest.param({'parameters': {'dataApp': {'git': {'branch': ''}}}}, None, None, id='empty_branch'),
+        pytest.param({'parameters': {'dataApp': {'git': 'corrupted'}}}, None, None, id='git_not_mapping'),
+        pytest.param(
+            {'parameters': {'dataApp': {'git': {'branch': 'main', 'authType': 'organization'}}}},
+            'main',
+            'organization',
+            id='organization_auth',
+        ),
     ],
 )
-def test_data_app_from_api_responses_reads_git_branch(configuration: dict, expected: str | None) -> None:
+def test_data_app_from_api_responses_reads_git_branch(
+    configuration: dict, expected_branch: str | None, expected_auth_type: str | None
+) -> None:
     api_configuration = ConfigurationAPIResponse.model_validate(
         {'componentId': DATA_APP_COMPONENT_ID, 'id': 'cfg-123', 'name': 'app', 'version': 5}
         | {'configuration': configuration}
@@ -3365,7 +3376,8 @@ def test_data_app_from_api_responses_reads_git_branch(configuration: dict, expec
 
     data_app = DataApp.from_api_responses(_make_data_app_response(), api_configuration)
 
-    assert data_app.git_branch == expected
+    assert data_app.git_branch == expected_branch
+    assert data_app.git_auth_type == expected_auth_type
 
 
 # ===== Tests for modify_python_js_data_app draft create path =====
@@ -4595,6 +4607,8 @@ def _make_streamlit_data_app() -> DataApp:
 def _preview_app(kind: str) -> DataApp:
     if kind == 'prod':
         return _make_python_js_prod_data_app()
+    if kind == 'organization':
+        return _make_organization_git_data_app()
     if kind == 'streamlit':
         return _make_streamlit_data_app()
     return _make_python_js_draft_data_app(
@@ -4705,6 +4719,13 @@ async def test_get_data_app_preview_link_returns_link_without_leaking_it(
             'Deploy it in dev mode first',
         ),
         (
+            'organization',
+            400,
+            _sandboxes_error(400, 'App "app-org-1" is not in dev mode.'),
+            r'"cfg-org-1" clones a customer GitHub repository.*not supported.*without `mode`',
+            'parent_configuration_id',
+        ),
+        (
             'streamlit',
             400,
             _sandboxes_error(400, 'App "app-sl-1" is not in dev mode.'),
@@ -4757,6 +4778,7 @@ async def test_get_data_app_preview_link_returns_link_without_leaking_it(
     ids=[
         'draft_not_dev',
         'prod_not_dev',
+        'organization_not_dev',
         'streamlit_not_dev',
         'no_url',
         'forbidden',
@@ -4995,3 +5017,320 @@ async def test_deploy_data_app_reports_a_redeployed_failed_app_as_starting(mocke
     assert result.state == 'starting'
     assert result.deployment_info is not None
     assert result.deployment_info.last_run is None
+
+
+# ===== Tests for apps on a customer GitHub repository (organization git auth) =====
+
+_ORG_REPOSITORY = 'https://github.com/acme/sales-app'
+
+
+def _make_organization_git_data_app(*, is_managed_git_repo: bool | None = False) -> DataApp:
+    """A python-js prod app cloned through the organization's GitHub connection."""
+    return DataApp(
+        name='Org App',
+        component_id=DATA_APP_COMPONENT_ID,
+        configuration_id='cfg-org-1',
+        data_app_id='app-org-1',
+        project_id='proj-1',
+        branch_id='branch-1',
+        config_version='1',
+        type='python-js',
+        configuration={
+            'parameters': {
+                'autoSuspendAfterSeconds': 900,
+                'dataApp': {
+                    'slug': 'org-app',
+                    'git': {
+                        'repository': _ORG_REPOSITORY,
+                        'branch': 'main',
+                        'authType': 'organization',
+                        'private': True,
+                    },
+                },
+            }
+        },
+        state='running',
+        repo_url=_ORG_REPOSITORY,
+        is_managed_git_repo=is_managed_git_repo,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(('branch', 'expected_branch'), [(None, 'main'), (' release ', 'release')])
+async def test_modify_python_js_data_app_create_prod_on_organization_repo(
+    mocker,
+    mcp_context_client: Context,
+    workspace_manager,
+    branch: str | None,
+    expected_branch: str,
+) -> None:
+    """A prod app on a customer GitHub repo gets no managed repo and a credential-free git block; nothing is
+    encrypted and no git-repo lookup or credential mint happens."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.data_science_client = mocker.AsyncMock()
+    keboola_client.encryption_client = mocker.AsyncMock()
+    keboola_client.has_feature = mocker.AsyncMock(return_value=True)
+    workspace_manager.get_data_app_branch_id = mocker.AsyncMock(return_value='branch-1')
+    keboola_client.data_science_client.create_data_app = mocker.AsyncMock(
+        return_value=_make_python_js_data_app_response()
+    )
+    mocker.patch('keboola_mcp_server.tools.data_apps.set_cfg_creation_metadata', mocker.AsyncMock())
+    mocker.patch('keboola_mcp_server.tools.data_apps.apply_configuration_folder', mocker.AsyncMock(return_value=None))
+
+    result = await modify_python_js_data_app(
+        ctx=mcp_context_client,
+        name='Sales',
+        description='',
+        git_repository=_ORG_REPOSITORY,
+        git_auth='organization',
+        branch=branch,
+    )
+
+    create_kwargs = keboola_client.data_science_client.create_data_app.await_args.kwargs
+    assert create_kwargs['use_managed_git_repo'] is False
+    serialized = create_kwargs['configuration'].model_dump(by_alias=True, exclude_none=True)
+    assert serialized['parameters']['dataApp']['git'] == {
+        'repository': _ORG_REPOSITORY,
+        'authType': 'organization',
+        'private': True,
+        'branch': expected_branch,
+    }
+    keboola_client.encryption_client.encrypt.assert_not_called()
+    keboola_client.data_science_client.get_app_git_repo.assert_not_called()
+    keboola_client.data_science_client.create_app_git_credential.assert_not_called()
+    assert result.repo_url == _ORG_REPOSITORY
+    assert result.branch == expected_branch
+    assert result.git_clone_url is None
+    assert result.data_app.git_branch == expected_branch
+    assert result.data_app.git_auth_type == 'organization'
+    assert result.change_summary is not None
+    assert 'production mode' in result.change_summary
+    assert 'Control UI' in result.change_summary
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('kwargs', 'error_match'),
+    [
+        pytest.param({'git_repository': _ORG_REPOSITORY}, 'must be passed together', id='repository_only'),
+        pytest.param({'git_auth': 'organization'}, 'must be passed together', id='auth_only'),
+        pytest.param(
+            {'git_repository': _ORG_REPOSITORY, 'git_auth': 'organization', 'parent_configuration_id': 'cfg-prod-1'},
+            'cannot be combined with parent_configuration_id',
+            id='draft',
+        ),
+        pytest.param(
+            {'git_repository': 'http://github.com/acme/app', 'git_auth': 'organization'},
+            'https:// URL is required',
+            id='http',
+        ),
+        pytest.param(
+            {'git_repository': 'https://gitlab.com/acme/app', 'git_auth': 'organization'},
+            'only available for GitHub repositories',
+            id='not_github',
+        ),
+        pytest.param({'branch': 'main'}, 'only valid on the draft create path', id='branch_on_managed_prod'),
+    ],
+)
+async def test_modify_python_js_data_app_create_rejects_invalid_git_repository_args(
+    mocker, mcp_context_client: Context, kwargs: dict, error_match: str
+) -> None:
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.data_science_client = mocker.AsyncMock()
+
+    with pytest.raises(ValueError, match=error_match):
+        await modify_python_js_data_app(ctx=mcp_context_client, name='Sales', description='', **kwargs)
+
+    keboola_client.data_science_client.create_data_app.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(('branch', 'expected_branch'), [(None, 'main'), ('release', 'release')])
+async def test_modify_python_js_data_app_update_rebinds_to_organization_repo(
+    mocker,
+    mcp_context_client: Context,
+    workspace_manager,
+    branch: str | None,
+    expected_branch: str,
+) -> None:
+    """An app on an external repo with a stored PAT is rebound: the stored credentials are dropped, nothing is
+    encrypted, and the change summary points at the repo and the production-only deploy."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.has_feature = mocker.AsyncMock(return_value=True)
+    workspace_manager.get_data_app_branch_id = mocker.AsyncMock(return_value='branch-1')
+    existing = _make_external_git_data_app(is_managed_git_repo=False)
+    mocker.patch(
+        'keboola_mcp_server.tools.data_apps._fetch_data_app',
+        mocker.AsyncMock(side_effect=[existing, existing.model_copy(update={'config_version': '2'})]),
+    )
+    keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value={})
+    keboola_client.encryption_client = mocker.AsyncMock()
+    mocker.patch('keboola_mcp_server.tools.data_apps.set_cfg_update_metadata', mocker.AsyncMock())
+    mocker.patch('keboola_mcp_server.tools.data_apps.apply_configuration_folder', mocker.AsyncMock(return_value=None))
+
+    result = await modify_python_js_data_app(
+        ctx=mcp_context_client,
+        name='',
+        description='',
+        configuration_id='cfg-1',
+        git_repository=_ORG_REPOSITORY,
+        git_auth='organization',
+        branch=branch,
+    )
+
+    new_cfg = keboola_client.storage_client.configuration_update.await_args.kwargs['configuration']
+    assert new_cfg['parameters']['dataApp']['git'] == {
+        'repository': _ORG_REPOSITORY,
+        'authType': 'organization',
+        'private': True,
+        'branch': expected_branch,
+    }
+    keboola_client.encryption_client.encrypt.assert_not_called()
+    assert result.change_summary is not None
+    assert f'Rebound the app to {_ORG_REPOSITORY}' in result.change_summary
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('data_app', 'error_match'),
+    [
+        pytest.param(
+            _make_external_git_data_app(is_managed_git_repo=True), 'Keboola-managed git repo', id='managed_repo'
+        ),
+        pytest.param(_make_external_git_data_app(is_managed_git_repo=None), 'could not determine', id='unknown'),
+        pytest.param(
+            _make_python_js_draft_data_app(
+                configuration_id='cfg-1', data_app_id='app-1', parent_configuration_id='cfg-prod-1'
+            ),
+            'it is a draft',
+            id='draft',
+        ),
+    ],
+)
+async def test_modify_python_js_data_app_update_rebind_rejected(
+    mocker, mcp_context_client: Context, workspace_manager, data_app: DataApp, error_match: str
+) -> None:
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.has_feature = mocker.AsyncMock(return_value=True)
+    workspace_manager.get_data_app_branch_id = mocker.AsyncMock(return_value='branch-1')
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=data_app))
+    keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value={})
+
+    with pytest.raises(ValueError, match=error_match):
+        await modify_python_js_data_app(
+            ctx=mcp_context_client,
+            name='',
+            description='',
+            configuration_id='cfg-1',
+            git_repository=_ORG_REPOSITORY,
+            git_auth='organization',
+        )
+
+    keboola_client.storage_client.configuration_update.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_deploy_data_app_rejects_dev_mode_on_organization_git_app(mocker, mcp_context_client: Context) -> None:
+    """Dev mode is refused up front: no config version lookup and no deploy call."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.data_science_client = mocker.AsyncMock()
+    keboola_client.storage_client.configuration_version_latest = mocker.AsyncMock(return_value=5)
+    mocker.patch(
+        'keboola_mcp_server.tools.data_apps._fetch_data_app',
+        mocker.AsyncMock(return_value=_make_organization_git_data_app()),
+    )
+
+    with pytest.raises(ValueError, match=r'dev mode and the preview link are not supported.*without `mode`'):
+        await deploy_data_app(ctx=mcp_context_client, action='deploy', configuration_id='cfg-org-1', mode='dev')
+
+    keboola_client.storage_client.configuration_version_latest.assert_not_called()
+    keboola_client.data_science_client.deploy_data_app_in_mode.assert_not_called()
+    keboola_client.data_science_client.deploy_data_app.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('api_error', 'error_match'),
+    [
+        pytest.param(
+            'No GitHub App is registered for "github.com" on this stack.',
+            'No GitHub App is registered for this repository\'s host',
+            id='no_github_app',
+        ),
+        pytest.param(
+            'No GitHub connection for "acme" in organization "42".',
+            'Control UI → Organization → GitHub',
+            id='not_connected',
+        ),
+    ],
+)
+async def test_deploy_data_app_maps_organization_git_errors(
+    mocker, mcp_context_client: Context, api_error: str, error_match: str
+) -> None:
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.data_science_client = mocker.AsyncMock()
+    keboola_client.data_science_client.deploy_data_app.side_effect = _http_error(400, _sandboxes_error(400, api_error))
+    keboola_client.storage_client.configuration_version_latest = mocker.AsyncMock(return_value=5)
+    mocker.patch(
+        'keboola_mcp_server.tools.data_apps._fetch_data_app',
+        mocker.AsyncMock(return_value=_make_organization_git_data_app()),
+    )
+
+    with pytest.raises(ValueError, match=error_match) as exc_info:
+        await deploy_data_app(ctx=mcp_context_client, action='deploy', configuration_id='cfg-org-1')
+
+    assert api_error in str(exc_info.value)
+    assert isinstance(exc_info.value.__cause__, httpx.HTTPStatusError)
+
+
+@pytest.mark.parametrize(
+    ('message', 'expected_fragment'),
+    [
+        ('No GitHub App is registered for "slsp.ghe.com" on this stack.', 'No GitHub App is registered'),
+        ('The OAuth service cannot issue Git tokens for "x" on this stack yet.', 'No GitHub App is registered'),
+        ('No GitHub connection for "acme" in organization "42".', 'Control UI'),
+        ('The requested repository is not covered by this GitHub installation.', 'Control UI'),
+        ('The GitHub App is not installed on "acme".', 'Control UI'),
+        ('Startup probe failed.', None),
+        (None, None),
+    ],
+)
+def test_organization_git_error_hint(message: str | None, expected_fragment: str | None) -> None:
+    hint = _organization_git_error_hint(message)
+    if expected_fragment is None:
+        assert hint is None
+    else:
+        assert hint is not None and expected_fragment in hint
+
+
+@pytest.mark.parametrize(('organization_auth', 'hinted'), [(True, True), (False, False)])
+def test_with_deployment_info_hints_at_organization_connection(organization_auth: bool, hinted: bool) -> None:
+    """A failed run of an organization-auth app gets the connection hint appended; other apps are untouched."""
+    data_app = _make_organization_git_data_app() if organization_auth else _make_python_js_prod_data_app()
+    message = 'No GitHub connection for "acme" in organization "42".'
+    last_run = AppRunInfo(state='failed', failure_reason='GitCredentialFailed', failure_message=message)
+
+    data_app.with_deployment_info([], last_run=last_run)
+
+    assert data_app.deployment_info is not None and data_app.deployment_info.last_run is not None
+    failure_message = data_app.deployment_info.last_run.failure_message
+    assert failure_message is not None and failure_message.startswith(message)
+    assert ('Control UI' in failure_message) is hinted
+
+
+@pytest.mark.asyncio
+async def test_create_python_js_data_app_git_credential_rejects_organization_git_app(
+    mocker, mcp_context_client: Context
+) -> None:
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.data_science_client = mocker.AsyncMock()
+    mocker.patch(
+        'keboola_mcp_server.tools.data_apps._fetch_data_app',
+        mocker.AsyncMock(return_value=_make_organization_git_data_app()),
+    )
+
+    with pytest.raises(ValueError, match="push to that repository with the user's own GitHub access"):
+        await create_python_js_data_app_git_credential(ctx=mcp_context_client, configuration_id='cfg-org-1')
+
+    keboola_client.data_science_client.get_app_git_repo.assert_not_called()
+    keboola_client.data_science_client.create_app_git_credential.assert_not_called()

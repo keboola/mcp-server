@@ -299,6 +299,40 @@ Key invariants:
 
 ---
 
+## Customer GitHub repository flow (organization git auth)
+
+A prod app can deploy straight from a customer's GitHub repository instead of a Keboola-managed one. The platform clones it through the Keboola organization's GitHub App connection: a short-lived, read-only token is minted from oauth-service at workload start, so **no credential is passed to the MCP or stored in the configuration**.
+
+```
+1. modify_python_js_data_app(
+       name='Sales app',
+       git_repository='https://github.com/acme/sales-app',
+       git_auth='organization',
+       branch='main',            # optional, defaults to 'main'
+   )                   ──► { configuration_id: PROD, repo_url: 'https://github.com/acme/sales-app', branch: 'main' }
+                            useManagedGitRepo: false, no credential minted
+2. (user) push code to the GitHub repository with their own GitHub access
+3. deploy_data_app(action='deploy', configuration_id=PROD)   # production mode only
+```
+
+The stored `parameters.dataApp.git` block is the same one the Keboola UI writes:
+
+```json
+{"repository": "https://github.com/acme/sales-app", "branch": "main", "authType": "organization", "private": true}
+```
+
+Rules (mirroring sandboxes-service `GitNode` and `OrganizationRepositoryValidator`):
+
+- `git_repository` and `git_auth` go together; only `git_auth='organization'` is supported.
+- The URL must be `https://<host>/<owner>/<repository>[.git]` on `github.com` or a `*.ghe.com` host — no embedded credentials, port, query, fragment or extra path. The stack's own list of GitHub hosts is authoritative; a host the stack has no GitHub App for fails at deploy time with an actionable message.
+- `authType: organization` and explicit credentials (`username`/`#password`/`#sshKey`) are mutually exclusive.
+- **Rebind**: `modify_python_js_data_app(configuration_id=PROD, git_repository=..., git_auth='organization')` rebinds an app that is already on an external repository (e.g. one bound with a personal access token); the stored credentials are dropped. An app on a Keboola-managed repo cannot be rebound (the managed repo is fixed when the app is created and the platform refuses organization auth on it) — create a new app instead. A `branch`-only update repoints the branch as for any external-git app.
+- **Not supported yet**: drafts (`git_repository` with `parent_configuration_id` is rejected), dev mode (`deploy_data_app(mode='dev')` is rejected before any API call), the preview link, and git credentials (`create_python_js_data_app_git_credential` is rejected — there is no managed repo).
+- `get_data_apps` / `modify_python_js_data_app` report such apps with `git_auth_type='organization'`.
+- When the deploy or the app run fails because the organization is not connected, or the GitHub App is not installed on the repository owner, the error carries the hint: an organization admin connects the GitHub organization in Control UI → Organization → GitHub and installs the App. When the stack has no GitHub App for the repository's host, the error says so.
+
+---
+
 ## Update flow (deployment metadata only)
 
 Distinct from create / edit: when only `auto_suspend_after_seconds`, `name`, `description`, `authentication_type`, or `storage` need to change on an existing app, call `modify_python_js_data_app(configuration_id=<id>, ...)`. The update path:
@@ -343,7 +377,7 @@ Always call against the **prod** app's configuration ID — the draft has no man
 ### `modify_python_js_data_app(branch=...)`
 
 - **Type**: `Optional[str]`
-- **When valid**: draft create only (must be paired with `parent_configuration_id`). Rejected on prod create and on update.
+- **When valid**: draft create (paired with `parent_configuration_id`), create or rebind with `git_repository` (defaults to `main` there), and update of an external-git app. Rejected on other prod creates.
 - **Semantics**: pins the draft to this branch (`parameters.dataApp.git.branch`). When unset, defaults to a freshly generated `'draft-<6-hex>'` (`_generate_default_draft_branch`), unique per draft. Must not be `main` (reserved for the prod app); must be non-empty and contain no whitespace.
 - **Uniqueness**: the generated default cannot collide. A branch the **agent supplies** still can — a descriptive name like `'add-revenue-filter'` reused across sessions already exists on the repo. That does not fail loudly: a bare `git checkout add-revenue-filter` in a fresh clone resolves to the stale `origin/add-revenue-filter` tip instead of branching off `main`. The tool's `change_summary` therefore instructs the agent to branch explicitly (`git fetch origin && git checkout -B <branch> --no-track origin/main` — `--no-track` so `origin/main` does not become the draft branch's upstream, which would make a bare `git push` target `main`) and, when deliberately resuming a branch, to verify `git rev-list --count <branch>..origin/main` is 0. If the push is then rejected as non-fast-forward, the branch holds unmerged commits from an abandoned draft — `git push --force-with-lease` or delete the remote branch first, never a bare `git checkout`. See **The stale-branch failure mode** below.
 
@@ -431,6 +465,7 @@ The tool surface maps to the underlying APIs as follows. Confirm field names wit
 |---|---|---|
 | Prod create (default) | `POST /apps` | `useManagedGitRepo: true`. No `parameters.dataApp.git` block. |
 | `parent_configuration_id` (draft) | `POST /apps` | `useManagedGitRepo` omitted/false. `configuration.parameters.dataApp.git = {repository, username, '#password' (encrypted via EncryptionClient), branch}`. Also writes `isDraft: true` and `parentConfigurationId: <prod cfg id>`. |
+| `git_repository` + `git_auth='organization'` (prod create) | `POST /apps` | `useManagedGitRepo` omitted/false. `configuration.parameters.dataApp.git = {repository, branch, authType: 'organization', private: true}` — no credential, nothing encrypted. |
 | `deploy_data_app(mode='dev')` | `PATCH /apps/{id}` | `mode: 'dev'` (alongside `desiredState: 'running'`). The deployed branch is whatever the draft's config pins — there is no deploy-time branch field. |
 | `deploy_data_app(action='deploy')` (any mode) | `PATCH /apps/{id}` | `configVersion: <latest Storage config version>`, `desiredState: 'running'`, `restartIfRunning: true` — publishes the latest config. |
 | `create_python_js_data_app_git_credential` | `POST /apps/{id}/git-repo/credentials` | Request: `{type: 'http_token', permissions: 'readWrite'}`. Response: `{id, type, permissions, secret, ...}`. The one-time `secret` is what we embed (with `kai` as username) into `git_clone_url`. |

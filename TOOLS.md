@@ -2204,7 +2204,7 @@ additional token without invalidating any tokens already held by other clients.
 
 ## Constraints
 - Only python-js prod data apps have a managed git repo. Streamlit apps reject the call with
-  a clear error.
+  a clear error, and so do apps on a customer GitHub repository (`git_auth_type='organization'`).
 - Permissions are always `readWrite` — the LLM virtually always needs push access. The
   data-science API supports read-only credentials, but the tool does not expose that knob;
   revisit once a real use case appears.
@@ -2326,6 +2326,8 @@ branch-delete — is yours. This tool only triggers deploys against existing git
   the prod app picks up the current `main`.
 - The branch a draft deploys from is pinned in `parameters.dataApp.git.branch` at create time;
   there is no deploy-time override.
+- An app on a customer GitHub repository (`git_auth_type='organization'`) deploys in production
+  mode only: `mode='dev'` is rejected before anything is deployed.
 
 ## Configuration publishing
 - Every deploy **publishes the latest saved configuration version** (for both python-js and
@@ -2640,14 +2642,35 @@ draft handle.
    The draft's branch is already pinned in its config.
 5–7. Same promote/cleanup sequence as Scenario A steps 5–7.
 
+## Scenario D — Deploy a prod app from a customer's GitHub repository
+
+The code lives in the customer's own GitHub repository, not in a Keboola-managed one, and the
+platform clones it through the Keboola organization's GitHub App connection — no token is ever
+passed to or stored by the MCP.
+
+1. `modify_python_js_data_app(name=..., git_repository='https://github.com/<owner>/<repo>',
+   git_auth='organization', branch='main')` → prod app with `parameters.dataApp.git`
+   `{repository, branch, authType: 'organization', private: true}` and no managed repo.
+   To move an app that is already bound to an external repository onto another repository,
+   pass the same arguments with its `configuration_id` (rebind). An app on a Keboola-managed repo
+   cannot be rebound — create a new app instead.
+2. Code changes go to that GitHub repository through the user's own GitHub access; the MCP mints
+   no git credential for it (`create_python_js_data_app_git_credential` is rejected).
+3. `deploy_data_app(action='deploy', configuration_id=PROD)` — production mode only. Drafts,
+   dev mode and the preview link are not supported for such apps yet.
+If the deploy fails because the organization's GitHub connection is missing, an organization
+admin connects the GitHub organization in Control UI → Organization → GitHub and installs the App.
+
 ## Argument rules
 
 - `parent_configuration_id` is **create-only**. Rejected on update.
 - `branch` on **create** is only valid when `parent_configuration_id` is set (pins the new
   draft's branch). Defaults to a generated, collision-free `'draft-<hex>'`. Must not be
-  `'main'`. Rejected on prod create. A branch you supply yourself may already exist on the
+  `'main'`. Rejected on prod create unless `git_repository` is set (then it defaults to `'main'`).
+  A branch you supply yourself may already exist on the
   repo — branch it off `origin/main` explicitly (see Scenario B step 3).
   On **update** `branch` repoints an existing **external-git** app's pinned branch (see below).
+- `git_repository` and `git_auth` go together (Scenario D). Rejected with `parent_configuration_id`.
 - `slug` is optional on create (auto-derived from `name` when omitted; drafts get a unique
   suffix). See "Slug on update" below.
 - The **update path** (passing `configuration_id`) is for changing `name`, `description`,
@@ -2808,7 +2831,32 @@ working; tell the user both.
         }
       ],
       "default": null,
-      "description": "Git branch of the data app, written to `parameters.dataApp.git.branch`. Two uses:\n- **On draft create** (with `parent_configuration_id`): the branch to pin the new draft to. Defaults to a generated `draft-<hex>` when unset \u2014 unique per draft, so it can never collide with a branch an earlier draft left behind. Pass a descriptive name like 'add-revenue-filter' when it helps the user; a name you supply may already exist on the repo, so branch it off `origin/main` explicitly (`git checkout -B <branch> --no-track origin/main`; on a brand-new prod app whose repo is still empty, push an empty `main` first \u2014 see Scenario A step 3) rather than with a bare `git checkout`. Must not be `main` (reserved for the prod app) unless `allow_main_branch=True` (platform view-draft only). Rejected on prod create.\n- **On update** (with `configuration_id`): repoints an existing **external-git** app to a different branch (e.g. flip a repo-backed app from `main` to a feature branch for testing, then back). Only valid for external-git apps \u2014 a draft, or an app bound to an external repository. Rejected for apps on a Keboola-managed git repo, whose branch is owned by the platform. On update `main` is allowed. Redeploy the app afterwards to serve the new branch."
+      "description": "Git branch of the data app, written to `parameters.dataApp.git.branch`. Three uses:\n- **On draft create** (with `parent_configuration_id`): the branch to pin the new draft to. Defaults to a generated `draft-<hex>` when unset \u2014 unique per draft, so it can never collide with a branch an earlier draft left behind. Pass a descriptive name like 'add-revenue-filter' when it helps the user; a name you supply may already exist on the repo, so branch it off `origin/main` explicitly (`git checkout -B <branch> --no-track origin/main`; on a brand-new prod app whose repo is still empty, push an empty `main` first \u2014 see Scenario A step 3) rather than with a bare `git checkout`. Must not be `main` (reserved for the prod app) unless `allow_main_branch=True` (platform view-draft only). Rejected on prod create without `git_repository`.\n- **On update** (with `configuration_id`): repoints an existing **external-git** app to a different branch (e.g. flip a repo-backed app from `main` to a feature branch for testing, then back). Only valid for external-git apps \u2014 a draft, or an app bound to an external repository. Rejected for apps on a Keboola-managed git repo, whose branch is owned by the platform. On update `main` is allowed. Redeploy the app afterwards to serve the new branch.\n- **With `git_repository`** (create or update of a prod app): the branch of that repository the app deploys. Defaults to `main`."
+    },
+    "git_repository": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "HTTPS URL of a customer's GitHub repository (`https://github.com/<owner>/<repo>`, or a `*.ghe.com` host) to deploy a **prod** app from instead of a Keboola-managed repo. Requires `git_auth`. On create, the app gets no managed repo; on update, an app already bound to an external repository is rebound to this one. Rejected with `parent_configuration_id` (no drafts on such repos) and for apps on a Keboola-managed repo. No credential is stored."
+    },
+    "git_auth": {
+      "anyOf": [
+        {
+          "const": "organization",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "How the platform authenticates to `git_repository`; required together with it. Only \"organization\" is supported: a short-lived read-only token is minted through the Keboola organization's GitHub App connection, so no credential is stored in the configuration."
     },
     "allow_main_branch": {
       "default": false,

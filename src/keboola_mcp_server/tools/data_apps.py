@@ -17,11 +17,14 @@ from pydantic import BaseModel, Field, PrivateAttr
 from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import DATA_APP_COMPONENT_ID, KeboolaClient
 from keboola_mcp_server.clients.data_science import (
+    ORGANIZATION_GIT_AUTH,
     AppRunResponse,
     CodeDataAppConfig,
     DataAppConfig,
     DataAppResponse,
+    GitAuthType,
     RuntimeResponse,
+    validate_organization_repository_url,
 )
 from keboola_mcp_server.clients.storage import ConfigurationAPIResponse
 from keboola_mcp_server.elicitation import offer_url
@@ -317,6 +320,14 @@ class DataAppSummary(BaseModel):
         default=None,
         description='The git branch the app deploys. Not set by the inventory listing (`get_data_apps` without IDs).',
     )
+    git_auth_type: str | None = Field(
+        default=None,
+        description=(
+            '"organization" when the app clones a customer GitHub repository through the Keboola organization\'s '
+            'GitHub connection: no managed repo, no git credential, production deploys only. None otherwise. '
+            'Not set by the inventory listing (`get_data_apps` without IDs).'
+        ),
+    )
 
     @classmethod
     def from_api_response(cls, api_response: DataAppResponse, config_version: str) -> 'DataAppSummary':
@@ -506,6 +517,13 @@ class DataApp(BaseModel):
         ),
     )
     git_branch: str | None = Field(default=None, description='The git branch the app deploys.')
+    git_auth_type: str | None = Field(
+        default=None,
+        description=(
+            '"organization" when the app clones a customer GitHub repository through the Keboola organization\'s '
+            'GitHub connection: no managed repo, no git credential, production deploys only. None otherwise.'
+        ),
+    )
     configuration: dict[str, Any] = Field(
         description='The nested configuration object containing parameters, storage and authorization'
     )
@@ -565,6 +583,7 @@ class DataApp(BaseModel):
             folder=api_configuration.folder or '',
             configuration=api_configuration.configuration,
             git_branch=_config_git_branch(api_configuration.configuration),
+            git_auth_type=_config_git_auth_type(api_configuration.configuration),
             deployment_info=None,
             links=[],
         )
@@ -583,6 +602,10 @@ class DataApp(BaseModel):
         :return: The data app with the deployment info.
         """
         published_version = self.published_config_version or self.config_version
+        if last_run is not None and _uses_organization_git_auth(self.configuration):
+            hint = _organization_git_error_hint(last_run.failure_message)
+            if hint:
+                last_run.failure_message = f'{last_run.failure_message}\n{hint}'
         self.deployment_info = DeploymentInfo(
             version=published_version,
             latest_config_version=self.config_version,
@@ -660,7 +683,8 @@ class ModifiedPythonJsDataAppOutput(BaseModel):
             "be fetched. On the draft create path this is the **parent prod app's** managed repo URL — that "
             'is the repo the agent should clone, branch, and push to. Mint a token via '
             '`create_python_js_data_app_git_credential` to authenticate (or use `git_clone_url` returned by this '
-            'tool on the draft create path).'
+            "tool on the draft create path). With `git_repository` this is the customer's GitHub repository, "
+            "which you reach with the user's own GitHub access."
         ),
     )
     git_clone_url: str | None = Field(
@@ -684,7 +708,8 @@ class ModifiedPythonJsDataAppOutput(BaseModel):
             '`change_summary` spells out) — and push code on this branch before calling `deploy_data_app(mode="dev")`. `--no-track` keeps '
             '`origin/main` from becoming this branch\'s upstream, so a bare `git push` can never target `main`. '
             'A bare `git checkout <branch>` is unsafe: if the branch already exists on the remote it resolves '
-            'to that stale tip. None on prod create and on update.'
+            'to that stale tip. With `git_repository` on create, the branch of that repository the app deploys. '
+            'None on other prod creates and on update.'
         ),
     )
     links: list[Link] = Field(description='Navigation links for the web interface.')
@@ -1225,7 +1250,7 @@ async def modify_python_js_data_app(
         str | None,
         Field(
             description=(
-                'Git branch of the data app, written to `parameters.dataApp.git.branch`. Two uses:\n'
+                'Git branch of the data app, written to `parameters.dataApp.git.branch`. Three uses:\n'
                 '- **On draft create** (with `parent_configuration_id`): the branch to pin the new draft '
                 'to. Defaults to a generated `draft-<hex>` when unset — unique per draft, so it can never '
                 "collide with a branch an earlier draft left behind. Pass a descriptive name like "
@@ -1234,13 +1259,37 @@ async def modify_python_js_data_app(
                 'origin/main`; on a brand-new prod app whose repo is still empty, push an empty `main` '
                 'first — see Scenario A step 3) rather than with a bare `git checkout`. '
                 'Must not be `main` (reserved for the prod app) unless `allow_main_branch=True` '
-                '(platform view-draft only). Rejected on prod create.\n'
+                '(platform view-draft only). Rejected on prod create without `git_repository`.\n'
                 '- **On update** (with `configuration_id`): repoints an existing **external-git** app to '
                 'a different branch (e.g. flip a repo-backed app from `main` to a feature branch for '
                 'testing, then back). Only valid for external-git apps — a draft, or an app bound to an '
                 'external repository. Rejected for apps on a Keboola-managed git repo, whose branch is '
                 'owned by the platform. On update `main` is allowed. Redeploy the app afterwards to serve '
-                'the new branch.'
+                'the new branch.\n'
+                '- **With `git_repository`** (create or update of a prod app): the branch of that repository '
+                'the app deploys. Defaults to `main`.'
+            ),
+        ),
+    ] = None,
+    git_repository: Annotated[
+        str | None,
+        Field(
+            description=(
+                "HTTPS URL of a customer's GitHub repository (`https://github.com/<owner>/<repo>`, or a "
+                '`*.ghe.com` host) to deploy a **prod** app from instead of a Keboola-managed repo. Requires '
+                '`git_auth`. On create, the app gets no managed repo; on update, an app already bound to an '
+                'external repository is rebound to this one. Rejected with `parent_configuration_id` (no '
+                'drafts on such repos) and for apps on a Keboola-managed repo. No credential is stored.'
+            ),
+        ),
+    ] = None,
+    git_auth: Annotated[
+        GitAuthType | None,
+        Field(
+            description=(
+                'How the platform authenticates to `git_repository`; required together with it. Only '
+                '"organization" is supported: a short-lived read-only token is minted through the Keboola '
+                "organization's GitHub App connection, so no credential is stored in the configuration."
             ),
         ),
     ] = None,
@@ -1448,14 +1497,35 @@ async def modify_python_js_data_app(
        The draft's branch is already pinned in its config.
     5–7. Same promote/cleanup sequence as Scenario A steps 5–7.
 
+    ## Scenario D — Deploy a prod app from a customer's GitHub repository
+
+    The code lives in the customer's own GitHub repository, not in a Keboola-managed one, and the
+    platform clones it through the Keboola organization's GitHub App connection — no token is ever
+    passed to or stored by the MCP.
+
+    1. `modify_python_js_data_app(name=..., git_repository='https://github.com/<owner>/<repo>',
+       git_auth='organization', branch='main')` → prod app with `parameters.dataApp.git`
+       `{repository, branch, authType: 'organization', private: true}` and no managed repo.
+       To move an app that is already bound to an external repository onto another repository,
+       pass the same arguments with its `configuration_id` (rebind). An app on a Keboola-managed repo
+       cannot be rebound — create a new app instead.
+    2. Code changes go to that GitHub repository through the user's own GitHub access; the MCP mints
+       no git credential for it (`create_python_js_data_app_git_credential` is rejected).
+    3. `deploy_data_app(action='deploy', configuration_id=PROD)` — production mode only. Drafts,
+       dev mode and the preview link are not supported for such apps yet.
+    If the deploy fails because the organization's GitHub connection is missing, an organization
+    admin connects the GitHub organization in Control UI → Organization → GitHub and installs the App.
+
     ## Argument rules
 
     - `parent_configuration_id` is **create-only**. Rejected on update.
     - `branch` on **create** is only valid when `parent_configuration_id` is set (pins the new
       draft's branch). Defaults to a generated, collision-free `'draft-<hex>'`. Must not be
-      `'main'`. Rejected on prod create. A branch you supply yourself may already exist on the
+      `'main'`. Rejected on prod create unless `git_repository` is set (then it defaults to `'main'`).
+      A branch you supply yourself may already exist on the
       repo — branch it off `origin/main` explicitly (see Scenario B step 3).
       On **update** `branch` repoints an existing **external-git** app's pinned branch (see below).
+    - `git_repository` and `git_auth` go together (Scenario D). Rejected with `parent_configuration_id`.
     - `slug` is optional on create (auto-derived from `name` when omitted; drafts get a unique
       suffix). See "Slug on update" below.
     - The **update path** (passing `configuration_id`) is for changing `name`, `description`,
@@ -1515,6 +1585,7 @@ async def modify_python_js_data_app(
         # Checked first so a draft with 'oidc' gets the draft message, not the create-with-basic-auth one.
         _reject_oidc_on_draft(authentication_type)
     _validate_oidc_args(authentication_type, oidc, is_create=not configuration_id)
+    _validate_git_repository_args(git_repository, git_auth, parent_configuration_id)
     if configuration_id:
         if slug:
             _validate_explicit_slug(slug)
@@ -1530,8 +1601,11 @@ async def modify_python_js_data_app(
             slug = _derive_slug_from_name(name, draft=bool(parent_configuration_id))
         else:
             _validate_explicit_slug(slug)
-        if branch is not None and not parent_configuration_id:
-            raise ValueError('branch is only valid on the draft create path (pair it with parent_configuration_id).')
+        if branch is not None and not parent_configuration_id and not git_repository:
+            raise ValueError(
+                'branch is only valid on the draft create path (pair it with parent_configuration_id) or '
+                'with git_repository.'
+            )
         if parent_configuration_id:
             _reject_no_auth_on_draft(authentication_type)
 
@@ -1558,7 +1632,13 @@ async def modify_python_js_data_app(
         if _is_draft_config(data_app.configuration):
             _reject_no_auth_on_draft(authentication_type)
             _reject_oidc_on_draft(authentication_type)
-        normalized_branch = _validate_branch_update(branch, data_app, configuration_id) if branch else None
+        normalized_branch: str | None = None
+        git_rebind: CodeDataAppConfig.Parameters.DataApp.Git | None = None
+        if git_repository:
+            _validate_git_rebind(data_app, configuration_id)
+            git_rebind = _organization_git_block(git_repository, branch)
+        elif branch:
+            normalized_branch = _validate_branch_update(branch, data_app, configuration_id)
         oidc_app = authentication_type == 'oidc' or (
             authentication_type == 'default'
             and _oidc_provider(data_app.configuration.get('authorization') or {}) is not None
@@ -1586,6 +1666,7 @@ async def modify_python_js_data_app(
             legacy_workspace_id=legacy_workspace_id,
             storage=validated_storage,
             branch=normalized_branch,
+            git=git_rebind,
             slug=new_slug,
             image_version=image_version,
         )
@@ -1641,6 +1722,8 @@ async def modify_python_js_data_app(
             if normalized_branch is not None
             else None
         )
+        if git_rebind is not None:
+            branch_hint = _organization_git_hint(git_rebind, rebound=True)
         storage_access_hint = (
             f'Storage access {"enabled" if storage_access else "disabled"}. Redeploy the app '
             '(deploy_data_app) to apply it to the running app.'
@@ -1734,9 +1817,7 @@ async def modify_python_js_data_app(
                     f'Parent python-js data app "{parent_configuration_id}" has no managed git repo URL. '
                     'This indicates a platform-side bug — retry or contact support.'
                 )
-            draft_branch = (branch or _generate_default_draft_branch()).strip()
-            if not draft_branch or any(c.isspace() for c in draft_branch):
-                raise ValueError(f'branch "{branch}" is not a valid git branch name.')
+            draft_branch = _normalize_branch_name(branch or _generate_default_draft_branch())
             if draft_branch == 'main' and not allow_main_branch:
                 raise ValueError('branch "main" is reserved for the prod app — pick a different draft branch.')
             cred = await client.data_science_client.create_app_git_credential(parent.data_app_id)
@@ -1752,6 +1833,8 @@ async def modify_python_js_data_app(
                 branch=draft_branch,
             )
             git_clone_url = _build_authenticated_clone_url(parent.repo_url, cred.secret)
+        elif git_repository:
+            git_block = _organization_git_block(git_repository, branch)
 
         config = CodeDataAppConfig(
             parameters=CodeDataAppConfig.Parameters(
@@ -1774,9 +1857,10 @@ async def modify_python_js_data_app(
             # persisting an empty object that the backend would store as `[]` (AI-3135).
             storage=validated_storage or None,
         )
-        if git_block is not None:
+        if git_block is not None and git_block.password is not None:
             # The git block's `#password` is plaintext at this point; the encryption service walks
             # the dict and only encrypts keys starting with `#`, so everything else is untouched.
+            # An organization-auth block carries no secret, so there is nothing to encrypt.
             project_id = await client.storage_client.project_id()
             config_payload = cast(dict[str, Any], config.model_dump(by_alias=True, exclude_none=True))
             encrypted_payload = await client.encryption_client.encrypt(
@@ -1790,12 +1874,12 @@ async def modify_python_js_data_app(
             description=description,
             configuration=config,
             app_type='python-js',
-            # Dev twins bring their own external-git binding; only prod apps get a managed repo.
-            use_managed_git_repo=parent_configuration_id is None,
+            # Drafts and apps on a customer's repository bring their own external-git binding; only
+            # other prod apps get a managed repo.
+            use_managed_git_repo=git_block is None,
         )
-        if parent_configuration_id:
-            # Dev twin: the repo the agent must clone is the parent prod's managed repo.
-            assert git_block is not None
+        if git_block is not None:
+            # A draft clones the parent prod's managed repo; an organization-auth app the customer's repo.
             repo_url = git_block.repository
         else:
             repo_resp = await client.data_science_client.get_app_git_repo(data_app_resp.id)
@@ -1830,21 +1914,29 @@ async def modify_python_js_data_app(
         )
         data_app_summary.repo_url = repo_url
         data_app_summary.storage_access_enabled = wants_storage_access
-        data_app_summary.git_branch = draft_branch
+        app_branch = git_block.branch if git_block is not None else None
+        data_app_summary.git_branch = app_branch
+        data_app_summary.git_auth_type = git_block.auth_type if git_block is not None else None
         # On the draft create path, spell out the safe checkout. `git checkout <branch>` alone is
         # the trap: when the branch already exists on the remote (an agent-supplied
         # descriptive name reused across sessions — the generated default cannot collide), git
         # resolves it to that stale remote tip instead of branching off `main`, and the draft
         # previews outdated code without erroring anywhere.
         checkout_hint = _draft_checkout_hint(draft_branch) if draft_branch else None
-        change_summary = '\n'.join(note for note in (folder_hint, checkout_hint, legacy_fallback_hint) if note) or None
+        organization_hint = (
+            _organization_git_hint(git_block, rebound=False) if git_block is not None and git_block.auth_type else None
+        )
+        change_summary = (
+            '\n'.join(note for note in (folder_hint, checkout_hint, organization_hint, legacy_fallback_hint) if note)
+            or None
+        )
         return ModifiedPythonJsDataAppOutput(
             response='created',
             change_summary=change_summary,
             data_app=data_app_summary,
             repo_url=repo_url,
             git_clone_url=git_clone_url,
-            branch=draft_branch,
+            branch=app_branch,
             links=links,
             oidc_callback_url=_oidc_callback_url(
                 client, data_app_resp.id, config.model_dump(by_alias=True, exclude_none=True)
@@ -1892,7 +1984,7 @@ async def create_python_js_data_app_git_credential(
 
     ## Constraints
     - Only python-js prod data apps have a managed git repo. Streamlit apps reject the call with
-      a clear error.
+      a clear error, and so do apps on a customer GitHub repository (`git_auth_type='organization'`).
     - Permissions are always `readWrite` — the LLM virtually always needs push access. The
       data-science API supports read-only credentials, but the tool does not expose that knob;
       revisit once a real use case appears.
@@ -1916,6 +2008,12 @@ async def create_python_js_data_app_git_credential(
         raise ValueError(
             f'Configuration "{configuration_id}" is a python-js **draft**, which has no managed git repo '
             f'of its own. Mint credentials against the parent prod app instead{hint}.'
+        )
+    if _uses_organization_git_auth(data_app.configuration):
+        raise ValueError(
+            f'Configuration "{configuration_id}" clones a customer GitHub repository through the Keboola '
+            "organization's GitHub connection. It has no managed git repo, and the MCP cannot mint a git "
+            "credential for it: push to that repository with the user's own GitHub access."
         )
 
     repo_resp = await client.data_science_client.get_app_git_repo(data_app.data_app_id)
@@ -2110,6 +2208,7 @@ def _update_existing_code_data_app_config(
     legacy_workspace_id: str | None = None,
     storage: dict[str, Any] | None = None,
     branch: str | None = None,
+    git: CodeDataAppConfig.Parameters.DataApp.Git | None = None,
     slug: str | None = None,
     image_version: str | None = None,
     oidc: OidcAuthConfig | None = None,
@@ -2140,6 +2239,9 @@ def _update_existing_code_data_app_config(
     `username` are preserved verbatim via the deepcopy, so no re-encryption is needed. The caller
     must have verified the app is external-git; if the git block is missing this raises, so the
     invariant holds even when the helper is called directly.
+    `git` replaces the whole `parameters.dataApp.git` block (a rebind onto another external repository),
+    dropping any stored credentials with it; pass `branch=None` alongside it. The caller must have
+    verified the app is not on a Keboola-managed repo.
     """
     new_config = cast(dict[str, Any], copy.deepcopy(existing_config))
     new_config.setdefault('parameters', {})
@@ -2158,6 +2260,8 @@ def _update_existing_code_data_app_config(
                 '(not an external-git data app).'
             )
         git_block['branch'] = branch
+    if git is not None:
+        new_config['parameters'].setdefault('dataApp', {})['git'] = git.model_dump(by_alias=True, exclude_none=True)
     if slug is not None:
         new_config['parameters'].setdefault('dataApp', {})['slug'] = slug
     if storage_access is not None:
@@ -2311,6 +2415,8 @@ async def deploy_data_app(
       the prod app picks up the current `main`.
     - The branch a draft deploys from is pinned in `parameters.dataApp.git.branch` at create time;
       there is no deploy-time override.
+    - An app on a customer GitHub repository (`git_auth_type='organization'`) deploys in production
+      mode only: `mode='dev'` is rejected before anything is deployed.
 
     ## Configuration publishing
     - Every deploy **publishes the latest saved configuration version** (for both python-js and
@@ -2339,23 +2445,15 @@ async def deploy_data_app(
     links_manager = await ProjectLinksManager.from_client(client)
     if action == 'deploy':
         data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
+        if mode == 'dev' and _uses_organization_git_auth(data_app.configuration):
+            raise ValueError(_organization_git_dev_mode_message(data_app.configuration_id))
         # Always pin the latest config version (python-js included): without `configVersion` the data-app
         # service keeps the previously published version, so config-only changes (secrets, Storage access,
         # git branch, ...) would never go live.
         config_version = await client.storage_client.configuration_version_latest(
             DATA_APP_COMPONENT_ID, data_app.configuration_id
         )
-        if mode is not None:
-            await client.data_science_client.deploy_data_app_in_mode(
-                data_app.data_app_id, str(config_version), 'dev' if mode == 'dev' else 'prod'
-            )
-        else:
-            try:
-                await client.data_science_client.deploy_data_app(data_app.data_app_id, str(config_version))
-            except httpx.HTTPStatusError as e:
-                if e.response.status_code == HTTPStatus.CONFLICT and _LEGACY_WORKLOAD in _api_error_text(e.response):
-                    raise ValueError(_legacy_workload_message(data_app)) from e
-                raise
+        await _trigger_deploy(client, data_app, str(config_version), mode)
         data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
         logs, last_run, images = await asyncio.gather(
             _fetch_logs(client, data_app.data_app_id),
@@ -2399,6 +2497,36 @@ async def deploy_data_app(
         return DeploymentDataAppOutput(state=data_app.state, links=links, deployment_info=None)
     else:
         raise ValueError(f'Invalid action: {action}')
+
+
+async def _trigger_deploy(
+    client: KeboolaClient, data_app: DataApp, config_version: str, mode: Literal['dev', 'production'] | None
+) -> None:
+    """Ask the data-science API to deploy `config_version`, mapping known refusals to actionable errors."""
+    try:
+        if mode is not None:
+            await client.data_science_client.deploy_data_app_in_mode(
+                data_app.data_app_id, config_version, 'dev' if mode == 'dev' else 'prod'
+            )
+        else:
+            await client.data_science_client.deploy_data_app(data_app.data_app_id, config_version)
+    except httpx.HTTPStatusError as e:
+        api_error = _api_error_text(e.response)
+        if mode is None and e.response.status_code == HTTPStatus.CONFLICT and _LEGACY_WORKLOAD in api_error:
+            raise ValueError(_legacy_workload_message(data_app)) from e
+        hint = _organization_git_error_hint(api_error) if _uses_organization_git_auth(data_app.configuration) else None
+        if hint:
+            raise ValueError(f'Deploying data app "{data_app.configuration_id}" failed: {api_error} {hint}') from e
+        raise
+
+
+def _organization_git_dev_mode_message(configuration_id: str) -> str:
+    return (
+        f'Data app "{configuration_id}" clones a customer GitHub repository through the Keboola organization\'s '
+        'GitHub connection, and dev mode and the preview link are not supported for such apps yet. Deploy it in '
+        f'production mode instead: `deploy_data_app` (action="deploy", configuration_id="{configuration_id}") '
+        'without `mode`.'
+    )
 
 
 @tool_errors()
@@ -2617,6 +2745,8 @@ def _not_in_dev_mode_message(data_app: DataApp) -> str:
             f'Data app "{cfg}" ({data_app.type}) is not in dev mode, so it has no preview link. '
             f'Tell the user; do not change its deploy mode.'
         )
+    if _uses_organization_git_auth(data_app.configuration):
+        return _organization_git_dev_mode_message(cfg)
     if _is_draft_config(data_app.configuration):
         return (
             f'Data app "{cfg}" is not running in dev mode, so it has no preview link. Deploy it in dev mode first '
@@ -2956,10 +3086,116 @@ def _validate_branch_update(branch: str, data_app: 'DataApp', configuration_id: 
             'repo, whose branch is owned by the platform and cannot be repointed with this tool. Only '
             'external-git apps — a draft, or an app bound to an external repository — can be repointed.'
         )
+    return _normalize_branch_name(branch)
+
+
+def _validate_git_repository_args(
+    git_repository: str | None, git_auth: GitAuthType | None, parent_configuration_id: str | None
+) -> None:
+    """Check the `git_repository` / `git_auth` pair of `modify_python_js_data_app` before any API call."""
+    if git_repository is None and git_auth is None:
+        return
+    if not git_repository or git_auth is None:
+        raise ValueError('git_repository and git_auth must be passed together.')
+    if parent_configuration_id:
+        raise ValueError(
+            'git_repository cannot be combined with parent_configuration_id: drafts of an app on a customer '
+            'GitHub repository are not supported yet. Create or update the prod app instead.'
+        )
+    validate_organization_repository_url(git_repository)
+
+
+def _validate_git_rebind(data_app: 'DataApp', configuration_id: str) -> None:
+    """Allow a `git_repository` rebind only for a prod app that is already bound to an external repository.
+
+    A Keboola-managed repo is fixed when the app is created; the platform refuses organization git auth
+    on such an app at deploy time, so the rebind is refused here instead.
+    """
+    if _is_draft_config(data_app.configuration):
+        raise ValueError(
+            f'Cannot set git_repository on configuration "{configuration_id}": it is a draft. Drafts of an app '
+            'on a customer GitHub repository are not supported yet.'
+        )
+    if data_app.is_managed_git_repo is None:
+        raise ValueError(
+            f'Cannot set git_repository on configuration "{configuration_id}": could not determine whether it '
+            'runs on a Keboola-managed git repo (the git-repo lookup failed or it is not a python-js app). '
+            'Retry, or verify the configuration.'
+        )
+    if data_app.is_managed_git_repo:
+        raise ValueError(
+            f'Cannot set git_repository on configuration "{configuration_id}": it runs on a Keboola-managed git '
+            'repo, which cannot be swapped for an external one. Create a new app with git_repository instead.'
+        )
+
+
+def _organization_git_block(repository: str, branch: str | None) -> CodeDataAppConfig.Parameters.DataApp.Git:
+    """The `parameters.dataApp.git` block of an app cloned through the organization's GitHub App connection.
+
+    Same shape as the Keboola UI writes: no credential, `private: true`, the branch defaulting to `main`.
+    """
+    return CodeDataAppConfig.Parameters.DataApp.Git(
+        repository=repository,
+        branch=_normalize_branch_name(branch) if branch is not None else 'main',
+        auth_type=ORGANIZATION_GIT_AUTH,
+        private=True,
+    )
+
+
+def _normalize_branch_name(branch: str) -> str:
     normalized = branch.strip()
     if not normalized or any(c.isspace() for c in normalized):
         raise ValueError(f'branch "{branch}" is not a valid git branch name.')
     return normalized
+
+
+def _organization_git_hint(git: CodeDataAppConfig.Parameters.DataApp.Git, *, rebound: bool) -> str:
+    action = 'Rebound the app to' if rebound else 'The app deploys from'
+    return (
+        f"{action} {git.repository} (branch '{git.branch}') through the Keboola organization's GitHub "
+        "connection; no credential is stored. Push code there with the user's own GitHub access — the MCP "
+        'mints no git credential for it. Deploy with deploy_data_app in production mode; drafts, dev mode '
+        'and the preview link are not supported for this app yet. ' + _ORGANIZATION_CONNECTION_HINT
+    )
+
+
+_ORGANIZATION_CONNECTION_HINT = (
+    'If the deploy fails because the GitHub organization is not connected or the GitHub App is not installed '
+    'on the repository owner, an organization admin connects the GitHub organization in Control UI → '
+    'Organization → GitHub and installs the App.'
+)
+_NO_GITHUB_APP_HINT = (
+    "No GitHub App is registered for this repository's host on this stack, so organization git auth cannot "
+    'reach it here. Use a repository on a host the stack supports (github.com), or contact Keboola support.'
+)
+# Fragments of the platform's refusals to mint an organization git token (see `_organization_git_error_hint`).
+_NO_GITHUB_APP_ERRORS = ('no github app is registered', 'cannot issue git tokens')
+_ORGANIZATION_CONNECTION_ERRORS = (
+    'github connection',
+    'not covered by this github installation',
+    'github app is not installed',
+)
+
+
+def _organization_git_error_hint(message: str | None) -> str | None:
+    """An actionable hint for a platform error about the organization's GitHub connection, or None."""
+    lowered = (message or '').lower()
+    if any(fragment in lowered for fragment in _NO_GITHUB_APP_ERRORS):
+        return _NO_GITHUB_APP_HINT
+    if any(fragment in lowered for fragment in _ORGANIZATION_CONNECTION_ERRORS):
+        return _ORGANIZATION_CONNECTION_HINT
+    return None
+
+
+def _config_git_auth_type(configuration: Mapping[str, Any]) -> str | None:
+    """The `parameters.dataApp.git.authType` of a stored data-app configuration, or None when it has none."""
+    git = _data_app_block(configuration).get('git')
+    auth_type = git.get('authType') if isinstance(git, Mapping) else None
+    return auth_type if isinstance(auth_type, str) and auth_type else None
+
+
+def _uses_organization_git_auth(configuration: Mapping[str, Any]) -> bool:
+    return _config_git_auth_type(configuration) == ORGANIZATION_GIT_AUTH
 
 
 async def _fetch_prod_drafts(client: KeboolaClient, *, prod_configuration_id: str) -> tuple[list[DataAppSummary], int]:
