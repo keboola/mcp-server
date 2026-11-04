@@ -51,6 +51,13 @@ INTEGTEST_STORAGE_TOKENS=<token-project-A> <token-project-B>
 # Required — branch storage tests (dedicated project, not in pool)
 INTEGTEST_STORAGE_TOKEN_STORAGE_BRANCHES=<token-for-project-WITH-storage-branches>
 
+# Required — the service user the MCP server under test signs in as (password + TOTP, see service_login.py).
+# It must be a member of every project above. The server accepts only the programmatic tokens it gets from this
+# login; the per-project tokens above are used only by the fixtures' own direct Storage API calls.
+INTEGTEST_LOGIN_EMAIL=<service-user-email>
+INTEGTEST_LOGIN_PASSWORD=<service-user-password>
+INTEGTEST_LOGIN_TOTP_SECRET=<base32-totp-seed>
+
 # Optional — merge-request tests (dedicated project WITH branches-merge-requests, not in pool; skipped when unset)
 INTEGTEST_STORAGE_TOKEN_MERGE_REQUESTS=<token-for-project-WITH-branches-merge-requests>
 
@@ -90,14 +97,15 @@ def my_fixture(storage_api_token: str, storage_api_url: str):
 ```python
 @pytest.fixture
 def my_fixture(keboola_project, storage_api_url: str):
-    # keboola_project dependency ensures env_init has run and set KBC_STORAGE_TOKEN
+    # keboola_project dependency ensures env_init has run and set KBC_STORAGE_TOKEN (the programmatic MCP token)
     token = os.environ['KBC_STORAGE_TOKEN']
     # On failure, pytest only shows: keboola_project=ProjectDef(...), storage_api_url='https://...'
     ...
 ```
 
-The `env_init` fixture (triggered via `keboola_project`) copies the pool token into
-`KBC_STORAGE_TOKEN` and the URL into `STORAGE_API_URL`. Reading from these env vars
+The `env_init` fixture (triggered via `keboola_project`) copies the login-minted, project-scoped
+programmatic token into `KBC_STORAGE_TOKEN` (and the project id into `KBC_PROJECT_ID`) and the URL into
+`STORAGE_API_URL`; the pool token itself is only available through the `storage_api_token` fixture. Reading from these env vars
 inside the function body keeps the token out of pytest's traceback display.
 
 For tokens not in the pool (e.g. `INTEGTEST_STORAGE_TOKEN_STORAGE_BRANCHES`), use
@@ -306,14 +314,17 @@ production data is created idempotently and each session only manages its own br
 
 ### Secrets and variables
 
-The `integration_tests` job in `.github/workflows/ci.yml` reads the following from the
-repository's GitHub Secrets/Variables:
+The `integration_tests` job in `.github/workflows/ci.yml` runs only for pushes to `main` and tags. It uses the
+`integtests` GitHub Environment (deployment refs limited to `main` and the release tags, so a feature branch cannot
+read the login secrets) and reads the following from the repository's and the environment's Secrets/Variables:
 
 | Name | Kind | Purpose |
 |---|---|---|
 | `INTEGTEST_STORAGE_TOKENS` | Secret | Space-separated master tokens for all four pool projects |
 | `INTEGTEST_POOL_STORAGE_API_URL` | Variable | `https://connection.europe-west3.gcp.keboola.com` |
 | `INTEGTEST_STORAGE_TOKEN_STORAGE_BRANCHES` | Secret | Master token for a project **with** the `storage-branches` feature (used by `test_storage_branches.py`) |
+| `INTEGTEST_LOGIN_EMAIL`, `INTEGTEST_LOGIN_PASSWORD`, `INTEGTEST_LOGIN_TOTP_SECRET` | Secrets | The CI service user (password + TOTP, no SSO, not WebAuthn-only MFA), a member of every project above. The MCP server under test and the release smoke test get their `kbc_at_` tokens from this login (`integtests/service_login.py`). |
+| `INTEGTEST_SMOKE_PROJECT_ID` | Variable (environment `integtests`) | Project the release smoke test (`tests/docker/ci.sh`) runs against; the service user must be a member |
 | `INTEGTEST_STORAGE_TOKEN_MERGE_REQUESTS` | Secret | Master token for a project **with** the `branches-merge-requests` feature (used by `test_merge_requests.py`; the tests are skipped when unset) |
 
 ### Concurrency
