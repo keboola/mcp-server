@@ -444,7 +444,12 @@ async def search(
     - For exact ID lookups, use specific tools like get_tables, get_configs, get_flows instead
     - Use specific `scopes` only when you know the config structure (schema or real example); otherwise run config-based
       search without scopes.
+    <!-- directory:omit -->
     - Use find_component_id and get_configs tools to find configurations related to a specific component
+    <!-- /directory:omit -->
+    <!-- directory:only -->
+    - Use the get_configs tool to find configurations related to a specific component
+    <!-- /directory:only -->
     - If results are too numerous or empty, ask the user to refine their query rather than enumerating all items.
 
     USAGE EXAMPLES:

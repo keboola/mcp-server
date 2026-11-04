@@ -2304,7 +2304,7 @@ in the response) or to `get_data_apps` for further work.
 ---
 <a name="deploy_data_app"></a>
 ## deploy_data_app
-**Annotations**: `destructive`
+**Annotations**: `destructive, open-world`
 
 **Tags**: `data-apps`
 

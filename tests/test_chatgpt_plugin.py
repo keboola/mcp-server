@@ -15,7 +15,7 @@ import pytest
 from fastmcp.tools import Tool
 
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
-from keboola_mcp_server.mcp import ToolsFilteringMiddleware, is_read_only_tool, is_semantic_tool
+from keboola_mcp_server.mcp import DIRECTORY_TOOLS, ToolsFilteringMiddleware, is_read_only_tool, is_semantic_tool
 from keboola_mcp_server.multiproject import MultiProjectMiddleware
 from keboola_mcp_server.scope import SCOPE_KEY, SessionScope
 from keboola_mcp_server.server import create_server
@@ -140,6 +140,7 @@ def test_plugin_manifest() -> None:
     assert (len(positive), len(negative)) == (5, 3)
     for case in positive:
         assert all(case[key] for key in ('description', 'prompt', 'tools_triggered', 'expected_behavior'))
+        assert set(case['tools_triggered'].split(', ')) <= DIRECTORY_TOOLS
     assert all(case['description'] and case['prompt'] for case in negative)
     assert review['commerce'] is False
 
@@ -177,6 +178,8 @@ def test_skill_names_callable_tools_and_scopes_before_writes(skill_name: str, to
     named_tools = {name for _, name in mentions}
     unknown = sorted(named_tools - tools.keys())
     assert not unknown, f'{skill_name} names tools the server does not register: {unknown}'
+    hidden = sorted(named_tools - DIRECTORY_TOOLS)
+    assert not hidden, f'{skill_name} names tools a ChatGPT plugin session does not have: {hidden}'
     denied = {name: reason for name in sorted(named_tools) if (reason := _oauth_denial(tools[name]))}
     assert not denied, f'{skill_name} names tools an OAuth session cannot call: {denied}'
 

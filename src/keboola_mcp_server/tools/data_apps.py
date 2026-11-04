@@ -93,7 +93,7 @@ def add_data_app_tools(mcp: FastMCP) -> None:
             deploy_data_app,
             tags={DATA_APP_TOOLS_TAG},
             annotations=ToolAnnotations(
-                readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=False
+                readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=True
             ),
         )
     )

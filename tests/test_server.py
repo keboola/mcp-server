@@ -576,7 +576,7 @@ TOOL_ANNOTATIONS = [
     ('create_python_js_data_app_git_credential', False, False, False, False, {DATA_APP_TOOLS_TAG}),
     ('delete_python_js_data_app_draft', False, True, False, False, {DATA_APP_TOOLS_TAG}),
     ('get_data_apps', True, False, True, False, {DATA_APP_TOOLS_TAG}),
-    ('deploy_data_app', False, True, False, False, {DATA_APP_TOOLS_TAG}),
+    ('deploy_data_app', False, True, False, True, {DATA_APP_TOOLS_TAG}),
     ('get_data_app_preview_link', True, False, True, False, {DATA_APP_TOOLS_TAG}),
 ]
 
