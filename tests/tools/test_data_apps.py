@@ -5126,7 +5126,7 @@ async def test_modify_python_js_data_app_create_prod_on_organization_repo(
     assert result.data_app.git_auth_type == 'organization'
     assert result.change_summary is not None
     assert 'production mode' in result.change_summary
-    assert 'Control UI' in result.change_summary
+    assert '#connect-github' in result.change_summary
 
 
 @pytest.mark.asyncio
@@ -5308,7 +5308,7 @@ async def test_deploy_data_app_switches_organization_git_app_to_production(
             True,
             400,
             'No GitHub connection for "acme" in organization "42".',
-            'Control UI → Organization → GitHub',
+            'installs the Keboola GitHub App.*first, then connects.*#connect-github',
             id='not_connected',
         ),
         pytest.param(
@@ -5369,9 +5369,9 @@ async def test_deploy_data_app_maps_organization_git_errors(
     [
         ('No GitHub App is registered for "slsp.ghe.com" on this stack.', 'no GitHub App registered'),
         ('The OAuth service cannot issue Git tokens for "x" on this stack yet.', 'no GitHub App registered'),
-        ('No GitHub connection for "acme" in organization "42".', 'Control UI'),
-        ('The requested repository is not covered by this GitHub installation.', 'Control UI'),
-        ('The GitHub App is not installed on "acme".', 'Control UI'),
+        ('No GitHub connection for "acme" in organization "42".', '#connect-github'),
+        ('The requested repository is not covered by this GitHub installation.', '#connect-github'),
+        ('The GitHub App is not installed on "acme".', '#connect-github'),
         ('Startup probe failed.', None),
         (None, None),
     ],
@@ -5404,7 +5404,7 @@ def test_with_deployment_info_hints_at_organization_connection(
     assert data_app.deployment_info is not None and data_app.deployment_info.last_run is not None
     failure_message = data_app.deployment_info.last_run.failure_message
     assert failure_message is not None and failure_message.startswith(message)
-    assert ('Control UI' in failure_message) is hinted
+    assert ('#connect-github' in failure_message) is hinted
     if not hinted:
         assert failure_message == message
 

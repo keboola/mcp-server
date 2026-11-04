@@ -1513,8 +1513,10 @@ async def modify_python_js_data_app(
        no git credential for it (`create_python_js_data_app_git_credential` is rejected).
     3. `deploy_data_app(action='deploy', configuration_id=PROD)` — production mode only. Drafts,
        dev mode and the preview link are not supported for such apps yet.
-    If the deploy fails because the organization's GitHub connection is missing, an organization
-    admin connects the GitHub organization in Control UI → Organization → GitHub and installs the App.
+    If the deploy fails because the organization's GitHub connection is missing, someone who is both a
+    Keboola organization admin and an owner of the GitHub organization installs the Keboola GitHub App
+    first, then connects the GitHub organization:
+    https://help.keboola.com/management/organization/#connect-github (not a menu path).
 
     ## Argument rules
 
@@ -3180,8 +3182,11 @@ def _organization_git_hint(git: CodeDataAppConfig.Parameters.DataApp.Git, *, reb
 
 _ORGANIZATION_CONNECTION_HINT = (
     'If the deploy fails because the GitHub organization is not connected or the GitHub App is not installed '
-    'on the repository owner, an organization admin connects the GitHub organization in Control UI → '
-    'Organization → GitHub and installs the App.'
+    'on the repository owner, someone who is both a Keboola organization admin and an owner of the GitHub '
+    'organization installs the Keboola GitHub App on the GitHub organization first, then connects that '
+    'organization to the Keboola organization. Give the user '
+    'https://help.keboola.com/management/organization/#connect-github, not a menu path: most customer admins '
+    'do not see the menu link to that page.'
 )
 _NO_GITHUB_APP_HINT = (
     "This Keboola stack has no GitHub App registered for the repository's host, so organization git auth is "
