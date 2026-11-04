@@ -1455,6 +1455,20 @@ class TestSessionStateMiddleware:
                 None,
                 'more than one header',
             ),
+            # A second, empty scope header must not erase the broker's `strict` (the last value of a repeated
+            # header wins, and an empty one counts as absent).
+            (
+                {},
+                [('X-Workspace-Scope', 'strict'), ('X-Workspace-Scope', ''), ('X-Workspace-Id', '222')],
+                None,
+                'more than one sets it',
+            ),
+            (
+                {},
+                [('X-Workspace-Scope', 'strict'), ('KBC-Workspace-Scope', ''), ('X-Workspace-Id', '222')],
+                None,
+                'more than one sets it',
+            ),
         ],
         ids=[
             'header_scope_and_pin',
@@ -1464,6 +1478,8 @@ class TestSessionStateMiddleware:
             'server_scope_no_pin',
             'pin_in_two_spellings',
             'repeated_pin_header',
+            'repeated_empty_scope_header',
+            'scope_in_two_spellings',
         ],
     )
     def test_apply_request_config_strict_workspace_scope(
