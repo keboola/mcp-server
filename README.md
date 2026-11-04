@@ -240,7 +240,9 @@ switch to `/mcp` and sign in with the account that now owns it.
 
 #### Authenticating without a browser
 
-For containers or CI where a browser login isn't possible, provide a Keboola [access or personal access token](https://help.keboola.com/management/project/tokens/) directly — set `KBC_STORAGE_TOKEN` (env var) or send the `X-StorageAPI-Token` header — together with `KBC_PROJECT_ID` (or the `X-KBC-ProjectId` header) to select the project. On HTTP transports these can be supplied per request as headers, so each request carries its own credentials.
+For containers or CI where a browser login isn't possible, provide a Keboola programmatic token (`kbc_at_…` access token or `kbc_pat_…` [personal access token](https://help.keboola.com/management/project/tokens/)) directly — set `KBC_STORAGE_TOKEN` (env var) or send the `X-StorageAPI-Token` header — together with `KBC_PROJECT_ID` (or the `X-KBC-ProjectId` header) to select the project. On HTTP transports these can be supplied per request as headers, so each request carries its own credentials.
+
+A bare per-project Storage API token is **no longer accepted** and is refused when the session is built. Create a personal access token with `keboola-mcp-server login --api-url <stack-url> --pat`, or sign in with `keboola-mcp-server login`. A service user with a password and TOTP can sign in without a browser with `POST /v1/auth/login` followed by `POST /v1/auth/mfa` (see `integtests/service_login.py` for a worked example).
 
 ### KBC_WORKSPACE_ID
 
@@ -438,7 +440,7 @@ uvx keboola_mcp_server --transport streamable-http
 
 ### Option D: Using Docker
 
-A container can't open a browser, so authenticate with a token (see [Authenticating without a browser](#authenticating-without-a-browser)): set `KBC_STORAGE_TOKEN` to a Keboola access/personal access token and `KBC_PROJECT_ID` to the target project. (Over HTTP you can instead pass `X-StorageAPI-Token` / `X-KBC-ProjectId` headers per request and omit these.)
+A container can't open a browser, so authenticate with a token (see [Authenticating without a browser](#authenticating-without-a-browser)): set `KBC_STORAGE_TOKEN` to a Keboola programmatic (`kbc_at_`/`kbc_pat_`) token and `KBC_PROJECT_ID` to the target project. (Over HTTP you can instead pass `X-StorageAPI-Token` / `X-KBC-ProjectId` headers per request and omit these.)
 
 ```shell
 docker pull keboola/mcp-server:latest
@@ -554,6 +556,9 @@ NOTE: You will need to set the following environment variables:
 - `INTEGTEST_POOL_STORAGE_API_URL`
 - `INTEGTEST_STORAGE_TOKENS`
 - `INTEGTEST_STORAGE_TOKEN_STORAGE_BRANCHES`
+- `INTEGTEST_LOGIN_EMAIL`, `INTEGTEST_LOGIN_PASSWORD`, `INTEGTEST_LOGIN_TOTP_SECRET` (a service user that is a member of
+  all those projects and signs in with a password and TOTP; the server under test accepts only the programmatic
+  tokens it gets from that login)
 
 In order to get these values, you need dedicated Keboola projects for integration tests.
 Each test session creates its own read-only workspace, so no workspace schema needs to be
