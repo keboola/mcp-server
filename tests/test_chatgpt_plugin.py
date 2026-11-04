@@ -132,6 +132,17 @@ def test_plugin_manifest() -> None:
         width, height = _png_size(PLUGIN_DIR / interface[key])
         assert width == height >= 48, f'interface.{key} must be square and at least 48x48'
 
+    # The submission portal reads the test cases from the ZIP: exactly five positive and three negative ones.
+    # Reviewer credentials go into the portal only, never into the package.
+    review = openai['review']
+    assert 'test_credentials' not in review and 'reviewer_instructions' not in review
+    positive, negative = review['test_cases']['positive'], review['test_cases']['negative']
+    assert (len(positive), len(negative)) == (5, 3)
+    for case in positive:
+        assert all(case[key] for key in ('description', 'prompt', 'tools_triggered', 'expected_behavior'))
+    assert all(case['description'] and case['prompt'] for case in negative)
+    assert review['commerce'] is False
+
 
 def test_mcp_config() -> None:
     config = _load_json('mcp.json')
