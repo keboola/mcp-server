@@ -13,12 +13,11 @@ from typing import Any, cast
 import pytest
 import pytest_asyncio
 import toon_format
-from fastmcp import Client, FastMCP
+from fastmcp import Client
 from fastmcp.exceptions import ToolError
 
 from keboola_mcp_server.clients.client import DATA_APP_COMPONENT_ID, KeboolaClient, get_metadata_property
-from keboola_mcp_server.config import Config, MetadataField, ServerRuntimeInfo
-from keboola_mcp_server.server import create_server
+from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.tools.data_apps import (
     _DEFAULT_PACKAGES,
     DataApp,
@@ -58,20 +57,6 @@ def streamlit_app_entrypoint() -> str:
 def sample_streamlit_app(streamlit_app_imports: str, streamlit_app_entrypoint: str) -> str:
     """Return a minimal Streamlit app template that supports query injection."""
     return f'{streamlit_app_imports}{{QUERY_DATA_FUNCTION}}\n\n{streamlit_app_entrypoint}'
-
-
-@pytest.fixture
-def mcp_server(storage_api_url: str, storage_api_token: str, workspace_schema: str) -> FastMCP:
-    config = Config(storage_api_url=storage_api_url, storage_token=storage_api_token, workspace_schema=workspace_schema)
-    mcp_server = create_server(config, runtime_info=ServerRuntimeInfo(transport='stdio'))
-    assert isinstance(mcp_server, FastMCP)
-    return mcp_server
-
-
-@pytest_asyncio.fixture
-async def mcp_client(mcp_server: FastMCP) -> AsyncGenerator[Client, None]:
-    async with Client(mcp_server) as client:
-        yield client
 
 
 @pytest.fixture

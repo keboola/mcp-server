@@ -11,19 +11,24 @@ cleanup() {
 trap cleanup EXIT
 
 main() {
-    : "${STORAGE_API_TOKEN:?STORAGE_API_TOKEN is required}"
+    : "${KBC_ACCESS_TOKEN:?KBC_ACCESS_TOKEN (a programmatic kbc_at_ token) is required}"
+    : "${KBC_PROJECT_ID:?KBC_PROJECT_ID is required}"
     : "${STORAGE_API_URL:?STORAGE_API_URL is required}"
+
+    # Passed to the container by name so the token never appears on a command line.
+    export KBC_STORAGE_TOKEN="$KBC_ACCESS_TOKEN"
 
     # Start container. No --workspace-schema: the smoke test exercises get_buckets, which is a
     # Storage-only tool and needs no workspace, so the server boots without one.
     echo "Starting container..."
     docker run -d \
         --name "$CONTAINER_NAME" \
+        -e KBC_STORAGE_TOKEN \
+        -e KBC_PROJECT_ID \
         -p "8080:8000" \
         "$IMAGE_NAME" \
         --transport http-compat \
         --api-url "$STORAGE_API_URL" \
-        --storage-token "$STORAGE_API_TOKEN" \
         --host "0.0.0.0" \
         --port 8000 >/dev/null
 
