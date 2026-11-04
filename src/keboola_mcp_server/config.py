@@ -76,9 +76,7 @@ class Config:
     project_id: str | None = field(default=None, metadata={'aliases': ['kbc_project_id']})
     """Project id used to scope a programmatic-token (kbc_at_/kbc_pat_) exchange.
 
-    Maps the `X-KBC-ProjectId` HTTP header (via the alias) and the `KBC_PROJECT_ID` env var.
-    Only consulted when the inbound Storage token is a Keboola programmatic token; the legacy
-    project-bound Storage token derives its project from the token itself."""
+    Maps the `X-KBC-ProjectId` HTTP header (via the alias) and the `KBC_PROJECT_ID` env var."""
     oauth_validate_rate_limit: str | None = None
     """Calls per minute one server process may make to the OAuth server's client-validation endpoint (a positive
     integer). Unset means the built-in default. The OAuth server allows a fixed number of such calls per minute per

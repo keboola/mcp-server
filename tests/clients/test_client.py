@@ -833,29 +833,19 @@ class TestKeboolaClientCreate:
     (mcp.py) and `client_for_project` (multiproject.py)."""
 
     @pytest.mark.asyncio
-    async def test_legacy_token_passes_through_untouched(self) -> None:
-        client = await KeboolaClient.create(
-            storage_api_url='https://connection.keboola.com', storage_token='sapi_token_456'
-        )
-
-        assert client.legacy_storage_token == 'sapi_token_456'
-        assert client.bearer_token is None
-
-    @pytest.mark.asyncio
-    async def test_legacy_token_with_separate_oauth_bearer(self) -> None:
-        # An OAuth session: a legacy Storage token plus a separately-supplied bearer. Neither is
-        # programmatic-shaped, so no resolver call is attempted even when one is available.
+    @pytest.mark.parametrize('token', ['sapi_token_456', 'Bearer sapi_token_456', 'kbc_xx_abc', ' kbc_at_abc'])
+    async def test_legacy_token_is_rejected(self, token: str) -> None:
         resolver = AsyncMock(spec=StorageTokenResolver)
-        client = await KeboolaClient.create(
-            storage_api_url='https://connection.keboola.com',
-            storage_token='sapi_token_456',
-            bearer_token='oauth_bearer_123',
-            project_id='42',
-            token_resolver=resolver,
-        )
 
-        assert client.legacy_storage_token == 'sapi_token_456'
-        assert client.bearer_token == 'oauth_bearer_123'
+        with pytest.raises(ValueError, match='no longer accepted') as exc_info:
+            await KeboolaClient.create(
+                storage_api_url='https://connection.keboola.com',
+                storage_token=token,
+                project_id='42',
+                token_resolver=resolver,
+            )
+
+        assert 'sapi_token_456' not in str(exc_info.value)
         resolver.resolve.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -962,7 +952,7 @@ class TestKeboolaClientCreate:
         mocker.patch.object(KeboolaClient, 'with_branch_id', AsyncMock(return_value='branched'))
 
         result = await KeboolaClient.create(
-            storage_api_url='https://connection.keboola.com', storage_token='sapi_token_456', branch_id='123'
+            storage_api_url='https://connection.keboola.com', storage_token='kbc_at_456', branch_id='123'
         )
 
         assert result == 'branched'
@@ -979,18 +969,18 @@ class TestKeboolaClientCreate:
 
         with pytest.raises(BranchNotFoundError) as exc_info:
             await KeboolaClient.create(
-                storage_api_url='https://connection.keboola.com', storage_token='sapi_token_456', branch_id='123'
+                storage_api_url='https://connection.keboola.com', storage_token='kbc_at_456', branch_id='123'
             )
 
         production = exc_info.value.production_client
         assert isinstance(production, KeboolaClient)
         assert production.branch_id is None
-        assert production.legacy_storage_token == 'sapi_token_456'
+        assert production.legacy_storage_token == 'kbc_at_456'
 
     @pytest.mark.asyncio
     async def test_raises_on_missing_storage_api_url(self) -> None:
         with pytest.raises(ValueError, match='Storage API URL'):
-            await KeboolaClient.create(storage_api_url='', storage_token='sapi_token_456')
+            await KeboolaClient.create(storage_api_url='', storage_token='kbc_at_456')
 
     @pytest.mark.asyncio
     async def test_raises_on_missing_storage_token(self) -> None:
@@ -1017,17 +1007,6 @@ class TestQueueFamilyTokenLocalBearerFallback:
             headers = service_client.raw_client.headers
             assert headers.get('Authorization') == 'Bearer kbc_at_abc'
             assert 'X-StorageAPI-Token' not in headers
-
-    @pytest.mark.asyncio
-    async def test_local_legacy_token_keeps_legacy_header(self, monkeypatch) -> None:
-        monkeypatch.delenv('KBC_KUBERNETES_TOKEN_PATH', raising=False)
-        client = await KeboolaClient.create(
-            storage_api_url='https://connection.keboola.com', storage_token='sapi_token_456'
-        )
-
-        headers = client.jobs_queue_client.raw_client.headers
-        assert headers.get('X-StorageAPI-Token') == 'sapi_token_456'
-        assert 'Authorization' not in headers
 
     @pytest.mark.asyncio
     async def test_deployed_resolved_token_keeps_legacy_header(self, monkeypatch) -> None:
