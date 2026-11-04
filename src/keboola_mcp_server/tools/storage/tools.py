@@ -313,14 +313,8 @@ class TableColumnInfo(BaseModel):
 
 
 class TableSummary(BaseModel):
-    """Listing-level view of a table.
-
-    Carries only the fields available when enumerating tables in a bucket (no warehouse
-    round-trip). Notably it does NOT declare ``fully_qualified_name`` or ``columns`` — those
-    require fetching a single table's detail. Emitting a ``null`` FQN here would be misleading
-    (per the query_data queryability rule, ``null`` means "not queryable"), so the field is
-    simply absent from summaries. See ``TableDetail`` for the full per-table view.
-    """
+    """A table as listed in a bucket (`bucket_ids`). It has no columns and no fully qualified name: get the table by
+    its ID (`table_ids`) for those."""
 
     id: str = Field(description='Unique identifier for the table.')
     name: str = Field(description='Name of the table.')
@@ -332,7 +326,7 @@ class TableSummary(BaseModel):
     description: str | None = Field(default=None, description='Description of the table.')
     primary_key: list[str] | None = Field(
         default=None,
-        description='List of primary key columns.',
+        description='The primary key columns, separated by `|`.',
         validation_alias=AliasChoices('primaryKey', 'primary_key', 'primary-key'),
         serialization_alias='primaryKey',
     )
@@ -402,12 +396,8 @@ class TableSummary(BaseModel):
 
 
 class TableDetail(TableSummary):
-    """Full per-table view returned when fetching a specific table by ID.
-
-    Extends ``TableSummary`` with the fields that require a dedicated table-detail fetch
-    (and, for the FQN, resolving the warehouse backend path): column definitions, the fully
-    qualified database name, usage references, and create/update lineage.
-    """
+    """A table requested by its ID (`table_ids`): the listed fields plus its columns, the fully qualified name to use
+    in SQL queries, the components that use it and the configurations that created and last updated it."""
 
     columns: list[TableColumnInfo] | None = Field(
         default=None,
@@ -457,10 +447,11 @@ class TableDetail(TableSummary):
 
 
 class GetTablesOutput(BaseModel):
-    # SerializeAsAny so detail instances serialize with their full field set (columns,
-    # fullyQualifiedName, ...) while summaries (from bucket listing) serialize as the
-    # TableSummary subset — omitting fully_qualified_name rather than emitting it as null.
-    tables: list[SerializeAsAny[TableSummary]] = Field(description='List of tables.')
+    # A summary has no fully_qualified_name rather than a null one, which would mean "not queryable". SerializeAsAny
+    # keeps each table's own field set; TableSummary goes first, so a dict without detail fields validates as one.
+    tables: list[SerializeAsAny[TableSummary | TableDetail]] = Field(
+        description='The tables: summaries for `bucket_ids`, full details for `table_ids`.'
+    )
     links: list[Link] = Field(description='Links relevant to the table listing.')
     tables_not_found: list[str] | None = Field(default=None, description='List of table IDs that were not found.')
 
@@ -729,9 +720,9 @@ async def get_tables(
       it stores integer values despite being stored as text in the backend.
 
     QUERYABILITY RULE:
-    - A table is directly queryable via query_data tool only if fullyQualifiedName is present and non-null
+    - A table is directly queryable via query_data tool only if `fully_qualified_name` is present and non-null
       in the response.
-    - If fullyQualifiedName is absent or null (e.g. for linked/alias tables from other projects),
+    - If `fully_qualified_name` is absent or null (e.g. for linked/alias tables from other projects),
       the table cannot be queried via SQL from this workspace.
     - Do not attempt to construct or guess the FQN — it will not work. In that case,
       inform the user of the limitation immediately.

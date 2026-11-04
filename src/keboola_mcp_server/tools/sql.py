@@ -511,7 +511,7 @@ async def query_data(
     multiple statements, is rejected before it reaches the database.
 
     BEFORE QUERYING:
-    * Always verify the table has a non-null fullyQualifiedName from get_tables tool.
+    * Always verify the table has a non-null `fully_qualified_name` from get_tables tool.
       If it does not, the table is not SQL-accessible from this workspace — do not attempt the query and inform user.
 
     CRITICAL SQL REQUIREMENTS:
@@ -523,11 +523,11 @@ async def query_data(
     TABLE AND COLUMN REFERENCES:
     * Always use fully qualified table names in the exact FQN format provided by table information tools
     * Follow the identifier structure exactly as shown by table info tools for the current SQL dialect
-    * For every column reference, call get_tables first and copy that column's `quotedName` value VERBATIM.
-      Do not guess the name, re-case it, or hand-quote it yourself — use the exact `quotedName` from get_tables.
+    * For every column reference, call get_tables first and copy that column's `quoted_name` value VERBATIM.
+      Do not guess the name, re-case it, or hand-quote it yourself — use the exact `quoted_name` from get_tables.
     * Snowflake case trap: unquoted identifiers fold to UPPERCASE while quoted identifiers are case-sensitive,
       so hand-quoting a guessed lowercase name (e.g. "date") fails with `invalid identifier` even though the
-      column physically exists as DATE. The `quotedName` from get_tables already carries the correct case and
+      column physically exists as DATE. The `quoted_name` from get_tables already carries the correct case and
       dialect quoting, so copying it avoids this.
 
     CTE (WITH CLAUSE) RULES:
