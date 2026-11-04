@@ -147,9 +147,7 @@ class _MrContext:
             return False
         admin = self.token_info.get('admin')
         role = str(admin.get('role') or '').lower() if isinstance(admin, Mapping) else ''
-        if role == 'readonly':
-            return False
-        return role in ('admin', 'share') or bool(self.client.bearer_token)
+        return role != 'readonly'
 
     @cached_property
     def branch_names(self) -> dict[str, str]:

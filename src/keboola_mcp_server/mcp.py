@@ -1198,7 +1198,7 @@ class SessionStateMiddleware(fmw.Middleware):
         Introspects the programmatic token once to enumerate the projects it can reach and returns a
         scope covering all of them (no minted token — the whole-stack parent token is used, narrowed
         per request only by the ``X-KBC-ProjectId`` header). Returns None when introspection is
-        unavailable (deployed server, legacy token, or no reachable projects) so the caller falls
+        unavailable (deployed server or no reachable projects) so the caller falls
         back to the existing single-project behavior.
         """
         if not cls._is_local_programmatic(config):
@@ -1461,25 +1461,10 @@ class ToolsFilteringMiddleware(fmw.Middleware):
     The middleware also intercepts the `on_call_tool()` call and raises an exception if a call is attempted to a tool
     that is not available in the current project.
 
-    Tool visibility for modify_flow and update_flow:
-
-    | Token Type       | Role        | modify_flow | update_flow | Read-Only Tools |
-    |-----------------|-------------|-------------|-------------|-----------------|
-    | OAuth (any)     | any         | ✅          | ❌          | ✅              |
-    | SAPI            | admin/share | ✅          | ❌          | ✅              |
-    | SAPI            | ''/guest    | ❌          | ✅          | ✅              |
-    | SAPI/OAuth      | readOnly    | ❌          | ❌          | ✅              |
+    Every accepted credential is a programmatic token, so the tool set does not depend on the credential kind; only
+    the project role matters: a `readOnly` role is limited to the read-only tools. `modify_flow` is the flow-update
+    tool for everyone; `update_flow` is never listed and is refused, as a tool call and in the preview route.
     """
-
-    @staticmethod
-    def _is_oauth_authenticated(ctx: Context) -> bool:
-        """
-        Detect if the user is authenticated via OAuth.
-
-        Returns True if bearer token is present, False otherwise.
-        """
-        keboola_client = KeboolaClient.from_state(ctx.session.state)
-        return bool(keboola_client.bearer_token)
 
     @staticmethod
     async def get_token_info(ctx: Context) -> JsonDict:
@@ -1538,17 +1523,14 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         # fail tools/list -- that 401 disconnected clients before (#605); fall back to the superset
         # minus the semantic tools, whose metastore check needs no verify_token (AI-4074).
         client = KeboolaClient.from_state(context.fastmcp_context.session.state)
-        if is_programmatic_token(client.bearer_token):
-            if not client.project_id:
-                return tools
-            token_info = await self._get_token_info_or_none(context.fastmcp_context)
-            if token_info is None:
-                return await self._filter_semantic_tools(tools, client)
-        else:
-            token_info = await self.get_token_info(context.fastmcp_context)
+        if not client.project_id:
+            return tools
+        token_info = await self._get_token_info_or_none(context.fastmcp_context)
+        if token_info is None:
+            return await self._filter_semantic_tools(tools, client)
 
         is_main_branch = await self._is_listed_branch_main(context.fastmcp_context)
-        tools = self._filter_by_token_info(tools, token_info, context.fastmcp_context, is_main_branch)
+        tools = self._filter_by_token_info(tools, token_info, is_main_branch)
         return await self._filter_semantic_tools(tools, client)
 
     @staticmethod
@@ -1573,9 +1555,7 @@ class ToolsFilteringMiddleware(fmw.Middleware):
             return None
 
     @classmethod
-    def _filter_by_token_info(
-        cls, tools: list[Tool], token_info: JsonDict, ctx: Context, is_main_branch: bool
-    ) -> list[Tool]:
+    def _filter_by_token_info(cls, tools: list[Tool], token_info: JsonDict, is_main_branch: bool) -> list[Tool]:
         features = cls.get_project_features(token_info)
         token_role = cls.get_token_role(token_info).lower()
 
@@ -1584,25 +1564,18 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         else:
             tools = [t for t in tools if t.name != 'create_flow']
 
-        # Show modify_flow to: admin, share, OR OAuth users
-        # Show update_flow to: everyone else (except readOnly, handled below)
-        is_oauth = cls._is_oauth_authenticated(ctx)
-        if token_role in ('admin', 'share') or is_oauth:
-            tools = [t for t in tools if t.name != UPDATE_FLOW_TOOL_NAME]
-        else:
-            tools = [t for t in tools if t.name != MODIFY_FLOW_TOOL_NAME]
+        # `modify_flow` is the flow-update tool for every credential; `update_flow` is never listed.
+        tools = [t for t in tools if t.name != UPDATE_FLOW_TOOL_NAME]
 
         if not is_main_branch:
             # Filter out data app tools when the client is not using the main/production branch
             tools = [t for t in tools if t.name not in DATA_APP_BRANCH_GATED_TOOLS]
 
-        # Merge-request tools: hidden when the project lacks the feature; the writes hidden for roles that cannot
-        # use them. The branch-only tools stay visible on production on purpose (call-time denial only) so the
-        # model keeps their descriptions and can hand the user off to a development-branch session.
+        # Merge-request tools: hidden when the project lacks the feature. The branch-only tools stay visible on
+        # production on purpose (call-time denial only) so the model keeps their descriptions and can hand the user
+        # off to a development-branch session.
         if MERGE_REQUESTS_FEATURE not in features:
             tools = [t for t in tools if t.name not in MERGE_REQUEST_TOOL_NAMES]
-        elif not (token_role in ('admin', 'share') or is_oauth):
-            tools = [t for t in tools if t.name not in MERGE_REQUEST_TOOL_NAMES or is_read_only_tool(t)]
 
         if token_role == 'readonly':
             tools = [t for t in tools if is_read_only_tool(t)]
@@ -1625,7 +1598,6 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         has_semantic_models: bool,
         token_role: str,
         features: set[str],
-        is_oauth: bool,
         is_main_branch: bool,
     ) -> str | None:
         """
@@ -1668,34 +1640,19 @@ class ToolsFilteringMiddleware(fmw.Middleware):
                     'please use "create_conditional_flow" tool instead.'
                 )
 
-        if token_role in ('admin', 'share') or is_oauth:
-            if tool_name == UPDATE_FLOW_TOOL_NAME:
-                return (
-                    'The "update_flow" tool is not available for admin/OAuth tokens. '
-                    f'Use "{MODIFY_FLOW_TOOL_NAME}" to manage schedules instead.'
-                )
-        else:
-            if tool_name == MODIFY_FLOW_TOOL_NAME:
-                return (
-                    f'The "{MODIFY_FLOW_TOOL_NAME}" tool is not available for this token. '
-                    f'Use "{UPDATE_FLOW_TOOL_NAME}" to update flow configuration instead.'
-                )
+        if tool_name == UPDATE_FLOW_TOOL_NAME:
+            return f'The "update_flow" tool is not available. Use "{MODIFY_FLOW_TOOL_NAME}" to update a flow instead.'
 
         if tool_name in DATA_APP_BRANCH_GATED_TOOLS and not is_main_branch:
             return 'Data apps are supported only in the main production branch.'
 
         if tool_name in MERGE_REQUEST_TOOL_NAMES:
-            # Three axes (RFC feature_spec/branches_merge_requests_mcp): feature, role (+ OAuth carve-out as for
-            # the flow tools above), and session branch. Reads are open to every role.
+            # Two axes (RFC feature_spec/branches_merge_requests_mcp): feature and session branch. Role is enforced
+            # by Storage itself; a read-only role was already refused above.
             if MERGE_REQUESTS_FEATURE not in features:
                 return (
                     f'The tool "{tool_name}" is not available in this project. Merge requests require the '
                     f'"{MERGE_REQUESTS_FEATURE}" project feature; ask Keboola support to enable it.'
-                )
-            if not is_read_only and token_role not in ('admin', 'share') and not is_oauth:
-                return (
-                    f'The tool "{tool_name}" is not available for your role ({token_role or "unknown"}). '
-                    'Only project admins (role "admin" or "share") can modify merge requests.'
                 )
             if is_main_branch and tool_name in MERGE_REQUEST_BRANCH_ONLY_TOOLS:
                 return MERGE_REQUEST_BRANCH_ONLY_MESSAGE
@@ -1760,7 +1717,6 @@ class ToolsFilteringMiddleware(fmw.Middleware):
             has_semantic_models=has_semantic_models,
             token_role=self.get_token_role(token_info),
             features=self.get_project_features(token_info),
-            is_oauth=self._is_oauth_authenticated(context.fastmcp_context),
             is_main_branch=self.is_client_using_main_branch(context.fastmcp_context),
         )
         if denial:

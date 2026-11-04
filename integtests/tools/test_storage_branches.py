@@ -1,6 +1,7 @@
 """Integration tests for branched storage — validates the storage-branches deference mechanism."""
 
 import csv
+import dataclasses
 import json
 import logging
 import os
@@ -18,6 +19,7 @@ from fastmcp import Context
 from mcp.server.session import ServerSession
 from mcp.types import ClientCapabilities, InitializeRequestParams
 
+from integtests.service_login import project_token
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config
 from keboola_mcp_server.mcp import ServerRuntimeInfo, ServerState
@@ -224,6 +226,7 @@ class BranchTestProject:
     branch_a_id: str
     branch_b_id: str
     label: str
+    bearer_token: str = ''  # programmatic token for the project, minted from the service-user login
 
 
 def _setup_branch_test_project(
@@ -325,6 +328,7 @@ def _teardown_branch_test_project(project: BranchTestProject) -> None:
 def branch_project(
     storage_api_url: str,
     env_file_loaded: bool,
+    service_session_token: str,
 ) -> Generator[BranchTestProject, Any, None]:
     """
     Sets up a dedicated project (outside the pool) with the `storage-branches`
@@ -342,7 +346,10 @@ def branch_project(
 
     project: BranchTestProject | None = None
     try:
-        project = _setup_branch_test_project(storage_api_url, token, 'storage-branches')
+        project = dataclasses.replace(
+            _setup_branch_test_project(storage_api_url, token, 'storage-branches'),
+            bearer_token=project_token(storage_api_url, service_session_token, token.split('-')[0]),
+        )
         yield project
     finally:
         if project is not None:
@@ -359,6 +366,7 @@ async def _build_context(
     keboola_client = KeboolaClient(
         storage_api_url=branch_project.storage_api_url,
         legacy_storage_token=branch_project.storage_api_token,
+        bearer_token=branch_project.bearer_token,
         headers={'User-Agent': 'KeboolaMCPServer/integtest'},
     )
     if branch_id is not None:
@@ -367,7 +375,7 @@ async def _build_context(
 
     mcp_config = Config(
         storage_api_url=branch_project.storage_api_url,
-        storage_token=branch_project.storage_api_token,
+        storage_token=branch_project.bearer_token,
     )
     ctx = mocker.MagicMock(Context)
     ctx.session = mocker.MagicMock(ServerSession)

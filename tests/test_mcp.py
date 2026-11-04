@@ -411,17 +411,16 @@ def test_unwrap_results_all_exceptions():
 class TestToolsFilteringMiddleware:
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ('bearer_token', 'listed_branch_id', 'branch_detail', 'expect_filtered'),
+        ('listed_branch_id', 'branch_detail', 'expect_filtered'),
         [
-            (None, None, None, False),
-            (None, '999', {'isDefault': False}, True),
-            (None, '999', {'isDefault': True}, False),
-            (None, '999', {}, False),
-            (None, '999', [{'id': 999}], False),
-            (None, '999', httpx.HTTPStatusError('Not found', request=MagicMock(), response=MagicMock()), False),
-            (None, '999', httpx.ConnectError('connection refused'), False),
-            (None, '999', ValueError('Expecting value'), False),
-            ('kbc_at_abc', '999', {'isDefault': False}, True),
+            (None, None, False),
+            ('999', {'isDefault': False}, True),
+            ('999', {'isDefault': True}, False),
+            ('999', {}, False),
+            ('999', [{'id': 999}], False),
+            ('999', httpx.HTTPStatusError('Not found', request=MagicMock(), response=MagicMock()), False),
+            ('999', httpx.ConnectError('connection refused'), False),
+            ('999', ValueError('Expecting value'), False),
         ],
         ids=[
             'no_listed_branch',
@@ -432,20 +431,18 @@ class TestToolsFilteringMiddleware:
             'listed_missing_branch',
             'listed_branch_lookup_error',
             'listed_branch_non_json_detail',
-            'programmatic_listed_dev_branch',
         ],
     )
     async def test_list_tools_filters_data_apps_by_branch(
         self,
         mcp_context_client,
-        bearer_token: str | None,
         listed_branch_id: str | None,
         branch_detail: JsonDict | list[JsonDict] | Exception | None,
         expect_filtered: bool,
     ) -> None:
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-        keboola_client.bearer_token = bearer_token
-        keboola_client.project_id = '558' if bearer_token else None
+        keboola_client.bearer_token = 'kbc_at_abc'
+        keboola_client.project_id = '558'
         keboola_client.storage_client.verify_token = AsyncMock(return_value={'owner': {'features': []}, 'admin': {}})
         keboola_client.storage_client.dev_branch_detail = AsyncMock(
             side_effect=branch_detail if isinstance(branch_detail, Exception) else None,
@@ -526,20 +523,14 @@ class TestToolsFilteringMiddleware:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ('token_role', 'bearer_token', 'project_id', 'hidden_tools', 'visible_tools'),
+        ('token_role', 'project_id', 'hidden_tools', 'visible_tools'),
         [
-            ('admin', None, None, {'update_flow'}, {'modify_flow', 'read_only_tool'}),
-            ('share', None, None, {'update_flow'}, {'modify_flow', 'read_only_tool'}),
-            ('', None, None, {'modify_flow'}, {'update_flow', 'read_only_tool'}),
-            ('readOnly', None, None, {'modify_flow', 'update_flow'}, {'read_only_tool'}),
-            ('guest', None, None, {'modify_flow'}, {'update_flow', 'read_only_tool'}),
-            # OAuth users: regular/guest users get modify_flow access (different from SAPI)
-            ('', 'oauth_token', None, {'update_flow'}, {'modify_flow', 'read_only_tool'}),
-            # Empty bearer token behaves the same as no bearer token (SAPI regular)
-            ('', '', None, {'modify_flow'}, {'update_flow', 'read_only_tool'}),
-            # Project-scoped programmatic sessions are filtered like OAuth ones (AI-4075)
-            ('', 'kbc_at_abc', '558', {'update_flow'}, {'modify_flow', 'read_only_tool'}),
-            ('readOnly', 'kbc_at_abc', '558', {'modify_flow', 'update_flow'}, {'read_only_tool'}),
+            # every credential is programmatic: modify_flow for everyone, update_flow never
+            ('admin', '558', {'update_flow'}, {'modify_flow', 'read_only_tool'}),
+            ('', '558', {'update_flow'}, {'modify_flow', 'read_only_tool'}),
+            ('readOnly', '558', {'modify_flow', 'update_flow'}, {'read_only_tool'}),
+            # before a project is chosen there is no project context to verify the token against: all tools listed
+            ('admin', None, set(), {'modify_flow', 'update_flow', 'read_only_tool'}),
         ],
     )
     async def test_list_tools_filters_flow_tools_by_role(
@@ -547,12 +538,11 @@ class TestToolsFilteringMiddleware:
         mcp_context_client,
         keboola_client,
         token_role: str,
-        bearer_token: str | None,
         project_id: str | None,
         hidden_tools: set[str],
         visible_tools: set[str],
     ) -> None:
-        keboola_client.bearer_token = bearer_token
+        keboola_client.bearer_token = 'kbc_at_abc'
         keboola_client.project_id = project_id
         keboola_client.storage_client.verify_token = AsyncMock(
             return_value={'owner': {'features': []}, 'admin': {'role': token_role}}
@@ -580,23 +570,16 @@ class TestToolsFilteringMiddleware:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ('token_role', 'bearer_token', 'called_tool', 'tool_read_only', 'expect_error'),
+        ('token_role', 'called_tool', 'tool_read_only', 'expect_error'),
         [
-            ('admin', None, 'modify_flow', False, False),
-            ('admin', None, 'update_flow', False, True),
-            ('share', None, 'modify_flow', False, False),
-            ('share', None, 'update_flow', False, True),
-            ('', None, 'modify_flow', False, True),
-            ('', None, 'update_flow', False, False),
-            ('guest', None, 'write_tool', False, False),
-            ('guest', None, 'read_only_tool', True, False),
-            ('readOnly', None, 'write_tool', False, True),
-            ('readOnly', None, 'read_only_tool', True, False),
-            # OAuth users: regular users can call modify_flow (different from SAPI regular)
-            ('', 'oauth_token', 'modify_flow', False, False),
-            ('', 'oauth_token', 'update_flow', False, True),
-            # Empty bearer token behaves the same as no bearer token (SAPI regular)
-            ('', '', 'modify_flow', False, True),
+            ('admin', 'modify_flow', False, False),
+            ('admin', 'update_flow', False, True),
+            ('', 'modify_flow', False, False),
+            ('', 'update_flow', False, True),
+            ('guest', 'write_tool', False, False),
+            ('guest', 'read_only_tool', True, False),
+            ('readOnly', 'write_tool', False, True),
+            ('readOnly', 'read_only_tool', True, False),
         ],
     )
     async def test_call_tool_blocks_flow_tools_by_role(
@@ -604,12 +587,10 @@ class TestToolsFilteringMiddleware:
         mcp_context_client,
         keboola_client,
         token_role: str,
-        bearer_token: str | None,
         called_tool: str,
         tool_read_only: bool,
         expect_error: bool,
     ) -> None:
-        keboola_client.bearer_token = bearer_token
         keboola_client.storage_client.verify_token = AsyncMock(
             return_value={'owner': {'features': []}, 'admin': {'role': token_role}}
         )
@@ -699,24 +680,24 @@ class TestToolsFilteringMiddleware:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ('has_semantic_models', 'tool_name', 'bearer_token', 'project_id', 'expect_filtered'),
+        ('has_semantic_models', 'tool_name', 'project_id', 'expect_filtered'),
         [
-            (False, 'search_semantic_context', None, None, True),
-            (False, 'get_semantic_schema', None, None, True),
-            (True, 'search_semantic_context', None, None, False),
-            (True, 'get_semantic_schema', None, None, False),
-            (False, 'validate_semantic_query', 'kbc_at_abc', '558', True),
-            (True, 'validate_semantic_query', 'kbc_at_abc', '558', False),
-            (False, 'validate_semantic_query', 'kbc_at_abc', None, False),
+            (False, 'search_semantic_context', '558', True),
+            (False, 'get_semantic_schema', '558', True),
+            (True, 'search_semantic_context', '558', False),
+            (True, 'get_semantic_schema', '558', False),
+            (False, 'validate_semantic_query', '558', True),
+            (True, 'validate_semantic_query', '558', False),
+            (False, 'validate_semantic_query', None, False),
         ],
         ids=[
             'no_models_search',
             'no_models_schema',
             'with_models_search',
             'with_models_schema',
-            'programmatic_project_scoped_no_models',
-            'programmatic_project_scoped_with_models',
-            'programmatic_pre_scope_no_models',
+            'project_scoped_no_models',
+            'project_scoped_with_models',
+            'pre_scope_no_models',
         ],
     )
     async def test_list_tools_filters_semantic_tools_by_models(
@@ -724,12 +705,11 @@ class TestToolsFilteringMiddleware:
         mcp_context_client,
         has_semantic_models: bool,
         tool_name: str,
-        bearer_token: str | None,
         project_id: str | None,
         expect_filtered: bool,
     ) -> None:
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-        keboola_client.bearer_token = bearer_token
+        keboola_client.bearer_token = 'kbc_at_abc'
         keboola_client.project_id = project_id
         keboola_client.storage_client.verify_token = AsyncMock(return_value={'owner': {'features': []}, 'admin': {}})
         keboola_client.metastore_client.list_objects = AsyncMock(
@@ -757,7 +737,7 @@ class TestToolsFilteringMiddleware:
         else:
             assert tool_name in result_names
         assert 'other_tool' in result_names
-        if bearer_token and not project_id:
+        if not project_id:
             keboola_client.storage_client.verify_token.assert_not_called()
 
     @pytest.mark.asyncio
@@ -810,48 +790,26 @@ class TestToolsFilteringMiddleware:
             assert result is expected
 
     @pytest.mark.parametrize(
-        ('tool_name', 'is_read_only', 'token_role', 'features', 'is_oauth', 'is_main_branch', 'expected_fragment'),
+        ('tool_name', 'is_read_only', 'token_role', 'features', 'is_main_branch', 'expected_fragment'),
         [
             # feature axis: every MR tool needs the project feature, reads included
-            ('get_merge_requests', True, 'admin', set(), False, True, 'branches-merge-requests'),
-            ('merge_merge_request', False, 'admin', set(), False, False, 'branches-merge-requests'),
-            # role axis: reads open to everyone, writes need admin/share or OAuth
-            ('get_merge_requests', True, 'guest', {'branches-merge-requests'}, False, True, None),
-            ('get_merge_requests', True, 'developer', {'branches-merge-requests'}, False, True, None),
-            ('approve_merge_request', False, 'admin', {'branches-merge-requests'}, False, True, None),
-            ('approve_merge_request', False, 'share', {'branches-merge-requests'}, False, True, None),
-            ('approve_merge_request', False, 'developer', {'branches-merge-requests'}, False, True, 'admin" or "share'),
-            ('approve_merge_request', False, 'reviewer', {'branches-merge-requests'}, False, True, 'admin" or "share'),
-            ('approve_merge_request', False, 'guest', {'branches-merge-requests'}, False, True, 'admin" or "share'),
-            ('approve_merge_request', False, '', {'branches-merge-requests'}, True, True, None),  # OAuth carve-out
-            (
-                'update_merge_request',
-                False,
-                'readOnly',
-                {'branches-merge-requests'},
-                False,
-                True,
-                'read-only operations',
-            ),
+            ('get_merge_requests', True, 'admin', set(), True, 'branches-merge-requests'),
+            ('merge_merge_request', False, 'admin', set(), False, 'branches-merge-requests'),
+            # role axis: Storage enforces the role itself; only a read-only role is refused here
+            ('get_merge_requests', True, 'guest', {'branches-merge-requests'}, True, None),
+            ('approve_merge_request', False, 'admin', {'branches-merge-requests'}, True, None),
+            ('approve_merge_request', False, 'developer', {'branches-merge-requests'}, True, None),
+            ('approve_merge_request', False, '', {'branches-merge-requests'}, True, None),
+            ('update_merge_request', False, 'readOnly', {'branches-merge-requests'}, True, 'read-only operations'),
             # branch axis: only create_merge_request is branch-only (denied on main with the branch-agnostic
             # message); merge / request-review / conflicts / resolve run from production with an explicit id
-            (
-                'create_merge_request',
-                False,
-                'admin',
-                {'branches-merge-requests'},
-                False,
-                True,
-                'development-branch chat',
-            ),
-            ('request_merge_request_review', False, 'admin', {'branches-merge-requests'}, False, True, None),
-            ('merge_merge_request', False, 'admin', {'branches-merge-requests'}, False, True, None),
-            ('get_merge_request_conflicts', True, 'guest', {'branches-merge-requests'}, False, True, None),
-            ('resolve_merge_request_conflict', False, 'admin', {'branches-merge-requests'}, False, True, None),
-            ('create_merge_request', False, 'admin', {'branches-merge-requests'}, False, False, None),
-            ('get_merge_request_conflicts', True, 'guest', {'branches-merge-requests'}, False, False, None),
-            ('request_merge_request_changes', False, 'share', {'branches-merge-requests'}, False, True, None),
-            ('get_merge_requests', True, 'guest', {'branches-merge-requests'}, False, False, None),
+            ('create_merge_request', False, 'admin', {'branches-merge-requests'}, True, 'development-branch chat'),
+            ('request_merge_request_review', False, 'admin', {'branches-merge-requests'}, True, None),
+            ('merge_merge_request', False, 'admin', {'branches-merge-requests'}, True, None),
+            ('get_merge_request_conflicts', True, 'guest', {'branches-merge-requests'}, True, None),
+            ('resolve_merge_request_conflict', False, 'admin', {'branches-merge-requests'}, True, None),
+            ('create_merge_request', False, 'admin', {'branches-merge-requests'}, False, None),
+            ('request_merge_request_changes', False, 'share', {'branches-merge-requests'}, True, None),
         ],
     )
     def test_authorize_merge_request_tools(
@@ -860,11 +818,10 @@ class TestToolsFilteringMiddleware:
         is_read_only: bool,
         token_role: str,
         features: set[str],
-        is_oauth: bool,
         is_main_branch: bool,
         expected_fragment: str | None,
     ) -> None:
-        """The three gating axes of the merge-request tools (feature, role + OAuth carve-out, session branch)."""
+        """The gating axes of the merge-request tools: project feature, read-only role, session branch."""
         denial = ToolsFilteringMiddleware.authorize_tool_call(
             tool_name=tool_name,
             is_read_only=is_read_only,
@@ -872,7 +829,6 @@ class TestToolsFilteringMiddleware:
             has_semantic_models=False,
             token_role=token_role,
             features=features,
-            is_oauth=is_oauth,
             is_main_branch=is_main_branch,
         )
         if expected_fragment is None:
@@ -882,11 +838,9 @@ class TestToolsFilteringMiddleware:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ('token_role', 'bearer_token', 'features', 'branch_id', 'hidden_tools', 'visible_tools'),
+        ('features', 'branch_id', 'hidden_tools', 'visible_tools'),
         [
             pytest.param(
-                'admin',
-                None,
                 [],
                 None,
                 {'get_merge_requests', 'create_merge_request', 'approve_merge_request'},
@@ -894,26 +848,6 @@ class TestToolsFilteringMiddleware:
                 id='no_feature_hides_all',
             ),
             pytest.param(
-                'developer',
-                None,
-                ['branches-merge-requests'],
-                None,
-                {'create_merge_request', 'approve_merge_request'},
-                {'get_merge_requests', 'get_merge_request_conflicts'},
-                id='developer_sees_reads_only',
-            ),
-            pytest.param(
-                '',
-                'oauth_token',
-                ['branches-merge-requests'],
-                None,
-                set(),
-                {'get_merge_requests', 'create_merge_request', 'approve_merge_request'},
-                id='oauth_sees_writes',
-            ),
-            pytest.param(
-                'admin',
-                None,
                 ['branches-merge-requests'],
                 None,
                 set(),
@@ -921,8 +855,6 @@ class TestToolsFilteringMiddleware:
                 id='branch_only_tools_stay_visible_on_main',
             ),
             pytest.param(
-                'admin',
-                None,
                 ['branches-merge-requests'],
                 'dev-55',
                 set(),
@@ -935,17 +867,16 @@ class TestToolsFilteringMiddleware:
         self,
         mcp_context_client,
         keboola_client,
-        token_role: str,
-        bearer_token: str | None,
         features: list[str],
         branch_id: str | None,
         hidden_tools: set[str],
         visible_tools: set[str],
     ) -> None:
-        keboola_client.bearer_token = bearer_token
+        keboola_client.bearer_token = 'kbc_at_abc'
+        keboola_client.project_id = '558'
         keboola_client.branch_id = branch_id
         keboola_client.storage_client.verify_token = AsyncMock(
-            return_value={'owner': {'features': features}, 'admin': {'role': token_role}}
+            return_value={'owner': {'features': features}, 'admin': {'role': 'admin'}}
         )
         tools = [
             _tool('get_merge_requests', read_only=True),
@@ -1792,7 +1723,9 @@ class TestCreateSessionStateTokenResolutionWiring:
             storage_api_url='https://connection.keboola.com', storage_token='sapi_token_456', branch_id='273'
         )
         production = KeboolaClient(
-            storage_api_url='https://connection.keboola.com', legacy_storage_token='sapi_token_456'
+            storage_api_url='https://connection.keboola.com',
+            legacy_storage_token='sapi_token_456',
+            bearer_token='kbc_at_test',
         )
         request = httpx.Request('GET', 'https://connection.keboola.com/v2/storage/dev-branches/273')
         error = BranchNotFoundError(

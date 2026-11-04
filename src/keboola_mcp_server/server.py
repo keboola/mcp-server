@@ -423,10 +423,7 @@ def create_server(
             'as the "scope_token" argument on every subsequent tool call in this conversation. After '
             'that, read-only tools return results per project. Never write to more than one project '
             'without explicit user confirmation — write operations target the active (first-scoped) '
-            'project only. If instead the session uses a legacy project-scoped Storage API token, it is '
-            'already bound to a single project: use the tools directly — "get_accessible_projects" / '
-            '"set_project_scope" do not apply (they will report that no programmatic token is present). '
-            'Note: outside the Storage API, some tools may need per-project token support not yet '
+            'project only. Note: outside the Storage API, some tools may need per-project token support not yet '
             'available on every stack; surface such errors plainly rather than retrying.'
         ),
         lifespan=create_keboola_lifespan(server_state, oauth_provider),

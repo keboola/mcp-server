@@ -252,14 +252,13 @@ async def test_token_info_cached_by_middleware_is_reused(mcp_context_client: Con
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ('role', 'bearer_token', 'client_readonly', 'header_read_only', 'expect_write_recommended'),
+    ('role', 'client_readonly', 'header_read_only', 'expect_write_recommended'),
     [
-        pytest.param('admin', None, False, False, True, id='admin'),
-        pytest.param('readOnly', 'oauth', False, False, False, id='oauth_readonly_role'),
-        pytest.param('', 'oauth', False, False, True, id='oauth_regular'),
-        pytest.param('admin', None, True, False, False, id='readonly_client'),
-        pytest.param('developer', None, False, False, False, id='developer'),
-        pytest.param('admin', None, False, True, False, id='x_read_only_mode_header'),
+        pytest.param('admin', False, False, True, id='admin'),
+        pytest.param('readOnly', False, False, False, id='readonly_role'),
+        pytest.param('', False, False, True, id='regular'),
+        pytest.param('admin', True, False, False, id='readonly_client'),
+        pytest.param('admin', False, True, False, id='x_read_only_mode_header'),
     ],
 )
 async def test_next_step_never_recommends_a_write_the_session_cannot_do(
@@ -268,12 +267,10 @@ async def test_next_step_never_recommends_a_write_the_session_cannot_do(
     keboola_client: KeboolaClient,
     mocker,
     role: str,
-    bearer_token: str | None,
     client_readonly: bool,
     header_read_only: bool,
     expect_write_recommended: bool,
 ) -> None:
-    keboola_client.bearer_token = bearer_token
     keboola_client.readonly = client_readonly
     mocker.patch.object(
         mr_tools.ToolAuthorizationMiddleware, '_get_authorization_config', return_value=(None, None, header_read_only)
