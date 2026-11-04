@@ -593,6 +593,7 @@ async def test_event_step_up_header_only_for_own_stack(
     client = KeboolaClient(
         storage_api_url=session_storage_api_url,
         legacy_storage_token='user-token',
+        bearer_token='kbc_at_test',
         own_stack_storage_api_url='https://connection.keboola.com',
     )
     empty_context.session.state[KeboolaClient.STATE_KEY] = client
@@ -614,7 +615,7 @@ def storage_event_post(monkeypatch, mocker, empty_context: Context):
     """A real storage client with a mocked HTTP POST, so the `[trigger_event]` log line is emitted as well."""
     monkeypatch.delenv('KBC_KUBERNETES_TOKEN_PATH', raising=False)
     empty_context.session.state[KeboolaClient.STATE_KEY] = KeboolaClient(
-        storage_api_url='https://connection.keboola.com', legacy_storage_token='fake-token'
+        storage_api_url='https://connection.keboola.com', legacy_storage_token='fake-token', bearer_token='kbc_at_test'
     )
     return mocker.patch.object(AsyncStorageClient, 'post', autospec=True, return_value={'id': '1'})
 

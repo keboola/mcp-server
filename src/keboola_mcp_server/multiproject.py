@@ -81,7 +81,7 @@ class MultiProjectMiddleware(fmw.Middleware):
 
         # Ask-first gate: until the user confirms a scope via set_project_scope, block data tools and
         # tell the assistant to ask the user which projects to work on. Only applies when a scope has
-        # been auto-leased (local programmatic session); deployed/legacy sessions have no scope.
+        # been auto-leased (local programmatic session); deployed sessions have no such scope.
         if isinstance(scope, SessionScope) and not scope.confirmed and name not in BOOTSTRAP_TOOLS:
             raise ToolError(
                 f'This session can access {len(scope.project_ids)} Keboola project(s), but no scope has '
@@ -91,7 +91,7 @@ class MultiProjectMiddleware(fmw.Middleware):
                 'This confirmation is required once per session.'
             )
 
-        # No auto-leased scope (deployed / legacy) or a bootstrap/scope tool: pass through untouched.
+        # No auto-leased scope (deployed) or a bootstrap/scope tool: pass through untouched.
         # Bootstrap tools own a real `project_ids` argument, so we must not strip it.
         if not isinstance(scope, SessionScope) or name in BOOTSTRAP_TOOLS:
             return await call_next(context)

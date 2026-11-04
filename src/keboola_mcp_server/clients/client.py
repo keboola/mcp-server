@@ -258,7 +258,7 @@ class KeboolaClient:
         *,
         storage_api_url: str,
         legacy_storage_token: str,
-        bearer_token: str | None = None,
+        bearer_token: str,
         branch_id: str | None = None,
         headers: Mapping[str, Any] | None = None,
         readonly: bool | None = None,
@@ -267,17 +267,14 @@ class KeboolaClient:
         """
         Initialize the client from two already-classified credentials. A raw, not-yet-classified
         caller credential (e.g. straight off a request) should go through `create()` instead,
-        which decides `legacy_storage_token` vs `bearer_token` and performs the legacy-token
-        exchange when applicable.
+        which validates it and performs the per-project token exchange when applicable.
 
-        :param legacy_storage_token: A legacy project-scoped Storage API token. Sent as-is to
-            jobs-queue/AI-service/sync-actions on a deployed server (or when it's a genuine legacy
-            token, not exchanged from a programmatic one); also used for every other service when
-            no `bearer_token` is given. On a local server, an un-exchanged programmatic token is
-            sent to jobs-queue/AI-service/sync-actions as a Bearer instead -- see the
-            `queue_family_token` computation below.
+        :param legacy_storage_token: The per-project token that jobs-queue/AI-service/sync-actions
+            still require, as exchanged from the programmatic token on a deployed server. On a local
+            server there is no exchange, so this is the un-exchanged programmatic token and those services
+            get it as a Bearer instead -- see the `queue_family_token` computation below.
         :param storage_api_url: Keboola Storage API URL
-        :param bearer_token: The access token issued by Keboola OAuth server
+        :param bearer_token: The programmatic (kbc_at_/kbc_pat_) token, sent as a Bearer to every other service
         :param branch_id: Keboola branch ID
         :param headers: Additional headers for the requests sent by all clients
         :param readonly: If True, the client will only use HTTP GET, HEAD operations.
@@ -310,16 +307,14 @@ class KeboolaClient:
         sync_actions_api_url = urlunparse(('https', f'sync-actions.{self._hostname_suffix}', '', '', '', ''))
 
         # Initialize clients for individual services
-        bearer_or_sapi_token = self._bearer_or_sapi_token = (
-            f'Bearer {bearer_token}' if bearer_token else self._legacy_storage_token
-        )
+        bearer_authorization = self._bearer_authorization = f'Bearer {bearer_token}'
         # The encryption service does not require an authorization header, so we pass None as the token
         self._encryption_client = EncryptionClient.create(
             root_url=encryption_api_url, token=None, headers=self._headers
         )
         self._storage_client = AsyncStorageClient.create(
             root_url=self._storage_api_url,
-            token=bearer_or_sapi_token,
+            token=bearer_authorization,
             branch_id=branch_id,
             headers=self._headers,
             readonly=readonly,
@@ -342,7 +337,7 @@ class KeboolaClient:
         # already use, so use that here instead of hard-failing every local job/AI-service/
         # sync-action call.
         queue_family_token = (
-            bearer_or_sapi_token
+            bearer_authorization
             if not deployed_sa_token_path() and is_programmatic_token(self._legacy_storage_token)
             else self._legacy_storage_token
         )
@@ -363,16 +358,16 @@ class KeboolaClient:
         # the SAPI token otherwise). See AI-3398.
         self._data_science_client = DataScienceClient.create(
             root_url=data_science_api_url,
-            token=bearer_or_sapi_token,
+            token=bearer_authorization,
             branch_id=branch_id,
             headers=self._headers,
             readonly=readonly,
         )
         self._scheduler_client = SchedulerClient.create(
-            root_url=scheduler_api_url, token=bearer_or_sapi_token, headers=self._headers, readonly=readonly
+            root_url=scheduler_api_url, token=bearer_authorization, headers=self._headers, readonly=readonly
         )
         self._stream_client = StreamClient.create(
-            root_url=stream_api_url, token=bearer_or_sapi_token, headers=self._headers, readonly=readonly
+            root_url=stream_api_url, token=bearer_authorization, headers=self._headers, readonly=readonly
         )
         self._sync_actions_client = SyncActionsClient.create(
             root_url=sync_actions_api_url,
@@ -383,7 +378,7 @@ class KeboolaClient:
         )
         self._metastore_client = MetastoreClient.create(
             root_url=metastore_api_url,
-            token=bearer_or_sapi_token,
+            token=bearer_authorization,
             branch_id=branch_id,
             headers=self._headers,
             readonly=readonly,
@@ -402,11 +397,8 @@ class KeboolaClient:
         return self._legacy_storage_token
 
     @property
-    def bearer_token(self) -> str | None:
-        """
-        Gets the OAuth bearer token issued by Keboola OAuth server, if available.
-        Returns None if only storage token authentication is used.
-        """
+    def bearer_token(self) -> str:
+        """Gets the programmatic (kbc_at_/kbc_pat_) token this client sends as a Bearer."""
         return self._bearer_token
 
     @property
@@ -462,7 +454,7 @@ class KeboolaClient:
         """
         return AsyncStorageClient.create(
             root_url=self._storage_api_url,
-            token=self._bearer_or_sapi_token,
+            token=self._bearer_authorization,
             branch_id=self._branch_id,
             headers=self._headers,
             readonly=None,
@@ -512,7 +504,7 @@ class KeboolaClient:
             # Bearer, not the raw legacy_storage_token: for a programmatic (kbc_at_/kbc_pat_) session
             # the raw token would be sent as X-StorageAPI-Token, which Storage API rejects outright
             # -- it only accepts a programmatic token via Authorization: Bearer.
-            token=self._bearer_or_sapi_token,
+            token=self._bearer_authorization,
             branch_id=self._branch_id,
             headers=headers,
             readonly=None,

@@ -80,7 +80,6 @@ def _oauth_denial(tool: Tool) -> str | None:
             has_semantic_models=False,
             token_role='admin',
             features=features,
-            is_oauth=True,
             is_main_branch=True,
         )
         for features in (set(), {'hide-conditional-flows'})

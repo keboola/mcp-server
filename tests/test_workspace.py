@@ -29,21 +29,12 @@ def test_next_poll_interval_backs_off_over_time(elapsed_seconds: float, expected
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ('bearer_token', 'storage_token', 'expected_token'),
-    [
-        ('oauth_bearer_123', 'sapi_token_456', 'Bearer oauth_bearer_123'),
-        (None, 'sapi_token_456', 'sapi_token_456'),
-        ('', 'sapi_token_456', 'sapi_token_456'),
-    ],
-    ids=['with_bearer_token', 'without_bearer_token', 'empty_bearer_token'],
-)
-async def test_query_client_token_selection(bearer_token: str | None, storage_token: str, expected_token: str):
-    """Test QueryServiceClient uses bearer token when available, falls back to storage token."""
-    # Create mock KeboolaClient with different token configurations
+async def test_query_client_uses_the_bearer_token():
+    """The Query Service client is given the client's programmatic token as a Bearer."""
+    expected_token = 'Bearer kbc_at_test'
     mock_client = Mock(spec=KeboolaClient)
-    mock_client.legacy_storage_token = storage_token
-    mock_client.bearer_token = bearer_token
+    mock_client.legacy_storage_token = 'sapi_token_456'
+    mock_client.bearer_token = 'kbc_at_test'
     mock_client.hostname_suffix = 'keboola.com'
     mock_client.branch_id = '12345'
     mock_client.headers = {}

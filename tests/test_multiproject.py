@@ -300,7 +300,9 @@ class TestMultiProjectMiddleware:
         context, state = self._ctx(scope, 'get_tables', read_only=True)
         # server_state.config carries a different (stale/absent) URL than the active request client.
         state[KeboolaClient.STATE_KEY] = KeboolaClient(
-            storage_api_url='https://connection.request.keboola.com', legacy_storage_token='kbc_at_s'
+            storage_api_url='https://connection.request.keboola.com',
+            legacy_storage_token='kbc_at_s',
+            bearer_token='kbc_at_test',
         )
         seen_calls: list = []
 

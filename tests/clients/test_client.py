@@ -19,7 +19,11 @@ from keboola_mcp_server.mcp import build_tracing_headers
 
 @pytest.fixture
 def keboola_client() -> KeboolaClient:
-    return KeboolaClient(storage_api_url='https://connection.test.keboola.com', legacy_storage_token='test-token')
+    return KeboolaClient(
+        storage_api_url='https://connection.test.keboola.com',
+        legacy_storage_token='test-token',
+        bearer_token='kbc_at_test',
+    )
 
 
 @pytest.fixture
@@ -341,7 +345,7 @@ class TestAsyncStorageClient:
                 headers={
                     'Content-Type': 'application/json',
                     'Accept-Encoding': 'gzip',
-                    'X-StorageAPI-Token': 'test-token',
+                    'Authorization': 'Bearer kbc_at_test',
                 },
                 content=json.dumps(expected_payload, ensure_ascii=False).encode('utf-8'),
             )
@@ -411,7 +415,7 @@ class TestAsyncStorageClient:
                 headers={
                     'Content-Type': 'application/json',
                     'Accept-Encoding': 'gzip',
-                    'X-StorageAPI-Token': 'test-token',
+                    'Authorization': 'Bearer kbc_at_test',
                 },
                 content=json.dumps(expected_data, ensure_ascii=False).encode('utf-8'),
             )
@@ -426,7 +430,10 @@ class TestKeboolaClient:
     def keboola_client_with_headers(self, runtime_config: ServerRuntimeInfo) -> KeboolaClient:
         headers = build_tracing_headers(runtime_config)
         return KeboolaClient(
-            storage_api_url='https://connection.test.keboola.com', legacy_storage_token='test-token', headers=headers
+            storage_api_url='https://connection.test.keboola.com',
+            legacy_storage_token='test-token',
+            bearer_token='kbc_at_test',
+            headers=headers,
         )
 
     @pytest.mark.asyncio
@@ -447,7 +454,7 @@ class TestKeboolaClient:
                 headers={
                     'Content-Type': 'application/json',
                     'Accept-Encoding': 'gzip',
-                    'X-StorageAPI-Token': 'test-token',
+                    'Authorization': 'Bearer kbc_at_test',
                     'User-Agent': f'Keboola MCP Server/{kbc_version} app_env=local transport=stdio',
                     'MCP-Server-Transport': 'stdio',
                     'MCP-Server-Versions': (
@@ -494,15 +501,14 @@ class TestKeboolaClient:
         client = KeboolaClient(
             storage_api_url='https://connection.canary-orion.keboola.dev',
             legacy_storage_token='sapi_token_456',
+            bearer_token='kbc_at_test',
         )
 
         assert client.metastore_client.raw_client.base_api_url == 'https://metastore.canary-orion.keboola.dev'
-        assert client.metastore_client.raw_client.headers['X-StorageAPI-Token'] == 'sapi_token_456'
+        assert client.metastore_client.raw_client.headers['Authorization'] == 'Bearer kbc_at_test'
 
-    # The clients below use the bearer token (Authorization header) when one is available and fall
-    # back to the raw storage token (X-StorageAPI-Token) otherwise. Data-science needs it for
-    # admin-context git-credential endpoints (AI-3398). Jobs-queue/AI-service/sync-actions are
-    # deliberately NOT in this list — see test_queue_backed_clients_never_use_bearer_token.
+    # The clients below always use the bearer token (Authorization header). Data-science needs it for
+    # admin-context git-credential endpoints (AI-3398).
     @pytest.mark.parametrize(
         'client_attr',
         [
@@ -511,33 +517,17 @@ class TestKeboolaClient:
             'data_science_client',
         ],
     )
-    @pytest.mark.parametrize(
-        ('bearer_token', 'storage_token', 'expected_token'),
-        [
-            ('oauth_bearer_123', 'sapi_token_456', 'Bearer oauth_bearer_123'),
-            (None, 'sapi_token_456', 'sapi_token_456'),
-            ('', 'sapi_token_456', 'sapi_token_456'),
-        ],
-        ids=['with_bearer_token', 'without_bearer_token', 'empty_bearer_token'],
-    )
-    def test_client_bearer_token_selection(
-        self, client_attr: str, bearer_token: str | None, storage_token: str, expected_token: str
-    ):
-        """Clients use the bearer token when available, falling back to the storage token."""
+    def test_client_uses_the_bearer_token(self, client_attr: str):
         client = KeboolaClient(
             storage_api_url='https://connection.keboola.com',
-            legacy_storage_token=storage_token,
-            bearer_token=bearer_token,
+            legacy_storage_token='sapi_token_456',
+            bearer_token='kbc_at_test',
         )
 
         headers = getattr(client, client_attr).raw_client.headers
 
-        if expected_token.startswith('Bearer '):
-            assert headers.get('Authorization') == expected_token
-            assert 'X-StorageAPI-Token' not in headers
-        else:
-            assert headers.get('X-StorageAPI-Token') == expected_token
-            assert 'Authorization' not in headers
+        assert headers.get('Authorization') == 'Bearer kbc_at_test'
+        assert 'X-StorageAPI-Token' not in headers
 
     @pytest.mark.parametrize(
         'client_attr',
@@ -576,6 +566,7 @@ def test_project_id_from_headers(headers: dict[str, str] | None, expected: str |
     client = KeboolaClient(
         storage_api_url='https://connection.keboola.com',
         legacy_storage_token='dummy-token',
+        bearer_token='kbc_at_test',
         headers=headers,
     )
     assert client.project_id == expected
@@ -585,6 +576,7 @@ def test_flow_schema_cache_roundtrip():
     client = KeboolaClient(
         storage_api_url='https://connection.keboola.com',
         legacy_storage_token='dummy-token',
+        bearer_token='kbc_at_test',
     )
     assert client.get_cached_flow_schema('keboola.flow') is None
     schema = {'type': 'object'}
@@ -1072,6 +1064,7 @@ class TestStepUpStorageClient:
         client = KeboolaClient(
             storage_api_url=self.OWN_STACK_URL,
             legacy_storage_token='user-token',
+            bearer_token='kbc_at_test',
             headers={'User-Agent': 'test'},
             own_stack_storage_api_url=own_stack_storage_api_url,
         )
@@ -1082,26 +1075,10 @@ class TestStepUpStorageClient:
         # The SA JWT rides as the step-up header ...
         assert headers['X-Kubernetes-Authorization'] == 'Bearer sa-jwt'
         # ... alongside the user's own token (no privileged token is minted) ...
-        assert headers['X-StorageAPI-Token'] == 'user-token'
+        assert headers['Authorization'] == 'Bearer kbc_at_test'
+        assert 'X-StorageAPI-Token' not in headers
         # ... and pre-existing headers are preserved.
         assert headers['User-Agent'] == 'test'
-
-    def test_uses_bearer_for_programmatic_token(self, tmp_path):
-        # A programmatic (kbc_at_/kbc_pat_) session's token must ride as Authorization: Bearer, not
-        # X-StorageAPI-Token, which Storage API rejects outright for that token shape.
-        token_file = tmp_path / 'token'
-        token_file.write_text('sa-jwt')
-        client = KeboolaClient(
-            storage_api_url='https://connection.keboola.com',
-            legacy_storage_token='kbc_at_abc',
-            bearer_token='kbc_at_abc',
-        )
-
-        stepped = client.step_up_storage_client(str(token_file))
-
-        headers = stepped.raw_client.headers
-        assert headers['Authorization'] == 'Bearer kbc_at_abc'
-        assert 'X-StorageAPI-Token' not in headers
 
     @pytest.mark.parametrize('readonly', [None, True, False])
     def test_always_writable_regardless_of_client_readonly(self, tmp_path, readonly):
@@ -1113,6 +1090,7 @@ class TestStepUpStorageClient:
         client = KeboolaClient(
             storage_api_url=self.OWN_STACK_URL,
             legacy_storage_token='user-token',
+            bearer_token='kbc_at_test',
             readonly=readonly,
             own_stack_storage_api_url=self.OWN_STACK_URL,
         )
@@ -1130,6 +1108,7 @@ class TestStepUpStorageClient:
         client = KeboolaClient(
             storage_api_url=self.OWN_STACK_URL,
             legacy_storage_token='user-token',
+            bearer_token='kbc_at_test',
             branch_id='999',
             own_stack_storage_api_url=self.OWN_STACK_URL,
         )
@@ -1154,6 +1133,7 @@ class TestStepUpStorageClient:
         client = KeboolaClient(
             storage_api_url='https://connection.keboola.com',
             legacy_storage_token='user-token',
+            bearer_token='kbc_at_test',
             branch_id='999',
             readonly=readonly,
         )
@@ -1170,6 +1150,7 @@ class TestStepUpStorageClient:
         client = KeboolaClient(
             storage_api_url=self.OWN_STACK_URL,
             legacy_storage_token='user-token',
+            bearer_token='kbc_at_test',
             own_stack_storage_api_url=self.OWN_STACK_URL,
         )
 
@@ -1180,6 +1161,7 @@ class TestStepUpStorageClient:
         client = KeboolaClient(
             storage_api_url=self.OWN_STACK_URL,
             legacy_storage_token='user-token',
+            bearer_token='kbc_at_test',
             own_stack_storage_api_url=self.OWN_STACK_URL,
         )
 
@@ -1207,6 +1189,7 @@ class TestStepUpStorageClient:
         client = KeboolaClient(
             storage_api_url=storage_api_url,
             legacy_storage_token='user-token',
+            bearer_token='kbc_at_test',
             own_stack_storage_api_url=own_stack_storage_api_url,
         )
 
@@ -1232,6 +1215,7 @@ class TestStepUpStorageClient:
             KeboolaClient(
                 storage_api_url=lookalike_url,
                 legacy_storage_token='user-token',
+                bearer_token='kbc_at_test',
                 own_stack_storage_api_url=self.OWN_STACK_URL,
             )
 
@@ -1243,6 +1227,7 @@ class TestStepUpStorageClient:
         client = KeboolaClient(
             storage_api_url='https://connection.other.keboola.com',
             legacy_storage_token='user-token',
+            bearer_token='kbc_at_test',
             readonly=True,
             own_stack_storage_api_url=self.OWN_STACK_URL,
         )

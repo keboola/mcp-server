@@ -327,7 +327,6 @@ async def preview_config_diff(rq: Request) -> Response:
         has_semantic_models=has_semantic_models,
         token_role=ToolsFilteringMiddleware.get_token_role(token_info),
         features=ToolsFilteringMiddleware.get_project_features(token_info),
-        is_oauth=bool(client.bearer_token),
         is_main_branch=client.branch_id is None,
     )
     if denial:

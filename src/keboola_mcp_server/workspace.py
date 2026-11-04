@@ -526,10 +526,7 @@ class _Workspace(abc.ABC):
         if not real_branch_id:
             raise RuntimeError('Cannot determine the default branch ID')
 
-        # Prefer bearer token over storage token for Query Service
-        token = (
-            f'Bearer {self._client.bearer_token}' if self._client.bearer_token else self._client.legacy_storage_token
-        )
+        token = f'Bearer {self._client.bearer_token}'
 
         return QueryServiceClient.create(
             root_url=urlunparse(('https', f'query.{self._client.hostname_suffix}', '', '', '', '')),

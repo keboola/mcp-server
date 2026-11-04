@@ -614,9 +614,10 @@ def sync_storage_client(storage_api_token: str, storage_api_url: str) -> SyncSto
 
 
 @pytest.fixture
-def keboola_client(sync_storage_client: SyncStorageClient) -> KeboolaClient:
+def keboola_client(sync_storage_client: SyncStorageClient, mcp_token: str) -> KeboolaClient:
     return KeboolaClient(
         legacy_storage_token=sync_storage_client.token,
+        bearer_token=mcp_token,
         storage_api_url=sync_storage_client.root_url,
         headers={'User-Agent': INTEGTEST_USER_AGENT},
     )
