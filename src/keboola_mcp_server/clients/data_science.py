@@ -1,8 +1,10 @@
 import asyncio
 import logging
+import re
 from datetime import datetime
 from http import HTTPStatus
-from typing import Any, Union, cast
+from typing import Any, Literal, Union, cast
+from urllib.parse import urlsplit
 
 import httpx
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, ValidationError, model_validator
@@ -18,6 +20,52 @@ LOG = logging.getLogger(__name__)
 # base.py). Scoped to this one endpoint, which is safe to repeat: a 404 on a retry means an earlier
 # attempt went through.
 _DELETE_RETRY_DELAYS_SECONDS = (2.0, 5.0)
+
+GitAuthType = Literal['organization']
+ORGANIZATION_GIT_AUTH: GitAuthType = 'organization'
+
+# Hosts whose repositories may use organization git auth: github.com and GitHub Enterprise Cloud with
+# data residency (`<enterprise>.ghe.com`). The platform holds the authoritative per-stack list and
+# rejects a host it has no GitHub App for; this pre-check only stops URLs that can never work there.
+_GITHUB_HOST = 'github.com'
+_GHE_CLOUD_HOST_SUFFIX = '.ghe.com'
+_GITHUB_REPOSITORY_PATH_RE = re.compile(
+    r'/(?P<owner>[A-Za-z0-9][A-Za-z0-9_-]{0,38})/(?P<repo>[A-Za-z0-9._-]+?)(?:\.git)?/?'
+)
+_RESERVED_REPOSITORY_NAMES = ('.', '..', '.git')
+
+
+def _is_github_host(host: str) -> bool:
+    return host == _GITHUB_HOST or host.endswith(_GHE_CLOUD_HOST_SUFFIX)
+
+
+def validate_organization_repository_url(repository: str) -> None:
+    """Refuse a repository URL that organization git auth can never clone.
+
+    Mirrors the platform's rules: an `https://{github host}/{owner}/{repository}` URL with no
+    credentials, port, query, fragment, whitespace or path tricks. Raises `ValueError`.
+    """
+    expected = 'Expected "https://github.com/{owner}/{repository}" (or a "*.ghe.com" host).'
+    if not repository.lower().startswith('https://'):
+        raise ValueError(
+            f'Repository "{repository}" cannot use organization git auth: an https:// URL is required. {expected}'
+        )
+    if any(ch.isspace() or ord(ch) < 0x20 or ord(ch) == 0x7F for ch in repository):
+        raise ValueError(f'Repository URL "{repository.strip()}" must not contain whitespace or control characters.')
+    parts = urlsplit(repository)
+    if parts.username is not None or parts.password is not None:
+        raise ValueError('Repository URL must not embed credentials when organization git auth is used.')
+    if parts.port is not None or parts.query or parts.fragment or repository.endswith(('?', '#')):
+        raise ValueError(f'Repository URL "{repository}" must not contain a port, query or fragment. {expected}')
+    host = (parts.hostname or '').lower()
+    if not _is_github_host(host):
+        raise ValueError(
+            f'Repository host "{host}" cannot use organization git auth: it is only available for GitHub '
+            f'repositories (github.com or a "*.ghe.com" host). {expected}'
+        )
+    match = _GITHUB_REPOSITORY_PATH_RE.fullmatch(parts.path)
+    if '%' in parts.path or not match or match['repo'] in _RESERVED_REPOSITORY_NAMES:
+        raise ValueError(f'Repository "{repository}" is not a GitHub repository URL. {expected}')
 
 
 class AppProductionResponse(BaseModel):
@@ -159,26 +207,31 @@ class CodeDataAppConfig(BaseModel):
     class Parameters(BaseModel):
         class DataApp(BaseModel):
             class Git(BaseModel):
-                """External-git binding for a python-js draft data app.
+                """External-git binding for a python-js data app.
 
                 When set, the data-science API treats the app as externally configured: it does NOT
                 provision a managed repo for it, and the data-app runtime clones the configured
-                `repository` (at `branch`) using `username`/`#password` as HTTPS basic auth on every
-                deploy.
+                `repository` (at `branch`) on every deploy. Two ways to authenticate:
 
-                Use case: a draft points at its parent prod app's managed repo, with credentials
-                minted on the prod app via `create_app_git_credential`.
+                - `username`/`#password` as HTTPS basic auth. Use case: a draft points at its parent
+                  prod app's managed repo, with credentials minted on the prod app via
+                  `create_app_git_credential`.
+                - `authType: organization`: no credential in the configuration at all. The platform
+                  mints a short-lived read-only token through the Keboola organization's GitHub App
+                  connection. Use case: a prod app deployed from a customer's GitHub repo.
                 """
 
                 model_config = ConfigDict(populate_by_name=True)
 
-                repository: str = Field(description='HTTPS clone URL of the upstream managed git repo.')
-                username: str = Field(
+                repository: str = Field(description='HTTPS clone URL of the upstream git repo.')
+                username: str | None = Field(
+                    default=None,
                     description=(
                         'Username for HTTPS basic auth. The git-service ignores this and only validates the token.'
                     ),
                 )
-                password: str = Field(
+                password: str | None = Field(
+                    default=None,
                     validation_alias=AliasChoices('#password', 'password'),
                     serialization_alias='#password',
                     description=(
@@ -187,10 +240,41 @@ class CodeDataAppConfig(BaseModel):
                         'decrypt it at runtime.'
                     ),
                 )
+                ssh_key: str | None = Field(
+                    default=None,
+                    validation_alias=AliasChoices('#sshKey', 'ssh_key'),
+                    serialization_alias='#sshKey',
+                    description='Encrypted SSH private key. Never written by the MCP; modeled to detect conflicts.',
+                )
+                auth_type: GitAuthType | None = Field(
+                    default=None,
+                    validation_alias=AliasChoices('authType', 'auth_type'),
+                    serialization_alias='authType',
+                    description=(
+                        '"organization" clones through the Keboola organization\'s GitHub App connection. '
+                        'Mutually exclusive with `username`/`#password`/`#sshKey`.'
+                    ),
+                )
+                private: bool | None = Field(
+                    default=None,
+                    description='Marks the repository as private (needs authentication to clone). Read by the UI.',
+                )
                 branch: str | None = Field(
                     default=None,
                     description='Branch to deploy from. None defaults to the platform default ("main").',
                 )
+
+                @model_validator(mode='after')
+                def _check_organization_auth(self) -> 'CodeDataAppConfig.Parameters.DataApp.Git':
+                    if self.auth_type != ORGANIZATION_GIT_AUTH:
+                        return self
+                    if self.username or self.password or self.ssh_key:
+                        raise ValueError(
+                            f'Use either "authType: {ORGANIZATION_GIT_AUTH}" or explicit credentials '
+                            '("username", "#password", "#sshKey"), not both.'
+                        )
+                    validate_organization_repository_url(self.repository)
+                    return self
 
             slug: str = Field(description='The slug of the data app (used as URL subdomain).')
             secrets: dict[str, str] | None = Field(
