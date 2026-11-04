@@ -37,7 +37,9 @@ App whose pinned workspace uses DGIM.
 | `query_data` | Unchanged: read-only statements only (DMD-2473). |
 
 Any other value of `workspace_scope` is invalid. An empty header means "not provided", so a request
-can tighten a session but never loosen a server configured with `strict`. Sessions without the field
+can tighten a session but never loosen a server configured with `strict`. A request with more than one
+header setting `workspace_scope` (another spelling or a repeated header) is refused, whatever the
+values: the last value would win and an empty one would erase the broker's `strict`. Sessions without the field
 behave exactly as before.
 
 `search` is not in the list because it also returns configurations, flows and data apps. Metadata is
@@ -51,7 +53,8 @@ limited by the Storage token: in a Data App, Kai's token has read permissions on
   `config.py`, also for an invalid `workspace_scope` value) for a strict request without a pin, and
   for one where more than one header sets the pin (`Config.count_header_values`): `KBC_` beats `X-` and
   a repeated header's last value wins, so a caller behind the broker could otherwise replace the
-  broker's pin. `create_session_state` checks the pin again (stdio has no request) and stores the scope in the session state
+  broker's pin. The same holds for the scope itself, checked for every request (strict or not).
+  `create_session_state` checks the pin again (stdio has no request) and stores the scope in the session state
   (`WORKSPACE_SCOPE`, also for a bootstrap session without a token) and passes `strict` to
   `WorkspaceManager.create`. `is_strict_workspace_scope(state)` reads it back.
 - `workspace.py`: `WorkspaceManager(strict=True)` refuses a pinned workspace whose `readonly` is not

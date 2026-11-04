@@ -998,6 +998,12 @@ class SessionStateMiddleware(fmw.Middleware):
             # detects it downstream and the full PSGO-261 multi-project machinery applies unchanged.
             config = dataclasses.replace(config, storage_token=user.access_token.kbc_access_token)
 
+        if Config.count_header_values(http_rq.headers, 'workspace_scope') > 1:
+            # Repeated headers collapse to the last value and an empty one counts as absent, so a second, empty
+            # header the caller adds would erase the broker's `strict` instead of being refused.
+            raise WorkspaceScopeError(
+                'The workspace scope must be set by exactly one header, but more than one sets it.'
+            )
         config.check_workspace_scope()
         if config.is_strict_workspace_scope and Config.count_header_values(http_rq.headers, 'workspace_id') > 1:
             # A broker in front of this server sets the pin; the caller behind it can add the same field under

@@ -440,6 +440,26 @@ async def test_strict_scope_never_uses_the_managed_workspace() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('has_sb_feature', [True, False], ids=['storage_branches', 'legacy'])
+async def test_workspace_manager_create_keeps_the_strict_scope(has_sb_feature: bool) -> None:
+    """Both construction paths of `WorkspaceManager.create()` pass the strict scope on; a manager built without
+    it would fall back to the MCP-managed workspace, which reads the whole project."""
+    input_client = Mock(spec=KeboolaClient)
+    input_client.branch_id = '456'
+    input_client.has_feature = AsyncMock(return_value=has_sb_feature)
+    input_client.with_branch_id = AsyncMock(return_value=Mock(spec=KeboolaClient))
+
+    manager = await WorkspaceManager.create(input_client, workspace_id='999', strict=True)
+    manager._find_ws_in_branch = AsyncMock()  # type: ignore[method-assign]
+    manager._create_ws = AsyncMock()  # type: ignore[method-assign]
+
+    with pytest.raises(ValueError, match='not available in a strict workspace scope'):
+        await manager.get_data_app_workspace_id()
+    manager._find_ws_in_branch.assert_not_called()
+    manager._create_ws.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_get_data_app_workspace_id_ignores_the_pin():
     """`get_data_app_workspace_id()`/`get_data_app_branch_id()`/`get_data_app_sql_dialect()` must
     resolve the *managed* workspace even when a session is pinned via `workspace_id` -- they feed
