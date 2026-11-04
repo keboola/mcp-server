@@ -1,6 +1,5 @@
 """Keboola Storage API client wrapper."""
 
-import functools
 import logging
 from collections.abc import Mapping, Sequence
 from typing import Any, Literal, TypeVar, cast
@@ -28,20 +27,13 @@ from keboola_mcp_server.config import deployed_sa_token_path, is_same_stack
 
 LOG = logging.getLogger(__name__)
 
-BARE_STORAGE_TOKEN_DEPRECATION_MESSAGE = (
-    'A bare per-project Storage API token is deprecated and stops being accepted on 1 December 2026 '
-    '(keboola-mcp-server 2.0.0). Sign in with "keboola-mcp-server login --api-url <stack-url>" or use a Keboola '
-    'programmatic token (kbc_at_/kbc_pat_). See https://help.keboola.com/ai/mcp-server/#migrating-from-a-storage-token'
-)
-
-
-@functools.cache
-def _warn_bare_storage_token() -> None:
-    """Logs the deprecation once per process, not for every session or request."""
-    LOG.warning(BARE_STORAGE_TOKEN_DEPRECATION_MESSAGE)
-
-
 T = TypeVar('T')
+
+LEGACY_TOKEN_REJECTED_MESSAGE = (
+    'A bare per-project Storage API token is no longer accepted. Sign in with "keboola-mcp-server login '
+    '--api-url <stack-url>" or pass a Keboola programmatic token (kbc_at_/kbc_pat_). '
+    'See README.md#authenticating-without-a-browser.'
+)
 
 # Input types for the global search endpoint parameters
 BranchType = Literal['production', 'development']
@@ -145,7 +137,6 @@ class KeboolaClient:
         *,
         storage_api_url: str,
         storage_token: str,
-        bearer_token: str | None = None,
         branch_id: str | None = None,
         project_id: str | int | None = None,
         token_resolver: StorageTokenResolver | None = None,
@@ -154,26 +145,18 @@ class KeboolaClient:
         own_stack_storage_api_url: str | None = None,
     ) -> 'KeboolaClient':
         """
-        Builds a client from the credential a caller was handed, classifying it and -- when it is
-        a programmatic token narrowed to one project -- exchanging it for that project's legacy
-        Storage token.
+        Builds a client from the credential a caller was handed. Only a programmatic token
+        (``kbc_at_``/``kbc_pat_``) is accepted: a bare per-project Storage API token is refused with a
+        `ValueError` (AI-3774).
 
-        `__init__` takes the two *already-classified* credentials (`legacy_storage_token` and
-        `bearer_token`); this factory is the one place that decides which is which:
+        The programmatic token is forwarded downstream as a Bearer for Storage/data-science/scheduler/
+        metastore. Jobs-queue/AI-service/sync-actions re-send whatever they receive to Storage as a legacy
+        ``X-StorageApi-Token``, so that Bearer 401s there (INC-02580 / SUPPORT-17416); with `project_id` and a
+        `token_resolver` we exchange it for the real per-project Storage token via the auth-bridge. On failure
+        we keep the raw token, degrading to the pre-existing 401 rather than breaking session creation.
 
-        * A programmatic token (``kbc_at_``/``kbc_pat_``) is forwarded downstream as a Bearer for
-          Storage/data-science/scheduler/metastore. Jobs-queue/AI-service/sync-actions re-send
-          whatever they receive to Storage as a legacy ``X-StorageApi-Token``, so that Bearer 401s
-          there (INC-02580 / SUPPORT-17416); with `project_id` and a `token_resolver` we exchange
-          it for the real per-project Storage token via the auth-bridge. On failure we keep the raw
-          token, degrading to the pre-existing 401 rather than breaking session creation.
-        * Anything else (a legacy project-bound Storage token, or an OAuth session whose bearer is
-          supplied separately) is passed through untouched.
-
-        :param storage_token: The credential the caller presented (legacy Storage token, or a
-            programmatic kbc_at_/kbc_pat_ token, with or without a `Bearer ` scheme).
-        :param bearer_token: An OAuth bearer, when the session has one alongside a legacy Storage
-            token. Ignored (overwritten) for a programmatic `storage_token`.
+        :param storage_token: The programmatic kbc_at_/kbc_pat_ token the caller presented, with or without a
+            `Bearer ` scheme.
         :param project_id: The project this client is narrowed to, if any. Only used to pick the
             project for the legacy-token exchange -- the caller still owns the X-KBC-ProjectId
             header.
@@ -185,21 +168,18 @@ class KeboolaClient:
             raise ValueError('Storage API URL is not provided.')
         if not storage_token:
             raise ValueError('Storage API token is not provided.')
+        if not is_programmatic_token(storage_token):
+            raise ValueError(LEGACY_TOKEN_REJECTED_MESSAGE)
 
-        if bearer_token is None and not is_programmatic_token(storage_token):
-            # A bare token on its own; an OAuth session carries its Storage token next to a bearer.
-            _warn_bare_storage_token()
-
+        bearer_token = strip_bearer(storage_token)
         legacy_storage_token = storage_token
-        if is_programmatic_token(storage_token):
-            bearer_token = strip_bearer(storage_token)
-        if token_resolver is not None and project_id is not None and is_programmatic_token(bearer_token):
+        if token_resolver is not None and project_id is not None:
             try:
                 # int() stays INSIDE the try: project_id can come from the caller-supplied
                 # X-KBC-ProjectId header, and a non-numeric value must degrade to the warning
                 # below, not 500 the request.
                 legacy_storage_token = await token_resolver.resolve(
-                    subject_token=cast(str, bearer_token), project_id=int(project_id)
+                    subject_token=bearer_token, project_id=int(project_id)
                 )
             except (StorageTokenExchangeError, OSError, ValueError) as e:
                 # OSError/ValueError: the projected ServiceAccount JWT file is missing or empty.

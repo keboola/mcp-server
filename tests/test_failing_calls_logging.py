@@ -31,7 +31,8 @@ class TestFailingCallsThroughFastMcp:
         mocker.patch('keboola_mcp_server.clients.base.KeboolaServiceClient.post', return_value={'id': '1'})
         config = Config.from_dict(
             {
-                'storage_token': '123-test-storage-token',
+                'storage_token': 'kbc_at_123-test-storage-token',
+                'project_id': '123',
                 'storage_api_url': 'https://connection.keboola.com',
                 'transport': 'stdio',
             }

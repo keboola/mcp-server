@@ -1736,25 +1736,16 @@ class TestCreateSessionStateTokenResolutionWiring:
         assert client.headers.get('X-KBC-ProjectId') == project_id
 
     @pytest.mark.asyncio
-    async def test_project_id_and_header_omitted_for_a_legacy_token(self) -> None:
-        # A legacy project-bound Storage token derives its project from the token itself and must
-        # not get X-KBC-ProjectId -- even if config.project_id happens to be set.
-        config = Config(
-            storage_api_url='https://connection.keboola.com', storage_token='sapi_token_456', project_id='42'
-        )
+    @pytest.mark.parametrize('token', ['sapi_token_456', 'Bearer sapi_token_456', '123-456-abcdef'])
+    async def test_a_legacy_token_is_rejected_without_echoing_it(self, token: str) -> None:
+        config = Config(storage_api_url='https://connection.keboola.com', storage_token=token, project_id='42')
         runtime_info = ServerRuntimeInfo(transport='http')
 
-        with (
-            patch.object(WorkspaceManager, 'create', AsyncMock(return_value='wsm')),
-            patch('keboola_mcp_server.mcp.KeboolaClient.create', AsyncMock(wraps=KeboolaClient.create)) as create,
-        ):
-            state = await SessionStateMiddleware.create_session_state(
-                config, runtime_info, own_stack_storage_api_url=None
-            )
+        with pytest.raises(ValueError, match='no longer accepted') as exc_info:
+            await SessionStateMiddleware.create_session_state(config, runtime_info, own_stack_storage_api_url=None)
 
-        assert create.await_args.kwargs['project_id'] is None
-        client = state[KeboolaClient.STATE_KEY]
-        assert 'X-KBC-ProjectId' not in (client.headers or {})
+        assert 'sapi_token_456' not in str(exc_info.value)
+        assert '123-456-abcdef' not in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_forwards_the_given_token_resolver_unchanged(self) -> None:

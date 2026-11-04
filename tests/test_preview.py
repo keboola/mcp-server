@@ -21,7 +21,7 @@ from keboola_mcp_server.tools.components.utils import get_nested, set_nested_val
 async def starlette_app() -> Starlette:
     """Create a Starlette app with the preview endpoint."""
     config = Config(
-        storage_token='test-token',
+        storage_token='kbc_at_test-token',
         storage_api_url='https://connection.test.keboola.com',
         workspace_schema='test-workspace',
     )

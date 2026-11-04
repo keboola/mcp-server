@@ -286,7 +286,8 @@ class TestPydanticValidationErrors:
     @pytest.fixture
     def mcp_server(self) -> FastMCP:
         cfg_dict = {
-            'storage_token': '123-test-storage-token',
+            'storage_token': 'kbc_at_123-test-storage-token',
+            'project_id': '123',
             'storage_api_url': 'https://connection.keboola.com',
             'transport': 'stdio',
         }

@@ -1361,17 +1361,15 @@ class SessionStateMiddleware(fmw.Middleware):
             if not config.storage_api_url:
                 raise ValueError('Storage API URL is not provided.')
 
-            # A programmatic token (kbc_at_/kbc_pat_) is narrowed to a specific project via
-            # X-KBC-ProjectId when known (header, or a prior scope selection) -- unset
-            # (whole-stack) is exactly what get_accessible_projects/set_project_scope need before
-            # a project is chosen. A legacy project-bound Storage token derives its project from
-            # the token itself and must not get the header.
-            project_id = config.project_id if is_programmatic_token(config.storage_token) else None
+            # The programmatic token (kbc_at_/kbc_pat_; `KeboolaClient.create` rejects anything else) is
+            # narrowed to a specific project via X-KBC-ProjectId when known (header, or a prior scope
+            # selection) -- unset (whole-stack) is exactly what get_accessible_projects/set_project_scope
+            # need before a project is chosen.
+            project_id = config.project_id
             try:
                 client = await KeboolaClient.create(
                     storage_api_url=config.storage_api_url,
                     storage_token=config.storage_token,
-                    bearer_token=config.bearer_token,
                     branch_id=config.branch_id,
                     project_id=project_id,
                     token_resolver=token_resolver,
