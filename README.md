@@ -164,15 +164,15 @@ refuses, `query_data` returns as an error.
   app, Kai) names no end user, has no verified identity and reads nothing from a governed table. The administrator's
   subject is `keboola|<adminId>` and the identity carries no groups, so group rules never match.
 - **Bindings.** Without a binding a workspace gets every policy of the project, and this server never creates one. To
-  give a workspace only some policies, bind them to its KID: `KID:<stack id>:project-<project id>:workspace-<workspace
-  id>` (a workspace of the default branch; a branch workspace also has `branch-<branch id>` before `project`). The stack
-  id is the one the Query Service is configured with (`QUERY_RLS_STACK_ID`, for example `dev-keboola-aws-eu-west-1`),
-  the workspace id is in the `get_project_info` output, and a `policy-binding` Metastore object with that KID writes the
-  binding (no kbagent command for it is released yet). A binding is an allowlist: it keeps only the policies it lists,
-  so it can leave out any policy, an organization-scope one included, and loosen access. One that lists no `rls-policy`
-  drops every row policy, so a table covered by a kept `cls-policy` opens with all rows. A binding applies to the next
-  query and does not follow the session to another workspace: a branch session, or a workspace that is recreated, has a
-  new KID and starts again with every policy.
+  give a workspace only some policies, bind them to its KID:
+  `KID:<stack-id>:project-<project-id>:workspace-<workspace-id>` (a workspace of the default branch; a branch workspace
+  also has `branch-<branch-id>` before `project`). The stack id is the one the Query Service is configured with
+  (`QUERY_RLS_STACK_ID`, for example `dev-keboola-aws-eu-west-1`), the workspace id is in the `get_project_info` output,
+  and a `policy-binding` Metastore object with that KID writes the binding (no kbagent command for it is released yet).
+  A binding is an allowlist: it keeps only the policies it lists, so it can leave out any policy, an organization-scope
+  one included, and loosen access. One that lists no `rls-policy` drops every row policy, so a table covered by a kept
+  `cls-policy` opens with all rows. A binding applies to the next query and does not follow the session to another
+  workspace: a branch session, or a workspace that is recreated, has a new KID and starts again with every policy.
 - **Limits.** The workspace id of the server's workspace is also what a data app gets as `WORKSPACE_ID` when no separate
   workspace is provisioned for it; the app queries with its own token, has no verified identity, and reads nothing from
   governed tables.
