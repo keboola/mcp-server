@@ -2659,8 +2659,10 @@ passed to or stored by the MCP.
    no git credential for it (`create_python_js_data_app_git_credential` is rejected).
 3. `deploy_data_app(action='deploy', configuration_id=PROD)` — production mode only. Drafts,
    dev mode and the preview link are not supported for such apps yet.
-If the deploy fails because the organization's GitHub connection is missing, an organization
-admin connects the GitHub organization in Control UI → Organization → GitHub and installs the App.
+If the deploy fails because the organization's GitHub connection is missing, someone who is both a
+Keboola organization admin and an owner of the GitHub organization installs the Keboola GitHub App
+first, then connects the GitHub organization:
+https://help.keboola.com/management/organization/#connect-github (not a menu path).
 
 ## Argument rules
 
