@@ -44,15 +44,14 @@ whether it is needed.
      `configuration_id=...`, the `parameter_updates=[...]` and a `change_description=...`.
    - Flow: `modify_flow` with `project_id=<the confirmed id>`, its `configuration_id=...`, the `flow_type=...` it
      already has and a `change_description=...`.
-   - Another component: `get_components` for its schema. When the fix belongs in a configuration row, call
-     `update_config_row` with `project_id=<the confirmed id>`, `component_id=...`, `configuration_id=...`,
-     `configuration_row_id=...` and a `change_description=...`. Otherwise call `update_config` with
-     `project_id=<the confirmed id>`, `component_id=...`, `configuration_id=...` and a `change_description=...`.
+   - Another component: its configuration cannot be changed here. Describe the change so the user can make it in
+     Keboola.
    - Expired OAuth credentials need the user: create a link with `create_oauth_url`,
      `project_id=<the confirmed id>`, `component_id=...` and `config_id=...`, and ask them to reauthorize.
 
-   Then, with the user's consent, call `run_job` with `project_id=<the confirmed id>`, `component_id=...` and
-   `configuration_id=...`, and check the new job with `get_jobs`. If the server refuses a write because the user's
+   Then, with the user's consent, rerun a fixed SQL transformation or flow: call `run_job` with
+   `project_id=<the confirmed id>`, `component_id=...` and `configuration_id=...`, and check the new job with
+   `get_jobs`. Another component's job is rerun by the user in Keboola. If the server refuses a write because the user's
    role is read-only, give the user the proposed fix to pass to a project admin.
 
 ## Rules

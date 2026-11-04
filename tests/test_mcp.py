@@ -29,6 +29,7 @@ from keboola_mcp_server.config import Config, ServerRuntimeInfo
 from keboola_mcp_server.mcp import (
     CONVERSATION_ID,
     DELETED_BRANCH_ID,
+    DIRECTORY_ARGUMENT_VALUES,
     DIRECTORY_TOOLS,
     LISTED_BRANCH_ID,
     STORAGE_API_URL,
@@ -2514,6 +2515,16 @@ class TestDirectoryToolProfile:
         'delete_python_js_data_app_draft',
         'get_data_app_preview_link',
     )
+    # Generic executors by OpenAI's review: any component, configured with free-form parameters, and their discovery.
+    EXCLUDED_GENERIC_CONFIG_TOOLS = (
+        'create_config',
+        'update_config',
+        'add_config_row',
+        'update_config_row',
+        'get_components',
+        'get_config_examples',
+        'find_component_id',
+    )
     # Feature-gated (`branches-merge-requests`) and not reviewed for the plugin directory yet (DMD-1701). Kept apart
     # from EXCLUDED, whose tools the list/call tests below exercise without project features.
     EXCLUDED_MERGE_REQUEST_TOOLS = (
@@ -2549,12 +2560,19 @@ class TestDirectoryToolProfile:
         mcp = create_server(Config(), runtime_info=ServerRuntimeInfo(transport='stdio'))
         registered = {t.name for t in asyncio.run(mcp.list_tools(run_middleware=False))}
 
-        assert DIRECTORY_TOOLS == registered - set(self.EXCLUDED) - set(self.EXCLUDED_MERGE_REQUEST_TOOLS)
+        assert DIRECTORY_TOOLS == (
+            registered
+            - set(self.EXCLUDED)
+            - set(self.EXCLUDED_GENERIC_CONFIG_TOOLS)
+            - set(self.EXCLUDED_MERGE_REQUEST_TOOLS)
+        )
 
     @pytest.mark.asyncio
     async def test_the_preview_route_previews_only_directory_tools(self) -> None:
-        """`/preview/configuration` does not apply the profile (it never sees a router session); that is safe only while
-        every tool it previews is on the allow-list. `PREVIEW_TOOLS` is checked against the route's own dispatch."""
+        """`/preview/configuration` does not apply the profile: it takes a Storage or programmatic token, never the
+        OAuth token of a router session, and writes nothing. It previews the directory tools plus the generic config
+        tools the Keboola UI uses; any other exception is a visible decision. `PREVIEW_TOOLS` is checked against the
+        route's own dispatch."""
         from keboola_mcp_server.preview import PREVIEW_TOOLS, _extract_coordinates
         from keboola_mcp_server.server import create_server
 
@@ -2563,7 +2581,7 @@ class TestDirectoryToolProfile:
         workspace_manager = MagicMock()
         workspace_manager.get_data_app_sql_dialect = AsyncMock(return_value='Snowflake')
 
-        assert PREVIEW_TOOLS <= DIRECTORY_TOOLS
+        assert PREVIEW_TOOLS - DIRECTORY_TOOLS == {'update_config', 'update_config_row'}
         for name in PREVIEW_TOOLS:
             await _extract_coordinates(name, {}, workspace_manager)
         for name in registered - PREVIEW_TOOLS:
@@ -2597,7 +2615,8 @@ class TestDirectoryToolProfile:
             del mcp_context_client.session.state[KeboolaClient.STATE_KEY]
         mcp_context_client.fastmcp = KeboolaMcpServer()
         allowed = ['get_tables', 'query_data', 'modify_flow']
-        tools = [_tool(name) for name in [*allowed, *self.EXCLUDED, 'a_tool_added_later']]
+        excluded = [*self.EXCLUDED, *self.EXCLUDED_GENERIC_CONFIG_TOOLS, 'a_tool_added_later']
+        tools = [_tool(name) for name in [*allowed, *excluded]]
 
         with patch('keboola_mcp_server.mcp.get_http_request_or_none', return_value=self._request(directory_profile)):
             result = await ToolsFilteringMiddleware().on_list_tools(
@@ -2606,7 +2625,7 @@ class TestDirectoryToolProfile:
 
         names = {t.name for t in result}
         assert set(allowed) <= names
-        for name in (*self.EXCLUDED, 'a_tool_added_later'):
+        for name in excluded:
             assert (name not in names) is expect_hidden
 
     @staticmethod
@@ -2630,7 +2649,7 @@ class TestDirectoryToolProfile:
         return await handler(context)
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize('tool_name', [*EXCLUDED, 'a_tool_added_later'])
+    @pytest.mark.parametrize('tool_name', [*EXCLUDED, *EXCLUDED_GENERIC_CONFIG_TOOLS, 'a_tool_added_later'])
     @pytest.mark.parametrize(('directory_profile', 'expect_denied'), [(True, True), (False, False)])
     async def test_call_tool(
         self, mcp_context_client, keboola_client, tool_name: str, directory_profile: bool, expect_denied: bool
@@ -2673,16 +2692,16 @@ class TestDirectoryToolProfile:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ('tool_name', 'expect_verified'),
+        ('tool_name', 'arguments', 'expect_verified'),
         [
             # bootstrap tool: exempt from token verification
-            ('get_accessible_projects', False),
+            ('get_accessible_projects', {}, False),
             # gated tool: verified and checked against role, features and branch
-            ('run_job', True),
+            ('run_job', {'component_id': 'keboola.flow', 'configuration_id': '1'}, True),
         ],
     )
     async def test_call_allowed_tool(
-        self, mcp_context_client, keboola_client, tool_name: str, expect_verified: bool
+        self, mcp_context_client, keboola_client, tool_name: str, arguments: dict[str, Any], expect_verified: bool
     ) -> None:
         """A plugin session reaches the tools on the allow-list."""
         keboola_client.bearer_token = 'kbc_at_abc'
@@ -2691,7 +2710,7 @@ class TestDirectoryToolProfile:
         )
         mcp_context_client.fastmcp = SimpleNamespace(get_tool=AsyncMock(return_value=_tool(tool_name)))
         context = MiddlewareContext(
-            message=SimpleNamespace(name=tool_name, arguments={}),
+            message=SimpleNamespace(name=tool_name, arguments=arguments),
             fastmcp_context=mcp_context_client,
             method='tools/call',
         )
@@ -2705,7 +2724,7 @@ class TestDirectoryToolProfile:
         assert keboola_client.storage_client.verify_token.called is expect_verified
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize('tool_name', EXCLUDED)
+    @pytest.mark.parametrize('tool_name', [*EXCLUDED, *EXCLUDED_GENERIC_CONFIG_TOOLS])
     async def test_call_tool_refused_before_the_project_scope(
         self, mcp_context_client, keboola_client, tool_name: str
     ) -> None:
@@ -2763,18 +2782,73 @@ class TestDirectoryToolProfile:
         assert {name: [h for h in hidden if h in text] for name, text in directory.items()} == {
             name: [] for name in DIRECTORY_TOOLS
         }
-        # Exactly the tools that name a hidden tool to every other session have a directory variant.
+        # Exactly the tools that name a hidden tool to every other session, or whose arguments the profile limits, have
+        # a directory variant.
         names_hidden = {name for name in DIRECTORY_TOOLS if any(h in regular[name] for h in hidden)}
-        assert names_hidden == {name for name in DIRECTORY_TOOLS if directory[name] != regular[name]}
+        assert names_hidden | DIRECTORY_ARGUMENT_VALUES.keys() == {
+            name for name in DIRECTORY_TOOLS if directory[name] != regular[name]
+        }
         assert names_hidden == {
-            'add_config_row',
-            'create_config',
+            'create_sql_transformation',
             'deploy_data_app',
             'get_data_apps',
             'modify_streamlit_data_app',
-            'update_config',
-            'update_config_row',
+            'search',
+            'update_sql_transformation',
         }
+        run_job = json.loads(directory['run_job'])['input_schema']['properties']['component_id']
+        assert run_job['enum'] == [
+            'keboola.snowflake-transformation',
+            'keboola.google-bigquery-transformation',
+            'keboola.flow',
+            'keboola.orchestrator',
+        ]
+        assert 'enum' not in json.loads(regular['run_job'])['input_schema']['properties']['component_id']
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ('component_id', 'directory_profile', 'expect_denied'),
+        [
+            ('keboola.ex-generic-v2', True, True),
+            ('keboola.python-transformation-v2', True, True),
+            (None, True, True),
+            ('keboola.ex-generic-v2', False, False),
+            ('keboola.google-bigquery-transformation', True, False),
+            ('keboola.orchestrator', True, False),
+        ],
+    )
+    async def test_run_job_starts_only_sql_transformations_and_flows(
+        self,
+        mcp_context_client,
+        keboola_client,
+        component_id: str | None,
+        directory_profile: bool,
+        expect_denied: bool,
+    ) -> None:
+        """In a plugin session `run_job` is no generic executor: it starts only what the directory tools create. The
+        refusal comes before the token verification and the tool."""
+        keboola_client.bearer_token = 'kbc_at_abc'
+        keboola_client.storage_client.verify_token = AsyncMock(
+            return_value={'owner': {'features': []}, 'admin': {'role': 'admin'}}
+        )
+        mcp_context_client.fastmcp = SimpleNamespace(get_tool=AsyncMock(return_value=_tool('run_job')))
+        arguments = {'configuration_id': '1'} | ({'component_id': component_id} if component_id else {})
+        context = MiddlewareContext(
+            message=SimpleNamespace(name='run_job', arguments=arguments),
+            fastmcp_context=mcp_context_client,
+            method='tools/call',
+        )
+        call_next = AsyncMock(return_value=MagicMock())
+
+        with patch('keboola_mcp_server.mcp.get_http_request_or_none', return_value=self._request(directory_profile)):
+            if expect_denied:
+                with pytest.raises(ToolError, match='"run_job" accepts only these values of "component_id"'):
+                    await self._call_through_chain(context, call_next)
+                call_next.assert_not_called()
+                keboola_client.storage_client.verify_token.assert_not_called()
+            else:
+                await self._call_through_chain(context, call_next)
+                call_next.assert_awaited_once()
 
     @pytest.mark.parametrize('component_id', sorted(_UNSUITABLE_COMPONENTS_MESSAGES))
     @pytest.mark.parametrize('runtime', [None, {'workspace': {'enabled': True}}])
