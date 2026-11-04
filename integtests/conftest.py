@@ -29,6 +29,7 @@ from integtests.project_lock import (
     ProjectPool,
     verify_project_endpoint,
 )
+from integtests.service_login import login_from_env, project_token
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config, ServerRuntimeInfo, build_tracing_headers
 from keboola_mcp_server.mcp import ServerState
@@ -47,14 +48,10 @@ STORAGE_API_TOKENS_ENV_VAR = 'INTEGTEST_STORAGE_TOKENS'  # space-separated pool 
 # The second pair of token/schema for testing simultaneous access to two different projects.
 STORAGE_API_TOKEN_ENV_VAR_2 = 'INTEGTEST_STORAGE_TOKEN_PRJ2'
 WORKSPACE_SCHEMA_ENV_VAR_2 = 'INTEGTEST_WORKSPACE_SCHEMA_PRJ2'
-# A single Keboola programmatic token (kbc_pat_/kbc_at_) whose user is a member of ALL pool
-# projects. It exercises the multi-project PAT flow (introspect + scoped exchange + fan-out)
-# against the SAME pool projects, just with different authentication — no separate PAT pool.
-# Optional: PAT-auth tests skip when it is not set. The PAT uses the pool storage_api_url.
-STORAGE_PAT_ENV_VAR = 'INTEGTEST_STORAGE_PAT'
 # We reset dev environment variables to integtest values to ensure tests run locally using .env settings.
 DEV_STORAGE_API_URL_ENV_VAR = 'STORAGE_API_URL'
 DEV_STORAGE_TOKEN_ENV_VAR = 'KBC_STORAGE_TOKEN'
+DEV_PROJECT_ID_ENV_VAR = 'KBC_PROJECT_ID'
 DEV_WORKSPACE_SCHEMA_ENV_VAR = 'KBC_WORKSPACE_SCHEMA'
 INTEGTEST_CLIENT_INFO = Implementation(
     name='kbc-mcp-integtests', version=importlib.metadata.version('keboola_mcp_server')
@@ -146,10 +143,13 @@ def _patch_session_middleware_user_agent() -> Generator[None, None, None]:
 
 
 @pytest.fixture(scope='session')
-def env_init(env_file_loaded: bool, storage_api_token: str, storage_api_url: str, workspace_schema: str) -> bool:
+def env_init(
+    env_file_loaded: bool, mcp_token: str, project_lock: AcquiredProject, storage_api_url: str, workspace_schema: str
+) -> bool:
     # We reset the development environment variables to the values of the integtest environment variables.
     os.environ[DEV_STORAGE_API_URL_ENV_VAR] = storage_api_url
-    os.environ[DEV_STORAGE_TOKEN_ENV_VAR] = storage_api_token
+    os.environ[DEV_STORAGE_TOKEN_ENV_VAR] = mcp_token
+    os.environ[DEV_PROJECT_ID_ENV_VAR] = project_lock.endpoint.project_id
     os.environ[DEV_WORKSPACE_SCHEMA_ENV_VAR] = workspace_schema
     return env_file_loaded
 
@@ -168,6 +168,26 @@ def storage_api_url(env_file_loaded: bool) -> str:
 @pytest.fixture(scope='session')
 def storage_api_token(project_lock: AcquiredProject) -> str:
     return project_lock.endpoint.storage_api_token
+
+
+@pytest.fixture(scope='session')
+def service_session_token(env_file_loaded: bool, storage_api_url: str) -> str:
+    """The CI service user's whole-stack `kbc_at_` session token (password + TOTP login, see service_login.py)."""
+    try:
+        return login_from_env(storage_api_url)
+    except RuntimeError as exc:
+        pytest.fail(str(exc))
+
+
+@pytest.fixture(scope='session')
+def mcp_token(service_session_token: str, storage_api_url: str, project_lock: AcquiredProject) -> str:
+    """What the MCP server under test is given: a `kbc_at_` token that reaches only the locked pool project.
+
+    The server accepts nothing else. `storage_api_token` stays the per-project Storage token the fixtures use
+    for their own direct Storage API calls (locking, cleanup, test data) -- it is not an MCP credential.
+    The service user must be a member of every pool project.
+    """
+    return project_token(storage_api_url, service_session_token, project_lock.endpoint.project_id)
 
 
 @pytest.fixture(scope='session')
@@ -213,19 +233,6 @@ def workspace_schema(_clean_project: None, storage_api_token: str, storage_api_u
             storage_client.workspaces.delete(workspace_id)
         except Exception:
             LOG.exception(f'Failed to delete test-session workspace {workspace_id}')
-
-
-@pytest.fixture(scope='session')
-def programmatic_token(env_file_loaded: bool) -> str:
-    """A Keboola programmatic token (kbc_pat_/kbc_at_) for the multi-project PAT flow.
-
-    Skips the test when INTEGTEST_STORAGE_PAT is not configured, so the suite stays green
-    on stacks/CI runs where no PAT is provided.
-    """
-    token = os.getenv(STORAGE_PAT_ENV_VAR)
-    if not token:
-        pytest.skip(f'{STORAGE_PAT_ENV_VAR} not set; skipping PAT multi-project integration tests.')
-    return token
 
 
 def _try_acquire_additional_project(exclude_project_ids: set[str]) -> AcquiredProject | None:
@@ -676,8 +683,13 @@ def mcp_context(
 
 
 @pytest.fixture
-def mcp_server(storage_api_url: str, storage_api_token: str, workspace_schema: str) -> FastMCP:
-    config = Config(storage_api_url=storage_api_url, storage_token=storage_api_token, workspace_schema=workspace_schema)
+def mcp_server(storage_api_url: str, mcp_token: str, project_lock: AcquiredProject, workspace_schema: str) -> FastMCP:
+    config = Config(
+        storage_api_url=storage_api_url,
+        storage_token=mcp_token,
+        project_id=project_lock.endpoint.project_id,
+        workspace_schema=workspace_schema,
+    )
     server = create_server(config, runtime_info=ServerRuntimeInfo(transport='stdio'))
     assert isinstance(server, FastMCP)
     return server

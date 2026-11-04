@@ -9,6 +9,7 @@ from fastmcp.server.middleware import CallNext, MiddlewareContext
 from mcp import types as mt
 
 from integtests.conftest import ConfigDef
+from integtests.project_lock import AcquiredProject
 from keboola_mcp_server.clients.client import (
     CONDITIONAL_FLOW_COMPONENT_ID,
     KeboolaClient,
@@ -21,7 +22,9 @@ LOG = logging.getLogger(__name__)
 
 
 @pytest.fixture
-def mcp_server(storage_api_url: str, storage_api_token: str, workspace_schema: str, mocker) -> FastMCP:
+def mcp_server(
+    storage_api_url: str, mcp_token: str, project_lock: AcquiredProject, workspace_schema: str, mocker
+) -> FastMCP:
     # allow all tool calls regardless the testing project features
     async def on_call_tool(
         context: MiddlewareContext[mt.CallToolRequestParams],
@@ -33,7 +36,12 @@ def mcp_server(storage_api_url: str, storage_api_token: str, workspace_schema: s
         'keboola_mcp_server.server.ToolsFilteringMiddleware.on_call_tool', new=AsyncMock(side_effect=on_call_tool)
     )
 
-    config = Config(storage_api_url=storage_api_url, storage_token=storage_api_token, workspace_schema=workspace_schema)
+    config = Config(
+        storage_api_url=storage_api_url,
+        storage_token=mcp_token,
+        project_id=project_lock.endpoint.project_id,
+        workspace_schema=workspace_schema,
+    )
     return create_server(config, runtime_info=ServerRuntimeInfo(transport='stdio'))
 
 

@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 import random
@@ -14,10 +15,18 @@ from fastmcp.client import StdioTransport, StreamableHttpTransport
 from mcp.types import TextContent
 
 from integtests.conftest import (
+    DEV_PROJECT_ID_ENV_VAR,
     DEV_STORAGE_API_URL_ENV_VAR,
     DEV_STORAGE_TOKEN_ENV_VAR,
     DEV_WORKSPACE_SCHEMA_ENV_VAR,
     ConfigDef,
+)
+from integtests.project_lock import AcquiredProject
+from integtests.service_login import (
+    LOGIN_EMAIL_ENV_VAR,
+    LOGIN_PASSWORD_ENV_VAR,
+    LOGIN_TOTP_SECRET_ENV_VAR,
+    project_token,
 )
 from keboola_mcp_server.tools.components.model import GetConfigsDetailOutput
 from keboola_mcp_server.tools.project import ProjectInfo
@@ -29,11 +38,12 @@ HttpTransportStr = Literal['streamable-http', 'http-compat']
 @pytest.mark.asyncio
 async def test_stdio_setup(
     configs: list[ConfigDef],
-    storage_api_token: str,
+    mcp_token: str,
+    project_lock: AcquiredProject,
     workspace_schema: str,
     storage_api_url: str,
 ):
-    assert storage_api_token is not None
+    assert mcp_token is not None
     assert workspace_schema is not None
     assert storage_api_url is not None
 
@@ -45,11 +55,13 @@ async def test_stdio_setup(
             '--api-url',
             storage_api_url,
             '--storage-token',
-            storage_api_token,
+            mcp_token,
             '--workspace-schema',
             workspace_schema,
         ],
-        env={},  # make sure no env vars are passed from the test environment
+        env={
+            'KBC_PROJECT_ID': project_lock.endpoint.project_id
+        },  # make sure no env vars are passed from the test environment
     )
     component_config = configs[0]
     async with Client(transport) as client:
@@ -62,18 +74,23 @@ async def test_stdio_setup(
 async def test_remote_setup(
     transport: HttpTransportStr,
     configs: list[ConfigDef],
-    storage_api_token: str,
+    mcp_token: str,
+    project_lock: AcquiredProject,
     workspace_schema: str,
     storage_api_url: str,
 ):
-    assert storage_api_token is not None
+    assert mcp_token is not None
     assert workspace_schema is not None
     assert storage_api_url is not None
 
     component_config = configs[0]
     for url in _run_server_remote(storage_api_url, transport):
         # test both cases: with headers and without headers using query params
-        headers = {'storage_token': storage_api_token, 'workspace_schema': workspace_schema}
+        headers = {
+            'storage_token': mcp_token,
+            'project_id': project_lock.endpoint.project_id,
+            'workspace_schema': workspace_schema,
+        }
         async with _run_client(url, headers) as client:
             await _assert_basic_setup(client)
             await _assert_get_component_details_tool_call(client, component_config)
@@ -82,7 +99,8 @@ async def test_remote_setup(
 @pytest.mark.asyncio
 async def test_http_multiple_clients(
     configs: list[ConfigDef],
-    storage_api_token: str,
+    mcp_token: str,
+    project_lock: AcquiredProject,
     workspace_schema: str,
     storage_api_url: str,
 ):
@@ -90,7 +108,8 @@ async def test_http_multiple_clients(
     component_config = configs[0]
     for url in _run_server_remote(storage_api_url, transport):
         headers = {
-            'storage_token': storage_api_token,
+            'storage_token': mcp_token,
+            'project_id': project_lock.endpoint.project_id,
             'workspace_schema': workspace_schema,
             'storage_api_url': storage_api_url,
         }
@@ -111,6 +130,8 @@ async def test_http_multiple_clients(
 async def test_http_multiple_clients_with_different_headers(
     storage_api_url: str,
     storage_api_token: str,
+    mcp_token: str,
+    service_session_token: str,
     workspace_schema: str,
     storage_api_token_2: str | None,
     workspace_schema_2: str | None,
@@ -125,9 +146,17 @@ async def test_http_multiple_clients_with_different_headers(
     if not storage_api_token_2 or not workspace_schema_2:
         pytest.skip('No SAPI token or workspace schema for the second client. Skipping test.')
 
+    project_id_1 = storage_api_token.split(sep='-')[0]
+    project_id_2 = storage_api_token_2.split(sep='-')[0]
     headers = {
-        'client_1': {'storage_token': storage_api_token, 'workspace_schema': workspace_schema},
-        'client_2': {'storage_token': storage_api_token_2, 'workspace_schema': workspace_schema_2},
+        'client_1': {'storage_token': mcp_token, 'project_id': project_id_1, 'workspace_schema': workspace_schema},
+        'client_2': {
+            'storage_token': await asyncio.to_thread(
+                project_token, storage_api_url, service_session_token, project_id_2
+            ),
+            'project_id': project_id_2,
+            'workspace_schema': workspace_schema_2,
+        },
     }
 
     transport: HttpTransportStr = 'streamable-http'
@@ -141,12 +170,12 @@ async def test_http_multiple_clients_with_different_headers(
 
             response_1 = await client_1.call_tool('get_project_info')
             project_info_1 = ProjectInfo.model_validate(response_1.structured_content)
-            project_info_1.project_id = storage_api_token.split(sep='-')[0]
+            project_info_1.project_id = project_id_1
             LOG.info(f'project_info_1={project_info_1}')
 
             response_2 = await client_2.call_tool('get_project_info')
             project_info_2 = ProjectInfo.model_validate(response_2.structured_content)
-            project_info_2.project_id = storage_api_token_2.split(sep='-')[0]
+            project_info_2.project_id = project_id_2
             LOG.info(f'project_info_2={project_info_2}')
 
 
@@ -309,7 +338,16 @@ def _run_server_remote(storage_api_url: str, transport: HttpTransportStr) -> Ite
         env={
             name: val
             for name, val in os.environ.items()
-            if name not in [DEV_STORAGE_API_URL_ENV_VAR, DEV_STORAGE_TOKEN_ENV_VAR, DEV_WORKSPACE_SCHEMA_ENV_VAR]
+            if name
+            not in [
+                DEV_STORAGE_API_URL_ENV_VAR,
+                DEV_STORAGE_TOKEN_ENV_VAR,
+                DEV_PROJECT_ID_ENV_VAR,
+                DEV_WORKSPACE_SCHEMA_ENV_VAR,
+                LOGIN_EMAIL_ENV_VAR,
+                LOGIN_PASSWORD_ENV_VAR,
+                LOGIN_TOTP_SECRET_ENV_VAR,
+            ]
         },
     )
     try:
