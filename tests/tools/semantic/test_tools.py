@@ -92,7 +92,9 @@ def test_compact_object_carries_targeted_scope_and_target_projects() -> None:
 
 
 def test_compact_object_leaves_scope_fields_absent_when_meta_has_none() -> None:
-    obj = _metastore_object(SemanticObjectType.SEMANTIC_MODEL, 'm1', name='Plain Model')
+    obj = _metastore_object(SemanticObjectType.SEMANTIC_MODEL, 'm1', name='Plain Model').model_copy(
+        update={'meta': None}
+    )
 
     compact = _compact_semantic_object(_to_semantic_service_data(SemanticObjectType.SEMANTIC_MODEL, obj))
 
@@ -101,6 +103,86 @@ def test_compact_object_leaves_scope_fields_absent_when_meta_has_none() -> None:
     assert compact.source_project_id is None
     assert compact.target_project_ids is None
     assert compact.scope_elevation_requested_at is None
+    # Never approved: both approval fields stay absent.
+    assert compact.approved_by is None
+    assert compact.approved_at is None
+
+
+@pytest.mark.parametrize(
+    'object_type',
+    [
+        SemanticObjectType.SEMANTIC_MODEL,
+        SemanticObjectType.SEMANTIC_DATASET,
+        SemanticObjectType.SEMANTIC_METRIC,
+        SemanticObjectType.SEMANTIC_RELATIONSHIP,
+        SemanticObjectType.SEMANTIC_GLOSSARY,
+        SemanticObjectType.SEMANTIC_CONSTRAINT,
+    ],
+)
+@pytest.mark.parametrize(
+    ('meta', 'drop_meta', 'expected_scope', 'expected_project_id'),
+    [
+        ({'scope': 'project', 'projectId': 123}, False, 'project', 123),
+        (None, False, None, None),  # meta present, carrying only the name
+        (None, True, None, None),  # meta absent altogether
+    ],
+    ids=['scoped', 'unscoped', 'no-meta'],
+)
+def test_compact_object_carries_approval_fields(
+    object_type: SemanticObjectType,
+    meta: dict[str, object] | None,
+    drop_meta: bool,
+    expected_scope: str | None,
+    expected_project_id: int | None,
+) -> None:
+    """approvedBy/approvedAt come from the object's attributes, independent of scope metadata."""
+    obj = _metastore_object(
+        object_type,
+        'o1',
+        name='Approved Object',
+        attributes={'approvedBy': 'user@example.com', 'approvedAt': '2026-11-05T10:00:00Z'},
+        meta=meta,
+    )
+    if drop_meta:
+        obj = obj.model_copy(update={'meta': None})
+        assert obj.meta is None
+
+    service_data = _to_semantic_service_data(object_type, obj)
+
+    for view in (_compact_semantic_object(service_data), SemanticObject.from_semantic_service_data(service_data)):
+        assert view.approved_by == 'user@example.com'
+        assert view.approved_at == '2026-11-05T10:00:00Z'
+        assert view.scope == expected_scope
+        assert view.project_id == expected_project_id
+        assert view.source_project_id is None
+        assert view.target_project_ids is None
+        assert view.scope_elevation_requested_at is None
+
+
+@pytest.mark.parametrize(
+    ('attributes', 'expected'),
+    [
+        ({'approvedBy': 'a@example.com'}, ('a@example.com', None)),
+        ({'approvedAt': '2026-11-05T10:00:00Z'}, (None, '2026-11-05T10:00:00Z')),
+        ({'approvedBy': None, 'approvedAt': None}, (None, None)),
+        # Older schema versions allow extra properties: a non-string value is dropped, not an error.
+        ({'approvedBy': 42, 'approvedAt': ['x']}, (None, None)),
+        (None, (None, None)),  # the object carries no attributes at all
+    ],
+    ids=['only-by', 'only-at', 'explicit-null', 'non-string', 'no-attributes'],
+)
+def test_approval_fields_tolerate_partial_and_malformed_attributes(
+    attributes: dict[str, object] | None, expected: tuple[str | None, str | None]
+) -> None:
+    obj = _metastore_object(SemanticObjectType.SEMANTIC_METRIC, 'o1', name='Metric', attributes=attributes)
+    if attributes is None:
+        obj = obj.model_copy(update={'attributes': None})
+        assert obj.attributes is None
+
+    service_data = _to_semantic_service_data(SemanticObjectType.SEMANTIC_METRIC, obj)
+
+    for view in (_compact_semantic_object(service_data), SemanticObject.from_semantic_service_data(service_data)):
+        assert (view.approved_by, view.approved_at) == expected
 
 
 def test_full_semantic_object_also_carries_scope() -> None:
