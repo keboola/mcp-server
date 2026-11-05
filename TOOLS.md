@@ -5743,7 +5743,7 @@ or EXPLAIN (BigQuery has none of these; query INFORMATION_SCHEMA instead). Anyth
 multiple statements, is rejected before it reaches the database.
 
 BEFORE QUERYING:
-* Always verify the table has a non-null fullyQualifiedName from get_tables tool.
+* Always verify the table has a non-null `fully_qualified_name` from get_tables tool.
   If it does not, the table is not SQL-accessible from this workspace — do not attempt the query and inform user.
 
 CRITICAL SQL REQUIREMENTS:
@@ -5755,11 +5755,11 @@ CRITICAL SQL REQUIREMENTS:
 TABLE AND COLUMN REFERENCES:
 * Always use fully qualified table names in the exact FQN format provided by table information tools
 * Follow the identifier structure exactly as shown by table info tools for the current SQL dialect
-* For every column reference, call get_tables first and copy that column's `quotedName` value VERBATIM.
-  Do not guess the name, re-case it, or hand-quote it yourself — use the exact `quotedName` from get_tables.
+* For every column reference, call get_tables first and copy that column's `quoted_name` value VERBATIM.
+  Do not guess the name, re-case it, or hand-quote it yourself — use the exact `quoted_name` from get_tables.
 * Snowflake case trap: unquoted identifiers fold to UPPERCASE while quoted identifiers are case-sensitive,
   so hand-quoting a guessed lowercase name (e.g. "date") fails with `invalid identifier` even though the
-  column physically exists as DATE. The `quotedName` from get_tables already carries the correct case and
+  column physically exists as DATE. The `quoted_name` from get_tables already carries the correct case and
   dialect quoting, so copying it avoids this.
 
 CTE (WITH CLAUSE) RULES:
@@ -5951,9 +5951,9 @@ COLUMN DATA TYPES:
   it stores integer values despite being stored as text in the backend.
 
 QUERYABILITY RULE:
-- A table is directly queryable via query_data tool only if fullyQualifiedName is present and non-null
+- A table is directly queryable via query_data tool only if `fully_qualified_name` is present and non-null
   in the response.
-- If fullyQualifiedName is absent or null (e.g. for linked/alias tables from other projects),
+- If `fully_qualified_name` is absent or null (e.g. for linked/alias tables from other projects),
   the table cannot be queried via SQL from this workspace.
 - Do not attempt to construct or guess the FQN — it will not work. In that case,
   inform the user of the limitation immediately.

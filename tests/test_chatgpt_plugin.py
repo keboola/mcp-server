@@ -28,9 +28,11 @@ NON_TOOL_IDENTIFIERS = frozenset(
     {
         'block_id',
         'code_id',
+        'fully_qualified_name',
         'id',
         'name',
         'project_id',
+        'quoted_name',
         'read_only',
         'scope_token',
         'set_code',

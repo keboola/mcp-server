@@ -31,11 +31,11 @@ If the user names no project, find it in step 1.
    table just to find one by name.
 5. **Describe tables.** Call `get_tables` with `table_ids=[...]` for the tables that matter, and with
    `project_ids=[<the table's project>]` when 2+ projects are scoped: without it the call runs in every scoped
-   project. Report columns, types, description and row count. Check `fullyQualifiedName`: a table without one (for
+   project. Report columns, types, description and row count. Check `fully_qualified_name`: a table without one (for
    example a linked table from another project) cannot be queried. Say so and stop for that table.
 6. **Query.** Call `query_data` with one `SELECT` (or `WITH ... SELECT`) statement, and with
    `project_ids=[<the table's project>]` when 2+ projects are scoped: a query runs in every scoped project
-   otherwise. Copy table names from `fullyQualifiedName` and column names from `quotedName` exactly. Always add a
+   otherwise. Copy table names from `fully_qualified_name` and column names from `quoted_name` exactly. Always add a
    `LIMIT`; compute counts and aggregates in SQL rather than pulling raw rows. Inspect distinct values before
    filtering on a categorical column.
 7. **Answer.** Give the answer with the query you ran and the links the tools returned.

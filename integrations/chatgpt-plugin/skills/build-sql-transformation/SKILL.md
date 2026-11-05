@@ -30,7 +30,7 @@ existing transformation, its name or ID.
    `toolset_restrictions` say only read-only tools are available, tell the user they cannot save transformations
    in this project and stop.
 4. **Find the inputs.** Use `search` with `item_types=["table"]` for the source tables, then `get_tables` with
-   `table_ids=[...]` for their `fullyQualifiedName` and column `quotedName` values.
+   `table_ids=[...]` for their `fully_qualified_name` and column `quoted_name` values.
 5. **Prototype the SQL.** Run the `SELECT` part through `query_data` with a small `LIMIT` and show the user sample
    rows. Fix errors here, before anything is saved.
 6. **Save it.**
