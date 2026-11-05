@@ -392,13 +392,19 @@ class TestConnectionClientIdentity:
             ('https://chatgpt.com/connector_platform_oauth_redirect', 'chatgpt'),
             # DMD-2642: pre-registered by PreRegisterCursorOAuthClientMigration (AI-4022)
             ('https://www.cursor.com/agents/mcp/oauth/callback', 'cursor'),
-            ('http://localhost:8787/callback', 'cursor'),
         ],
     )
     def test_well_known_redirect_uri_maps_to_pre_registered_client_id(self, redirect_uri: str, client_id: str):
         from keboola_mcp_server.oauth import _connection_client_id
 
         assert _connection_client_id(redirect_uri, _KEY) == client_id
+
+    def test_cursor_desktop_callback_is_not_mapped_to_cursor(self):
+        """Connection pre-registers it for `cursor`, but any local agent can listen on that port, so it is treated
+        like every other loopback callback (DMD-2642)."""
+        from keboola_mcp_server.oauth import _connection_client_id
+
+        assert _connection_client_id('http://localhost:8787/callback', _KEY).startswith('mcp-')
 
     def test_unknown_redirect_uri_derives_a_stable_short_id(self):
         from keboola_mcp_server.oauth import _connection_client_id
@@ -811,7 +817,6 @@ class TestSimpleOAuthProvider:
             ('https://claude.ai/api/mcp/auth_callback', True),
             ('https://chatgpt.com/connector_platform_oauth_redirect', True),
             ('https://www.cursor.com/agents/mcp/oauth/callback', True),
-            ('http://localhost:8787/callback', True),
             # became REGISTERED via the dynamic-approval screen (Flow B)
             ('https://my-self-service-tool.example/cb', False),
         ],
@@ -1480,7 +1485,6 @@ class TestSimpleOAuthProvider:
             'https://claude.ai/api/mcp/auth_callback',
             'https://chatgpt.com/connector_platform_oauth_redirect',
             'https://www.cursor.com/agents/mcp/oauth/callback',
-            'http://localhost:8787/callback',
         ],
     )
     @pytest.mark.parametrize('approval_on', [True, False])
@@ -3172,7 +3176,6 @@ class TestAuthorizationServerMetadata:
             'https://claude.ai/api/mcp/auth_callback',
             'https://chatgpt.com/connector_platform_oauth_redirect',
             'https://www.cursor.com/agents/mcp/oauth/callback',
-            'http://localhost:8787/callback',
         ],
     )
     @pytest.mark.parametrize(

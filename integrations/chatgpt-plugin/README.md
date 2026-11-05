@@ -62,10 +62,11 @@ and discovers the skills in `skills/`. `.cursor-plugin/marketplace.json` at the 
 Marketplace at this directory. Grok Bot runs in Cursor's cloud and installs plugins from the Cursor Marketplace, so
 there is nothing separate to publish for it.
 
-Cursor signs in with dynamic client registration and one of its fixed callbacks,
-`https://www.cursor.com/agents/mcp/oauth/callback` (web, Cloud Agents) or `http://localhost:8787/callback` (desktop).
-Connection has both pre-registered as the client `cursor`, and `_WELL_KNOWN_CONNECTION_CLIENT_IDS` in
-`src/keboola_mcp_server/oauth.py` maps them to it. Like ChatGPT, a session through the router gets the directory
+Cursor signs in with dynamic client registration and its fixed callback
+`https://www.cursor.com/agents/mcp/oauth/callback`, which Connection has pre-registered as the client `cursor` and
+`_WELL_KNOWN_CONNECTION_CLIENT_IDS` in `src/keboola_mcp_server/oauth.py` maps to it. Cursor's documented desktop
+callback `http://localhost:8787/callback` is not mapped: any local agent can listen there, so it is handled like
+every other loopback client. Like ChatGPT, a session through the router gets the directory
 tools only.
 
 To try it, copy this directory to `~/.cursor/plugins/local/keboola` (Cursor does not follow a symlink that points
