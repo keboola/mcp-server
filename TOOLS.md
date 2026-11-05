@@ -837,6 +837,18 @@ WHEN TO USE:
       ],
       "default": null,
       "description": "Optional row ID for row-level actions. When provided, the row parameters and storage are shallow-merged on top of root config."
+    },
+    "project_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Target Keboola project id for this write. Required when the session is scoped to 2+ projects; optional (defaults to the single scoped project) otherwise."
     }
   },
   "required": [
@@ -6069,6 +6081,18 @@ caller's current branch context directly.
       ],
       "default": null,
       "description": "Optional display name for the linked bucket."
+    },
+    "project_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Target Keboola project id for this write. Required when the session is scoped to 2+ projects; optional (defaults to the single scoped project) otherwise."
     }
   },
   "required": [

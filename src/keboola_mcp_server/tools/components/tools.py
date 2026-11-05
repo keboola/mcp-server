@@ -2045,6 +2045,7 @@ async def run_sync_action(
             ),
         ),
     ] = None,
+    project_id: ProjectIdArg = None,
 ) -> dict[str, Any] | list[Any]:
     """
     Executes a synchronous action for a component configuration or a component row configuration.

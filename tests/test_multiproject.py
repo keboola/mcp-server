@@ -14,9 +14,11 @@ from pydantic import ValidationError as PydanticValidationError
 from keboola_mcp_server.clients.auth_bridge import StorageTokenResolver
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
-from keboola_mcp_server.mcp import ServerState
-from keboola_mcp_server.multiproject import MultiProjectMiddleware
+from keboola_mcp_server.mcp import ServerState, is_read_only_tool
+from keboola_mcp_server.multiproject import _NO_FANOUT_TOOLS, MultiProjectMiddleware
 from keboola_mcp_server.scope import SCOPE_KEY, SessionScope
+from keboola_mcp_server.server import create_server
+from keboola_mcp_server.tools.constants import BOOTSTRAP_TOOLS, MERGE_REQUEST_SESSION_BOUND_TOOLS
 from keboola_mcp_server.workspace import WorkspaceManager
 
 
@@ -29,6 +31,29 @@ def _tool(name: str, read_only: bool = False, tags: set[str] | None = None) -> M
     else:
         tool.annotations = None
     return tool
+
+
+class TestWriteToolsDeclareProjectId:
+    """The middleware routes a write by its `project_id` argument but only the tool signature can advertise it."""
+
+    @pytest.mark.asyncio
+    async def test_every_write_tool_declares_project_id(self) -> None:
+        server = create_server(
+            Config(storage_api_url='https://connection.keboola.com'),
+            runtime_info=ServerRuntimeInfo(transport='streamable-http'),
+        )
+        exempt = BOOTSTRAP_TOOLS | _NO_FANOUT_TOOLS | MERGE_REQUEST_SESSION_BOUND_TOOLS
+
+        tools = await server.local_provider.list_tools()
+
+        missing = sorted(
+            tool.name
+            for tool in tools
+            if not is_read_only_tool(tool)
+            and tool.name not in exempt
+            and 'project_id' not in (tool.parameters or {}).get('properties', {})
+        )
+        assert missing == [], f'write tools without a `project_id` argument fail in a multi-project scope: {missing}'
 
 
 class TestMultiProjectMiddleware:
