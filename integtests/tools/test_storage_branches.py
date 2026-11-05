@@ -367,7 +367,11 @@ async def _build_context(
         storage_api_url=branch_project.storage_api_url,
         legacy_storage_token=branch_project.storage_api_token,
         bearer_token=branch_project.bearer_token,
-        headers={'User-Agent': 'KeboolaMCPServer/integtest'},
+        # Programmatic tokens need the project they are meant for (a Storage token starts with its project id).
+        headers={
+            'User-Agent': 'KeboolaMCPServer/integtest',
+            'X-KBC-ProjectId': branch_project.storage_api_token.split('-')[0],
+        },
     )
     if branch_id is not None:
         keboola_client = await keboola_client.with_branch_id(branch_id)

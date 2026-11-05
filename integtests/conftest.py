@@ -614,12 +614,15 @@ def sync_storage_client(storage_api_token: str, storage_api_url: str) -> SyncSto
 
 
 @pytest.fixture
-def keboola_client(sync_storage_client: SyncStorageClient, mcp_token: str) -> KeboolaClient:
+def keboola_client(
+    sync_storage_client: SyncStorageClient, mcp_token: str, project_lock: AcquiredProject
+) -> KeboolaClient:
     return KeboolaClient(
         legacy_storage_token=sync_storage_client.token,
         bearer_token=mcp_token,
         storage_api_url=sync_storage_client.root_url,
-        headers={'User-Agent': INTEGTEST_USER_AGENT},
+        # Storage and the other services refuse a programmatic token without the project it is meant for.
+        headers={'User-Agent': INTEGTEST_USER_AGENT, 'X-KBC-ProjectId': str(project_lock.endpoint.project_id)},
     )
 
 
