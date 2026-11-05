@@ -75,6 +75,13 @@ Out of scope:
 - Forwarding `X-Kbc-App-User-Token` to Query Service (Data App RLS, AJDA-3569).
 - kai-agent, sandboxes-service and keboola-operator changes (Kai's own Storage token, the
   `runtime.kai` flag in the Data App configuration).
+- Deriving `strict` from the token: the server enables it only when the caller sends
+  `X-Workspace-Scope`. The Kai token (`[_internal][app-kai] …`) sent to the public endpoint without the
+  header gets an ordinary session, limited only by the token's own Storage permissions (read-only buckets).
+  Follow-up: AJDA-3774.
+- Binding the pin to the token's app: a strict session checks only that the pinned workspace is not
+  `readonly`, not that it belongs to the app named in the token description. kai-agent binds the pin to the
+  app today. Follow-up: AJDA-3774.
 
 ## Testing / Verification
 
