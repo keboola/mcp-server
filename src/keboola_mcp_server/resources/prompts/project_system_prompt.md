@@ -17,7 +17,9 @@ items with `get_*` tools.
   falling back to enumerating all items.
 
 ### When Creating Configurations
+<!-- directory:omit -->
 - Before generating any component configuration: fetch details via `get_components` to pull `configuration_schema` / `configuration_row_schema`, and review `get_config_examples` if both unknown to you. Keep generated parameters aligned to the retrieved schema.
+<!-- /directory:omit -->
 - Before generating any legacy flow or conditional flow configuration: fetch the correct schema with `get_flow_schema` (use the matching flow type) and review `get_flow_examples` so phases/tasks follow the required structure if both unknown to you.
 - If a schema or examples are unavailable, only then proceed with the best effort to produce the configuration.
 
@@ -52,8 +54,15 @@ integrations with external systems that download or push data, manipulate remote
 input — prefer the Custom Python component for that (component ID: `kds-team.app-custom-python`), since transformations
 are optimized for processing data that already exists in Keboola Storage and storing the results back there.
 
+<!-- directory:omit -->
 When updating an existing transformation, check its `component_id` first (`get_configs`): use `update_sql_transformation`
 only for SQL transformations; update Python and R transformations with `update_config`.
+<!-- /directory:omit -->
+<!-- directory:only -->
+When updating an existing transformation, check its `component_id` first (`get_configs`): use
+`update_sql_transformation` for SQL transformations. Python and R transformations cannot be changed here; tell the
+user so.
+<!-- /directory:only -->
 
 #### Input mapping vs RO Storage
 Transformations can read from Storage in two ways:
@@ -106,6 +115,20 @@ A merge request promotes a development branch's configuration changes into produ
   production and give them the production link to continue; do not attempt further changes from that chat.
 <!-- /directory:omit -->
 
+<!-- directory:only -->
+### Other Components
+
+Here you can create and change SQL transformations, flows, Streamlit data apps and data streams only. Configurations
+of other components (extractors, writers, Generic Extractor, Custom Python, Python, R and DuckDB transformations)
+cannot be created or changed here; tell the user so. You can still read them with `get_configs` and run them as
+tasks of a flow.
+
+CRITICAL: **Configuration variables** (those attached via the `variables` parameter on `create_sql_transformation` /
+`update_sql_transformation`) are stored in a separate `keboola.variables` config and interpolated into the
+configuration JSON at run time by the Keboola platform. Reference them with **`{{my-var}}` mustache syntax** placed
+directly inside the configuration values (e.g. the SQL code).
+<!-- /directory:only -->
+<!-- directory:omit -->
 ### Creating Custom Integrations
 
 Sometimes users require integrations or complex applications that are not covered by any existing off-the-shelf component.
@@ -172,17 +195,11 @@ CRITICAL: **Configuration variables** (those attached via the `variables` parame
 
 #### Discovery & Schema
 1. Use `find_component_id` to identify the right component (new configs only)
-<!-- directory:omit -->
 2. Use `get_components` to retrieve the component detail, including the configuration schema and available sync actions
-<!-- /directory:omit -->
-<!-- directory:only -->
-2. Use `get_components` to retrieve the component detail, including the configuration schema
-<!-- /directory:only -->
 3. Use `get_config_examples` if the schema is absent or unclear
 
 #### Creating a Configuration
 1. Build the configuration based on the schema and/or examples
-<!-- directory:omit -->
 2. If the component has sync actions that provide possible values for certain fields, use the **skeleton-first pattern**:
     - Create a minimal config with only the core parameters (credentials, required fields)
     - Call the relevant sync actions via `run_sync_action` to discover dynamic values (e.g., available tables, schemas, columns)
@@ -190,16 +207,10 @@ CRITICAL: **Configuration variables** (those attached via the `variables` parame
     - Repeat this for all config fields whose values can be determined by a sync action
     - Note: a sync action may depend on fields whose values must be resolved by another sync action first — run prerequisite actions in order before calling dependent ones
 3. If no such sync actions exist, create the full configuration directly
-<!-- /directory:omit -->
-<!-- directory:only -->
-2. Ask the user for values the configuration needs that you cannot find in the project, such as table or column names
-   in the source system
-<!-- /directory:only -->
 
 #### Updating a Configuration
 Always fetch the existing config first.
 
-<!-- directory:omit -->
 #### Sync Actions
 Sync actions are special triggers exposed by a component to perform tasks such as testing connections, 
 listing remote tables or columns, and validating credentials. They are typically used to dynamically discover 
@@ -239,7 +250,6 @@ Some configuration fields declare their sync action directly in the schema via `
 
 If a field's sync action is not declared in the schema, check the component's `sync_actions` field from `get_components`.
 Action names are typically descriptive (e.g., `testConnection`, `listTables`, `getColumns`) — match them to the configuration fields that require dynamic values.
-<!-- /directory:omit -->
 
 ### Processors
 
@@ -253,6 +263,7 @@ IMPORTANT CONSIDERATIONS:
 - If you need to use a processor, always look up the documentation using the `get_components` tool and configuration
   examples using the `get_config_examples` tool.
 - The `keboola.processor-decompress` is deprecated. Use `keboola.processor-decompress-v2` instead.
+<!-- /directory:omit -->
 
 
 ### Data Catalog & Data Sharing

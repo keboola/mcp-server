@@ -20,7 +20,7 @@ With the AI Agent and MCP Server, you can:
 - **SQL**: Create SQL transformations with natural language
 - **Jobs**: Run components and transformations, and retrieve job execution details
 - **Flows**: Build and manage workflow pipelines using Conditional Flows and Orchestrator Flows.
-- **Data Apps**: Create, deploy and manage Keboola Streamlit Data Apps displaying your queries over storage data.
+- **Data Apps**: Create, deploy and manage Keboola Data Apps displaying your queries over storage data — python-js apps on a Keboola-managed repository or on a customer GitHub repository (cloned through the organization's GitHub connection, no stored credential), and Streamlit apps.
 - **Metadata**: Search, read, and update project documentation and object metadata using natural language
 - **Dev Branches**: Work safely in development branches outside of production, where all operations are scoped to the selected branch.
 

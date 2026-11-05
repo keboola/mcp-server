@@ -44,6 +44,7 @@ from keboola_mcp_server.links import ProjectLinksManager
 from keboola_mcp_server.mcp import (
     KeboolaMcpServer,
     ToonCompactFunctionTool,
+    is_directory_session,
     process_concurrently,
 )
 from keboola_mcp_server.mcp import PlainFunctionTool as FunctionTool
@@ -488,11 +489,18 @@ async def create_sql_transformation(
 
     USAGE:
     - Use when you want to create a new SQL transformation.
+    <!-- directory:omit -->
     - This is THE tool for creating `keboola.snowflake-transformation` and `keboola.google-bigquery-transformation`
       components (do NOT use `create_config` for these); the transformation ID is derived automatically from the
       workspace SQL dialect.
     - Snowflake/BigQuery only. For Python, R, or DuckDB transformations, use `create_config` with the appropriate
       `component_id` instead — this tool cannot create them.
+    <!-- /directory:omit -->
+    <!-- directory:only -->
+    - This is THE tool for creating `keboola.snowflake-transformation` and `keboola.google-bigquery-transformation`
+      components; the transformation ID is derived automatically from the workspace SQL dialect.
+    - Snowflake/BigQuery only: this tool cannot create Python, R, or DuckDB transformations.
+    <!-- /directory:only -->
 
     EXAMPLES:
     - user_input: `Can you create a new transformation out of this sql query?`
@@ -702,7 +710,12 @@ async def update_sql_transformation(
     Use this for modifying SQL transformations created with create_sql_transformation.
 
     WHEN TO USE:
+    <!-- directory:omit -->
     - SQL transformations only (Snowflake/BigQuery); use update_config for Python/R/DuckDB transformations
+    <!-- /directory:omit -->
+    <!-- directory:only -->
+    - SQL transformations only (Snowflake/BigQuery); it cannot update Python/R/DuckDB transformations
+    <!-- /directory:only -->
     - Modifying SQL queries in transformation (add/edit/remove SQL statements)
     - Updating transformation block or code block names
     - Changing input/output table mappings for the transformation
@@ -1006,9 +1019,17 @@ async def update_sql_transformation_internal(
         )
     except HTTPStatusError as e:
         if e.response.status_code == 404:
-            raise ToolError(
+            not_found = (
                 f"Configuration '{configuration_id}' was not found under SQL transformation component "
-                f"'{sql_transformation_id}'. If this is a Python, R, or DuckDB transformation, use 'update_config' "
+                f"'{sql_transformation_id}'."
+            )
+            if is_directory_session():
+                # The Keboola plugin has no `update_config` (`mcp.DIRECTORY_TOOLS`).
+                raise ToolError(
+                    f'{not_found} Python, R, or DuckDB transformations cannot be updated in the Keboola plugin.'
+                ) from e
+            raise ToolError(
+                f"{not_found} If this is a Python, R, or DuckDB transformation, use 'update_config' "
                 f"with component_id 'keboola.python-transformation-v2', 'keboola.r-transformation-v2', or "
                 f"'keboola.duckdb-transformation' instead of 'update_sql_transformation'."
             ) from e

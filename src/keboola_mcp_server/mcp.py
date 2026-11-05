@@ -6,6 +6,7 @@ and other utilities for the MCP server.
 """
 
 import asyncio
+import copy
 import dataclasses
 import inspect
 import logging
@@ -53,7 +54,7 @@ from keboola_mcp_server.clients.auth_bridge import (
     strip_bearer,
 )
 from keboola_mcp_server.clients.base import JsonDict
-from keboola_mcp_server.clients.client import BranchNotFoundError, KeboolaClient
+from keboola_mcp_server.clients.client import FLOW_TYPES, BranchNotFoundError, KeboolaClient
 from keboola_mcp_server.config import (
     Config,
     ServerRuntimeInfo,
@@ -174,28 +175,26 @@ DATA_APP_BRANCH_GATED_TOOLS = {
 
 # The tools a session created through the ChatGPT plugin (bound to the global router's resource) may see and call: an
 # explicit allow-list, so that a tool added later stays hidden there until it is reviewed for the plugin directory
-# (OpenAI scans the plugin's tool list and holds new tools until approved). Not listed: `run_sync_action` (an arbitrary
-# action on any component, a generic executor by OpenAI's rules), `create_project` (an unowned PAYG project, next to
-# the commerce rules), and the tools that hand out a secret, which OpenAI forbids in responses:
+# (OpenAI scans the plugin's tool list and holds new tools until approved). Not listed: the generic executors by
+# OpenAI's rules -- `run_sync_action` (an arbitrary action on any component) and the tools that configure any component
+# with free-form parameters, `create_config`, `update_config`, `add_config_row` and `update_config_row`, together with
+# their discovery tools `get_components`, `get_config_examples` and `find_component_id` (OpenAI review, 2026-11-04);
+# `create_project` (an unowned PAYG project, next to the commerce rules), and the tools that hand out a secret, which
+# OpenAI forbids in responses:
 # `create_python_js_data_app_git_credential` and `modify_python_js_data_app` (git URLs with an embedded secret),
 # `delete_python_js_data_app_draft` (part of that git workflow) and `get_data_app_preview_link` (a URL that carries a
 # secret and skips the app login). The merge-request tools are not listed either: not reviewed for the directory yet.
 DIRECTORY_TOOLS = frozenset(
     {
-        'add_config_row',
         'create_conditional_flow',
-        'create_config',
         'create_flow',
         'create_oauth_url',
         'create_sql_transformation',
         'create_stream',
         'deploy_data_app',
         'docs_query',
-        'find_component_id',
         'get_accessible_projects',
         'get_buckets',
-        'get_components',
-        'get_config_examples',
         'get_configs',
         'get_data_apps',
         'get_flow_examples',
@@ -216,8 +215,6 @@ DIRECTORY_TOOLS = frozenset(
         'search',
         'search_semantic_context',
         'set_project_scope',
-        'update_config',
-        'update_config_row',
         'update_descriptions',
         'update_flow',
         'update_project_description',
@@ -226,6 +223,16 @@ DIRECTORY_TOOLS = frozenset(
     }
 )
 
+
+# The values a directory session may pass in an argument of a tool on `DIRECTORY_TOOLS` that accepts any value
+# elsewhere: listed as the parameter's `enum` (`KeboolaMcpServer.for_directory`) and enforced on the call
+# (`DirectoryProfileMiddleware`). `run_job` starts only what the directory tools create, SQL transformations and flows:
+# with any component it would be a generic executor by OpenAI's rules.
+DIRECTORY_ARGUMENT_VALUES: dict[str, dict[str, tuple[str, ...]]] = {
+    'run_job': {
+        'component_id': ('keboola.snowflake-transformation', 'keboola.google-bigquery-transformation', *FLOW_TYPES),
+    },
+}
 
 SESSION_EXPIRED_MESSAGE = 'Your Keboola session has expired. Refresh the page (or sign in again) and try again.'
 
@@ -488,15 +495,20 @@ class KeboolaMcpServer(FastMCP):
     def for_directory(self, tool: Tool) -> Tool:
         """The tool as a session with the directory tool profile lists it: none of its texts names a tool outside
         `DIRECTORY_TOOLS`. Maps the texts of the tool it is given, so that changes other middlewares made to the
-        listed tool stay."""
-        if not (texts := self._directory_texts.get(tool.name)):
+        listed tool stay. The arguments limited by `DIRECTORY_ARGUMENT_VALUES` list their values as an `enum`."""
+        texts = self._directory_texts.get(tool.name)
+        limits = DIRECTORY_ARGUMENT_VALUES.get(tool.name)
+        if not texts and not limits:
             return tool
-        return tool.model_copy(
-            update={
-                field: _map_texts(getattr(tool, field), lambda text: texts.get(text, text))
-                for field in ('description', 'parameters', 'output_schema')
-            }
-        )
+        update = {
+            field: _map_texts(getattr(tool, field), lambda text: texts.get(text, text) if texts else text)
+            for field in ('description', 'parameters', 'output_schema')
+        }
+        if limits:
+            update['parameters'] = copy.deepcopy(update['parameters'])
+            for name, values in limits.items():
+                update['parameters']['properties'][name]['enum'] = list(values)
+        return tool.model_copy(update=update)
 
 
 def get_http_request_or_none() -> Request | None:
@@ -1430,6 +1442,13 @@ class DirectoryProfileMiddleware(fmw.Middleware):
             tool = await context.fastmcp_context.fastmcp.get_tool(context.message.name)
             if tool.name not in DIRECTORY_TOOLS:
                 raise ToolError(directory_denial(tool.name))
+            arguments = context.message.arguments or {}
+            for name, values in DIRECTORY_ARGUMENT_VALUES.get(tool.name, {}).items():
+                if arguments.get(name) not in values:
+                    raise ToolError(
+                        f'In the Keboola plugin, "{tool.name}" accepts only these values of "{name}": '
+                        f'{", ".join(values)}.'
+                    )
         return await call_next(context)
 
 
