@@ -80,13 +80,17 @@ class CompactSemanticObject(BaseModel):
     )
 
 
-def _meta_fields(obj: semantic_service.SemanticServiceData) -> dict[str, Any]:
+def _str_or_none(value: object) -> str | None:
+    """Older schema versions allow extra properties, so a non-string value must not break a whole listing."""
+    return value if isinstance(value, str) else None
+
+
+def _common_fields(obj: semantic_service.SemanticServiceData) -> dict[str, Any]:
     """Scope/visibility and approval fields shared by every compact and full semantic object view."""
     attributes = obj.data.attributes or {}
-    # Older schema versions allow extra properties, so a non-string value must not break the whole listing.
     approval = {
-        field: value if isinstance(value := attributes.get(key), str) else None
-        for field, key in (('approved_by', 'approvedBy'), ('approved_at', 'approvedAt'))
+        'approved_by': _str_or_none(attributes.get('approvedBy')),
+        'approved_at': _str_or_none(attributes.get('approvedAt')),
     }
     meta = obj.data.meta
     if meta is None:
@@ -113,7 +117,7 @@ class SemanticModelCompact(CompactSemanticObject):
             name=obj.display_name,
             description=attributes.get('description'),
             sql_dialect=attributes.get('sql_dialect'),
-            **_meta_fields(obj),
+            **_common_fields(obj),
         )
 
 
@@ -142,7 +146,7 @@ class SemanticDatasetCompact(CompactSemanticObject):
             description=attributes.get('description'),
             model_uuid=attributes.get('modelUUID'),
             fqn=attributes.get('fqn'),
-            **_meta_fields(obj),
+            **_common_fields(obj),
         )
 
 
@@ -160,7 +164,7 @@ class SemanticMetricCompact(CompactSemanticObject):
             description=attributes.get('description'),
             dataset=attributes.get('dataset'),
             model_uuid=attributes.get('modelUUID'),
-            **_meta_fields(obj),
+            **_common_fields(obj),
         )
 
 
@@ -182,7 +186,7 @@ class SemanticRelationshipCompact(CompactSemanticObject):
             type=attributes.get('type'),
             on=attributes.get('on'),
             model_uuid=attributes.get('modelUUID'),
-            **_meta_fields(obj),
+            **_common_fields(obj),
         )
 
 
@@ -200,7 +204,7 @@ class SemanticGlossaryCompact(CompactSemanticObject):
             term=attributes.get('term'),
             definition=attributes.get('definition'),
             model_uuid=attributes.get('modelUUID'),
-            **_meta_fields(obj),
+            **_common_fields(obj),
         )
 
 
@@ -222,7 +226,7 @@ class SemanticConstraintCompact(CompactSemanticObject):
             rule=attributes.get('rule'),
             severity=attributes.get('severity'),
             model_uuid=attributes.get('modelUUID'),
-            **_meta_fields(obj),
+            **_common_fields(obj),
         )
 
 
@@ -242,7 +246,7 @@ class SemanticObject(CompactSemanticObject):
             id=obj.id,
             name=obj.display_name,
             attributes=obj.data.attributes or {},
-            **_meta_fields(obj),
+            **_common_fields(obj),
         )
 
 
