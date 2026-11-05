@@ -27,6 +27,14 @@ from keboola_mcp_server.config import deployed_sa_token_path, is_same_stack
 
 LOG = logging.getLogger(__name__)
 
+BARE_STORAGE_TOKEN_DEPRECATION_MESSAGE = (
+    'A bare per-project Storage API token is deprecated and stops being accepted on 1 December 2026 '
+    '(keboola-mcp-server 2.0.0). Sign in with "keboola-mcp-server login --api-url <stack-url>" or use a Keboola '
+    'programmatic token (kbc_at_/kbc_pat_). See https://help.keboola.com/ai/mcp-server/#migrating-from-a-storage-token'
+)
+# The deprecation is logged once per process, not for every session or request.
+_bare_storage_token_warned = False
+
 T = TypeVar('T')
 
 # Input types for the global search endpoint parameters
@@ -171,6 +179,12 @@ class KeboolaClient:
             raise ValueError('Storage API URL is not provided.')
         if not storage_token:
             raise ValueError('Storage API token is not provided.')
+
+        global _bare_storage_token_warned
+        if bearer_token is None and not is_programmatic_token(storage_token) and not _bare_storage_token_warned:
+            # A bare token on its own; an OAuth session carries its Storage token next to a bearer.
+            _bare_storage_token_warned = True
+            LOG.warning(BARE_STORAGE_TOKEN_DEPRECATION_MESSAGE)
 
         legacy_storage_token = storage_token
         if is_programmatic_token(storage_token):
