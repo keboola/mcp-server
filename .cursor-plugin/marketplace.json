@@ -1,0 +1,16 @@
+{
+  "name": "keboola",
+  "owner": {
+    "name": "Keboola"
+  },
+  "metadata": {
+    "description": "Keboola plugins for Cursor"
+  },
+  "plugins": [
+    {
+      "name": "keboola",
+      "source": "./integrations/chatgpt-plugin",
+      "description": "Explore, query and build in your Keboola projects through the Keboola MCP server."
+    }
+  ]
+}

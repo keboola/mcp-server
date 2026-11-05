@@ -1,0 +1,19 @@
+{
+  "name": "keboola",
+  "displayName": "Keboola",
+  "version": "1.0.0",
+  "description": "Explore, query and build in your Keboola projects: inspect tables, run SELECT queries, create SQL transformations and flows, and debug failed jobs through the Keboola MCP server.",
+  "author": {
+    "name": "Keboola"
+  },
+  "homepage": "https://help.keboola.com/ai/mcp-server/",
+  "repository": "https://github.com/keboola/mcp-server",
+  "license": "MIT",
+  "keywords": ["keboola", "data", "sql", "etl", "transformations", "flows", "mcp"],
+  "logo": "assets/icon.png",
+  "mcpServers": {
+    "keboola": {
+      "url": "https://mcp-router.keboola.com/mcp"
+    }
+  }
+}

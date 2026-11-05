@@ -1,4 +1,4 @@
-# Keboola plugin for ChatGPT and Codex
+# Keboola plugin for ChatGPT, Codex and Cursor
 
 An [OpenAI plugin](https://developers.openai.com/plugins/build/plugins) package: four skills plus the hosted
 Keboola MCP server. Design and rollout: RFC "Keboola as a ChatGPT Plugin" (keboola/connection
@@ -11,6 +11,7 @@ Keboola MCP server. Design and rollout: RFC "Keboola as a ChatGPT Plugin" (keboo
 | `mcp.json` | The one MCP server, OAuth with dynamic client registration |
 | `skills/*/SKILL.md` | Workflows that name the server's tools in order |
 | `assets/icon.png` | Listing logo and composer icon |
+| `.cursor-plugin/plugin.json` | Cursor manifest: the same server and skills (DMD-2642) |
 
 `mcp.json` points at the global router `https://mcp-router.keboola.com/mcp`. On login the user picks their Keboola
 stack, and the router sends every request to that stack's MCP server. A published plugin's MCP URL cannot change, so
@@ -53,3 +54,22 @@ write tool without `project_id`.
    `source.path` is resolved relative to the marketplace root (your home directory here).
 3. Restart the ChatGPT desktop app (or Codex), install "Keboola" from the local marketplace, pick your Keboola stack
    on the router's page and log in with your Keboola account.
+
+## Cursor and Grok Bot
+
+The same directory is a Cursor plugin. Cursor reads `.cursor-plugin/plugin.json`, which names the router URL itself
+and discovers the skills in `skills/`. `.cursor-plugin/marketplace.json` at the repository root points the Cursor
+Marketplace at this directory. Grok Bot runs in Cursor's cloud and installs plugins from the Cursor Marketplace, so
+there is nothing separate to publish for it.
+
+Cursor signs in with dynamic client registration and its fixed callback
+`https://www.cursor.com/agents/mcp/oauth/callback`, which Connection has pre-registered as the client `cursor` and
+`_WELL_KNOWN_CONNECTION_CLIENT_IDS` in `src/keboola_mcp_server/oauth.py` maps to it. Cursor's documented desktop
+callback `http://localhost:8787/callback` is not mapped: any local agent can listen there, so it is handled like
+every other loopback client. Like ChatGPT, a session through the router gets the directory
+tools only.
+
+To try it, copy this directory to `~/.cursor/plugins/local/keboola` (Cursor does not follow a symlink that points
+outside that folder), run **Developer: Reload Window** and install Keboola under **Customize**.
+
+Leave `.cursor-plugin/` out of the ZIP uploaded to OpenAI.
