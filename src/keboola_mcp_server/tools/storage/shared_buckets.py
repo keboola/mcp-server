@@ -13,6 +13,7 @@ from pydantic import AliasChoices, BaseModel, Field, model_validator
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.mcp import KeboolaMcpServer, ToonCompactFunctionTool
+from keboola_mcp_server.scope import ProjectIdArg
 from keboola_mcp_server.tools.storage.tools import STORAGE_TOOLS_TAG, BucketDetail
 
 LOG = logging.getLogger(__name__)
@@ -180,6 +181,7 @@ async def link_shared_bucket(
         ),
     ] = None,
     display_name: Annotated[str | None, Field(description='Optional display name for the linked bucket.')] = None,
+    project_id: ProjectIdArg = None,
 ) -> BucketDetail:
     """
     Links a bucket shared with this project (found via `get_shared_buckets`) into this project
