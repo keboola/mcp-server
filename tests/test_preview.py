@@ -1,4 +1,5 @@
 import copy
+import dataclasses
 from collections.abc import Generator
 from typing import Any, cast
 
@@ -78,7 +79,11 @@ class TestPreviewConfigDiff:
             # Read-only mode denies a mutator preview.
             ({'X-Read-Only-Mode': 'true'}, 403, 'not authorized'),
             # A strict workspace scope denies every preview, with or without a valid pin.
-            ({'X-Workspace-Scope': 'strict', 'X-Workspace-Id': '123'}, 403, 'strict workspace scope'),
+            (
+                {'X-Workspace-Scope': 'strict', 'X-Workspace-Id': '123'},
+                403,
+                'not available in a strict workspace scope',
+            ),
             ({'X-Workspace-Scope': 'strict'}, 403, 'requires a workspace pin'),
         ],
     )
@@ -120,6 +125,14 @@ class TestPreviewConfigDiff:
                 'change_description': 'Test change',
             },
         }
+
+        if 'X-Workspace-Scope' in headers:
+            # A strict scope is used on the multi-tenant server, which takes the pin from the request;
+            # the fixture's server-side `workspace_schema` would discard it.
+            server_state = test_client.app.state.server_state
+            test_client.app.state.server_state = dataclasses.replace(
+                server_state, config=dataclasses.replace(server_state.config, workspace_schema=None)
+            )
 
         response = test_client.post('/preview/configuration', json=request_payload, headers=headers)
         assert response.status_code == expected_status
