@@ -71,14 +71,28 @@ class CompactSemanticObject(BaseModel):
         default=None,
         description='Set while a "project"-scope object has a pending request to promote it to "organization".',
     )
+    approved_by: str | None = Field(
+        default=None,
+        description='Who approved this object (client-set label, not an audit record). Absent when never approved.',
+    )
+    approved_at: str | None = Field(
+        default=None, description='When this object was approved, as an RFC 3339 timestamp.'
+    )
 
 
 def _meta_fields(obj: semantic_service.SemanticServiceData) -> dict[str, Any]:
-    """Scope/visibility fields shared by every compact and full semantic object view."""
+    """Scope/visibility and approval fields shared by every compact and full semantic object view."""
+    attributes = obj.data.attributes or {}
+    # Older schema versions allow extra properties, so a non-string value must not break the whole listing.
+    approval = {
+        field: value if isinstance(value := attributes.get(key), str) else None
+        for field, key in (('approved_by', 'approvedBy'), ('approved_at', 'approvedAt'))
+    }
     meta = obj.data.meta
     if meta is None:
-        return {}
+        return approval
     return {
+        **approval,
         'scope': meta.scope,
         'project_id': meta.project_id,
         'source_project_id': meta.source_project_id,
