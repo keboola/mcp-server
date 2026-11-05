@@ -2587,11 +2587,13 @@ Three scenarios the agent has to distinguish:
    The default branch is generated fresh per draft (`draft-<hex>`) so it can never collide
    with a branch left behind by an earlier draft. Override with `branch=<name>` for a
    descriptive name — if you do, YOU own uniqueness (see step 3).
-3. YOU: `git clone U`. The repo of a brand-new prod app is empty, so push an empty `main` first —
-   the first branch pushed becomes the repo's default, and a draft branch that is the default
-   can never be deleted: `git checkout -b main && git commit --allow-empty -m "init main" &&
-   git push origin main`. The empty `main` carries no app code, so it breaks no rule about
-   pushing to `main`. Then `git checkout -b <branch>`; write source; `git push origin <branch>`.
+3. YOU: `git clone U`. A new prod app's repo already has `main` with one initial commit, so
+   branch from it: `git checkout -b <branch>`; write source; `git push origin <branch>`.
+   Only when the clone has no `main` (an older app whose repo is still empty), push an empty
+   `main` first — the first branch pushed becomes the repo's default, and a draft branch that
+   is the default can never be deleted: `git checkout -b main && git commit --allow-empty
+   -m "init main" && git push origin main`, then branch as above. The empty `main` carries no
+   app code, so it breaks no rule about pushing to `main`.
 4. `deploy_data_app(action='deploy', configuration_id=DRAFT, mode='dev')`
    → preview URL serving the draft's pinned branch as a dev version. Iterate with the user.
 5. Once approved — YOU: `git checkout main && git merge <branch> && git push origin main`;

@@ -1441,11 +1441,13 @@ async def modify_python_js_data_app(
        The default branch is generated fresh per draft (`draft-<hex>`) so it can never collide
        with a branch left behind by an earlier draft. Override with `branch=<name>` for a
        descriptive name — if you do, YOU own uniqueness (see step 3).
-    3. YOU: `git clone U`. The repo of a brand-new prod app is empty, so push an empty `main` first —
-       the first branch pushed becomes the repo's default, and a draft branch that is the default
-       can never be deleted: `git checkout -b main && git commit --allow-empty -m "init main" &&
-       git push origin main`. The empty `main` carries no app code, so it breaks no rule about
-       pushing to `main`. Then `git checkout -b <branch>`; write source; `git push origin <branch>`.
+    3. YOU: `git clone U`. A new prod app's repo already has `main` with one initial commit, so
+       branch from it: `git checkout -b <branch>`; write source; `git push origin <branch>`.
+       Only when the clone has no `main` (an older app whose repo is still empty), push an empty
+       `main` first — the first branch pushed becomes the repo's default, and a draft branch that
+       is the default can never be deleted: `git checkout -b main && git commit --allow-empty
+       -m "init main" && git push origin main`, then branch as above. The empty `main` carries no
+       app code, so it breaks no rule about pushing to `main`.
     4. `deploy_data_app(action='deploy', configuration_id=DRAFT, mode='dev')`
        → preview URL serving the draft's pinned branch as a dev version. Iterate with the user.
     5. Once approved — YOU: `git checkout main && git merge <branch> && git push origin main`;
@@ -3517,7 +3519,8 @@ def _draft_checkout_hint(draft_branch: str) -> str:
     Surfaced in `modify_python_js_data_app`'s `change_summary` on the draft create path. A bare
     ``git checkout <branch>`` silently resolves to an existing ``origin/<branch>`` when one exists,
     checking out its stale tip instead of branching off ``main`` — the draft then previews (and can
-    promote) outdated code with no error anywhere. On an empty repo an empty ``main`` is pushed first:
+    promote) outdated code with no error anywhere. A new app's repo starts with one commit on ``main``,
+    so ``origin/main`` exists. On an older, empty repo an empty ``main`` is pushed first:
     the first branch pushed becomes the repo default, and the repo refuses to delete its default.
     ``checkout -B ... origin/main``
     states the intended base explicitly, and ``--no-track`` keeps ``origin/main`` from becoming the
@@ -3532,8 +3535,9 @@ def _draft_checkout_hint(draft_branch: str) -> str:
     return (
         f"Draft pinned to branch '{draft_branch}'. Base it on current production explicitly: "
         f'`git fetch origin && git checkout -B {draft_branch} --no-track origin/main` '
-        f'(on a brand-new prod app the repo is still empty and `origin/main` does not exist yet — '
-        f'push an empty `main` first, then branch: `git checkout -b main && git commit --allow-empty '
+        f'(a new prod app\'s repo already has `main` with one initial commit; only if `origin/main` '
+        f'does not exist — an older app whose repo is still empty — push an empty `main` first, '
+        f'then branch: `git checkout -b main && git commit --allow-empty '
         f'-m "init main" && git push origin main && git checkout -b {draft_branch}`; skip it and the '
         f'draft branch becomes the repo\'s default, which the repo then refuses to delete). `--no-track` keeps `origin/main` from '
         f'becoming this branch\'s upstream, so a bare `git push` can never target `main`. Do NOT '

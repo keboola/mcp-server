@@ -162,8 +162,9 @@ Step 2: modify_python_js_data_app(
                                   (U = https://kai:<secret>@host/path.git)
                                         │
                                         ▼
-Step 3: YOU: git clone U; git checkout -b <branch>   (repo of a new app is
-        empty, so there is no main yet); write app.py;
+Step 3: YOU: git clone U; git checkout -b <branch>   (a new app's repo
+        starts with one initial commit on main; an older app's repo may be
+        empty, then push an empty main first); write app.py;
         git push origin <branch>
                                         │
                                         ▼
@@ -176,8 +177,9 @@ Step 4: deploy_data_app(
                                         │
                                         ▼ (user approves)
                                         │
-Step 5: YOU: git checkout -b main <branch>   (a brand-new app has no main
-        yet; on an existing app: git checkout main && git merge <branch>);
+Step 5: YOU: git checkout main && git merge <branch>   (main exists: a new
+        app's repo starts with an initial commit on it, an older empty one got
+        an empty main in step 3);
         git push origin main; git push origin --delete <branch>
                                         │
                                         ▼
