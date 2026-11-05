@@ -1,4 +1,4 @@
-"""Static checks of the ChatGPT plugin package in `integrations/chatgpt-plugin/`.
+"""Static checks of the ChatGPT and Cursor plugin package in `integrations/chatgpt-plugin/`.
 
 The skills name MCP tools and their arguments exactly, so a renamed or removed tool must fail here rather than in
 a ChatGPT conversation. Manifest limits are the ones OpenAI documents for plugin submission.
@@ -156,6 +156,28 @@ def test_mcp_config() -> None:
     assert server['type'] == 'streamable-http'
     assert server['url'] == 'https://mcp-router.keboola.com/mcp'
     assert server['extensions']['com.openai']['auth'] == {'type': 'oauth', 'client': {'mode': 'dcr'}}
+
+
+def test_cursor_plugin_manifest() -> None:
+    manifest = _load_json('.cursor-plugin/plugin.json')
+    agent_manifest = _load_json('plugin.json')
+    for key in ('name', 'version', 'description', 'license', 'repository'):
+        assert manifest[key] == agent_manifest[key], f'{key} differs from plugin.json'
+    # Cursor takes the server from the manifest, not from mcp.json: it infers the transport from `url` and reads
+    # OAuth from the server's metadata, so the same router URL needs no `type` and no `extensions`.
+    assert manifest['mcpServers'] == {'keboola': {'url': _load_json('mcp.json')['mcpServers']['keboola']['url']}}
+    assert not manifest['logo'].startswith(('/', '.')), 'logo must be relative to the plugin root, without ./ or ..'
+    width, height = _png_size(PLUGIN_DIR / manifest['logo'])
+    assert width == height >= 48
+
+    # A plugin in a subdirectory is submitted through the marketplace file at the repository root.
+    marketplace = json.loads(
+        (PLUGIN_DIR.parents[1] / '.cursor-plugin' / 'marketplace.json').read_text(encoding='utf-8')
+    )
+    assert marketplace['owner']['name'] == 'Keboola'
+    (entry,) = marketplace['plugins']
+    assert entry['name'] == manifest['name']
+    assert (PLUGIN_DIR.parents[1] / entry['source']).resolve() == PLUGIN_DIR.resolve()
 
 
 def test_skill_directories() -> None:

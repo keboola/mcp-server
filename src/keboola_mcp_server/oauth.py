@@ -92,6 +92,10 @@ _WELL_KNOWN_CONNECTION_CLIENT_IDS: dict[str, str] = {
     'https://claude.ai/api/mcp/auth_callback': 'claude-ai',
     # ChatGPT uses this stable callback only for an authorization server that returns RFC 9207 `iss` (DMD-2468).
     'https://chatgpt.com/connector_platform_oauth_redirect': 'chatgpt',
+    # Cursor's fixed callbacks, web and Cloud Agents first, then the desktop app: pre-registered by
+    # PreRegisterCursorOAuthClientMigration (AI-4022). Connection matches `localhost` port-exactly (DMD-2642).
+    'https://www.cursor.com/agents/mcp/oauth/callback': 'cursor',
+    'http://localhost:8787/callback': 'cursor',
 }
 
 # Cap on the in-process client_id -> client_name cache (see ConnectionClientRegistry.remember_client_name)
