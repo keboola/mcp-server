@@ -1,5 +1,6 @@
 """Keboola Storage API client wrapper."""
 
+import functools
 import logging
 from collections.abc import Mapping, Sequence
 from typing import Any, Literal, TypeVar, cast
@@ -32,8 +33,13 @@ BARE_STORAGE_TOKEN_DEPRECATION_MESSAGE = (
     '(keboola-mcp-server 2.0.0). Sign in with "keboola-mcp-server login --api-url <stack-url>" or use a Keboola '
     'programmatic token (kbc_at_/kbc_pat_). See https://help.keboola.com/ai/mcp-server/#migrating-from-a-storage-token'
 )
-# The deprecation is logged once per process, not for every session or request.
-_bare_storage_token_warned = False
+
+
+@functools.cache
+def _warn_bare_storage_token() -> None:
+    """Logs the deprecation once per process, not for every session or request."""
+    LOG.warning(BARE_STORAGE_TOKEN_DEPRECATION_MESSAGE)
+
 
 T = TypeVar('T')
 
@@ -180,11 +186,9 @@ class KeboolaClient:
         if not storage_token:
             raise ValueError('Storage API token is not provided.')
 
-        global _bare_storage_token_warned
-        if bearer_token is None and not is_programmatic_token(storage_token) and not _bare_storage_token_warned:
+        if bearer_token is None and not is_programmatic_token(storage_token):
             # A bare token on its own; an OAuth session carries its Storage token next to a bearer.
-            _bare_storage_token_warned = True
-            LOG.warning(BARE_STORAGE_TOKEN_DEPRECATION_MESSAGE)
+            _warn_bare_storage_token()
 
         legacy_storage_token = storage_token
         if is_programmatic_token(storage_token):

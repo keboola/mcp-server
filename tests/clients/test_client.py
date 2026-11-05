@@ -870,12 +870,12 @@ class TestKeboolaClientCreate:
         ],
     )
     async def test_bare_storage_token_deprecation_warning(
-        self, caplog, monkeypatch, storage_token: str, bearer_token: str | None, warns: bool
+        self, caplog, storage_token: str, bearer_token: str | None, warns: bool
     ) -> None:
         # Only a bare per-project Storage token presented on its own is deprecated (it stops being accepted on
         # 1 December 2026); an OAuth session carries a Storage token next to its bearer and a programmatic token
         # is the replacement. The warning is logged once per process and never contains the token.
-        monkeypatch.setattr(client_module, '_bare_storage_token_warned', False)
+        client_module._warn_bare_storage_token.cache_clear()
 
         with caplog.at_level(logging.WARNING, logger=client_module.LOG.name):
             for _ in range(2):
