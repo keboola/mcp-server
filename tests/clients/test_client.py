@@ -1,5 +1,6 @@
 import importlib.metadata
 import json
+import logging
 from collections.abc import Mapping
 from typing import Any
 from unittest.mock import AsyncMock, Mock, PropertyMock, patch
@@ -9,6 +10,7 @@ import pytest
 from httpx_retries import RetryTransport
 from pytest_mock import MockerFixture
 
+from keboola_mcp_server.clients import client as client_module
 from keboola_mcp_server.clients.auth_bridge import StorageTokenExchangeError, StorageTokenResolver
 from keboola_mcp_server.clients.base import RawKeboolaClient
 from keboola_mcp_server.clients.client import BranchNotFoundError, KeboolaClient, get_metadata_property
@@ -857,6 +859,40 @@ class TestKeboolaClientCreate:
         assert client.legacy_storage_token == 'sapi_token_456'
         assert client.bearer_token == 'oauth_bearer_123'
         resolver.resolve.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ('storage_token', 'bearer_token', 'warns'),
+        [
+            pytest.param('sapi_token_456', None, True, id='bare_storage_token'),
+            pytest.param('sapi_token_456', 'oauth_bearer_123', False, id='oauth_session'),
+            pytest.param('kbc_at_abc', None, False, id='programmatic_token'),
+        ],
+    )
+    async def test_bare_storage_token_deprecation_warning(
+        self, caplog, storage_token: str, bearer_token: str | None, warns: bool
+    ) -> None:
+        # Only a bare per-project Storage token presented on its own is deprecated (it stops being accepted on
+        # 1 December 2026); an OAuth session carries a Storage token next to its bearer and a programmatic token
+        # is the replacement. The warning is logged once per process and never contains the token.
+        client_module._warn_bare_storage_token.cache_clear()
+
+        with caplog.at_level(logging.WARNING, logger=client_module.LOG.name):
+            for _ in range(2):
+                await KeboolaClient.create(
+                    storage_api_url='https://connection.keboola.com',
+                    storage_token=storage_token,
+                    bearer_token=bearer_token,
+                )
+
+        messages = [r.getMessage() for r in caplog.records if 'deprecated' in r.getMessage()]
+        if not warns:
+            assert messages == []
+        else:
+            assert len(messages) == 1
+            assert messages[0] == client_module.BARE_STORAGE_TOKEN_DEPRECATION_MESSAGE
+            assert storage_token not in messages[0]
+            assert '1 December 2026' in messages[0]
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize('project_id', [None, '42', 42], ids=['no_project', 'str_project', 'int_project'])
