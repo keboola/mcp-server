@@ -26,14 +26,35 @@ def deployed_sa_token_path() -> str | None:
     return os.environ.get('KBC_KUBERNETES_TOKEN_PATH')
 
 
+_ACCESS_TOKEN_PREFIX = 'kbc_at_'
+_PAT_PREFIX = 'kbc_pat_'
+
+
+def strip_bearer(token: str) -> str:
+    """Removes a leading case-insensitive ``Bearer `` scheme from a token, if present."""
+    if token[:7].lower() == 'bearer ':
+        return token[7:].strip()
+    return token
+
+
+def is_programmatic_token(token: str | None) -> bool:
+    """True if ``token`` is a Keboola programmatic bearer token (``kbc_at_`` / ``kbc_pat_``)."""
+    if not token:
+        return False
+    return strip_bearer(token).startswith((_ACCESS_TOKEN_PREFIX, _PAT_PREFIX))
+
+
 @dataclass(frozen=True)
 class Config:
     """Server configuration."""
 
     storage_api_url: str | None = None
     """The URL to the Storage API."""
-    storage_token: str | None = field(default=None, metadata={'aliases': ['storage_api_token']})
-    """The token to access the storage API using the MCP tools."""
+    bearer_token: str | None = field(default=None, metadata={'internal': True})
+    """The programmatic (`kbc_at_`/`kbc_pat_`) token of the session, sent as a Bearer to every Keboola service.
+
+    It comes from the `Authorization: Bearer` header, the local `login` credential store or an OAuth login, and is
+    never read from the environment, CLI arguments or `X-*` headers (`internal`)."""
     branch_id: str | None = None
     """The branch ID to access the storage API using the MCP tools."""
     workspace_schema: str | None = None
@@ -69,16 +90,12 @@ class Config:
     Maps the `MCP_DB_URL` / `KBC_MCP_DB_URL` env var (via the alias) as well as `KBC_POSTGRES_DSN`."""
     session_encryption_key: str | None = None
     """Base64-encoded 32-byte AES-256 key used to encrypt OAuth session credentials at rest."""
-    bearer_token: str | None = None
-    """The access-token issued by Keboola OAuth server to be sent in 'Authorization: Bearer <access-token>' header."""
     conversation_id: str | None = None
     """The ID of the ongoing conversation with the MCP server. This is supplied only by the HTTP header."""
     project_id: str | None = field(default=None, metadata={'aliases': ['kbc_project_id']})
     """Project id used to scope a programmatic-token (kbc_at_/kbc_pat_) exchange.
 
-    Maps the `X-KBC-ProjectId` HTTP header (via the alias) and the `KBC_PROJECT_ID` env var.
-    Only consulted when the inbound Storage token is a Keboola programmatic token; the legacy
-    project-bound Storage token derives its project from the token itself."""
+    Maps the `X-KBC-ProjectId` HTTP header (via the alias) and the `KBC_PROJECT_ID` env var."""
     oauth_validate_rate_limit: str | None = None
     """Calls per minute one server process may make to the OAuth server's client-validation endpoint (a positive
     integer). Unset means the built-in default. The OAuth server allows a fixed number of such calls per minute per
@@ -140,11 +157,9 @@ class Config:
     _HEADER_ELIGIBLE_FIELDS: ClassVar[frozenset[str]] = frozenset(
         {
             'storage_api_url',
-            'storage_token',
             'branch_id',
             'workspace_schema',
             'workspace_id',
-            'bearer_token',
             'conversation_id',
             'project_id',
         }
@@ -170,6 +185,9 @@ class Config:
                     LOG.warning(f'Amended "{f.name}" value from "{orig_value}" to "{value}".')
                     object.__setattr__(self, f.name, value)
 
+        if self.bearer_token:
+            object.__setattr__(self, 'bearer_token', strip_bearer(self.bearer_token))
+
         if self.branch_id is not None and self.branch_id.lower() in ['', 'none', 'null', 'default', 'production']:
             object.__setattr__(self, 'branch_id', None)
 
@@ -192,7 +210,7 @@ class Config:
         data = {cls._normalize(k): v for k, v in d.items()}
         options: dict[str, Any] = {}
         for f in dataclasses.fields(cls):
-            if allowed_fields is not None and f.name not in allowed_fields:
+            if f.metadata.get('internal') or (allowed_fields is not None and f.name not in allowed_fields):
                 continue
             field_names = [f.name] + f.metadata.get('aliases', [])
 

@@ -24,6 +24,7 @@ from fastmcp import Context
 from mcp.server.session import ServerSession
 from mcp.types import ClientCapabilities, InitializeRequestParams
 
+from integtests.service_login import project_token
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config
 from keboola_mcp_server.mcp import ServerRuntimeInfo, ServerState
@@ -131,10 +132,11 @@ def _delete_config(base_url: str, token: str, config_id: str) -> None:
 class MergeRequestProject:
     storage_api_url: str
     storage_api_token: str
+    bearer_token: str  # programmatic token for the project, minted from the service-user login
 
 
 @pytest.fixture(scope='session')
-def mr_project(storage_api_url: str, env_file_loaded: bool) -> MergeRequestProject:
+def mr_project(storage_api_url: str, env_file_loaded: bool, service_session_token: str) -> MergeRequestProject:
     """A dedicated project with the `branches-merge-requests` feature; skips the module when not configured."""
     token = os.getenv(MERGE_REQUESTS_TOKEN_ENV_VAR, '').strip()
     if not token:
@@ -143,7 +145,11 @@ def mr_project(storage_api_url: str, env_file_loaded: bool) -> MergeRequestProje
     features = token_info.get('owner', {}).get('features', [])
     if 'branches-merge-requests' not in features:
         pytest.fail(f'project {token_info["owner"]["name"]!r} must have the branches-merge-requests feature enabled')
-    return MergeRequestProject(storage_api_url=storage_api_url, storage_api_token=token)
+    return MergeRequestProject(
+        storage_api_url=storage_api_url,
+        storage_api_token=token,
+        bearer_token=project_token(storage_api_url, service_session_token, token_info['owner']['id']),
+    )
 
 
 @pytest.fixture
@@ -161,8 +167,12 @@ def dev_branch(mr_project: MergeRequestProject) -> Generator[str, Any, None]:
 async def _build_context(mocker, project: MergeRequestProject, *, branch_id: str | None) -> Context:
     keboola_client = KeboolaClient(
         storage_api_url=project.storage_api_url,
-        legacy_storage_token=project.storage_api_token,
-        headers={'User-Agent': 'KeboolaMCPServer/integtest'},
+        bearer_token=project.bearer_token,
+        # Programmatic tokens need the project they are meant for (a Storage token starts with its project id).
+        headers={
+            'User-Agent': 'KeboolaMCPServer/integtest',
+            'X-KBC-ProjectId': project.storage_api_token.split('-')[0],
+        },
     )
     if branch_id is not None:
         keboola_client = await keboola_client.with_branch_id(branch_id)
@@ -177,7 +187,7 @@ async def _build_context(mocker, project: MergeRequestProject, *, branch_id: str
     ctx.session_id = None
     ctx.request_context = mocker.MagicMock()
     ctx.request_context.lifespan_context = ServerState(
-        Config(storage_api_url=project.storage_api_url, storage_token=project.storage_api_token),
+        Config(storage_api_url=project.storage_api_url, bearer_token=project.bearer_token),
         ServerRuntimeInfo(transport='stdio'),
     )
     return ctx

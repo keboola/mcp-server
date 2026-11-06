@@ -16,7 +16,6 @@ from typing import TYPE_CHECKING, Annotated
 
 from pydantic import Field
 
-from keboola_mcp_server.clients.auth_bridge import strip_bearer
 from keboola_mcp_server.config import Config, deployed_sa_token_path
 from keboola_mcp_server.session_store.crypto import decrypt, encrypt, resolve_encryption_key
 
@@ -66,7 +65,7 @@ def resolve_scope_key(config: Config) -> bytes:
     return resolve_encryption_key(config.session_encryption_key)
 
 
-def resolve_scope_binding_aad(storage_token: str | None) -> bytes | None:
+def resolve_scope_binding_aad(bearer_token: str | None) -> bytes | None:
     """Binds a `scope_token` to the caller's own presented Storage token on the deployed server,
     so a token minted while serving one caller's request fails authentication if replayed by a
     different caller who obtained the ciphertext some other way (a leaked transcript, client-side
@@ -80,12 +79,9 @@ def resolve_scope_binding_aad(storage_token: str | None) -> bytes | None:
     presented token there is not a stable value to bind to (it may itself get narrowed to a scoped
     token between calls -- see `SessionStateMiddleware._resolve_local_tokens`).
     """
-    if not deployed_sa_token_path() or not storage_token:
+    if not deployed_sa_token_path() or not bearer_token:
         return None
-    # Normalize a `Bearer `-prefixed inbound token so the seal side (KeboolaClient.bearer_token,
-    # always stripped) and the unseal side (config.storage_token, stripped on most but not
-    # necessarily every inbound path) can never drift on the scheme alone.
-    return hashlib.sha256(strip_bearer(storage_token).encode('utf-8')).digest()
+    return hashlib.sha256(bearer_token.encode('utf-8')).digest()
 
 
 class ScopeTokenUnreadable(ValueError):

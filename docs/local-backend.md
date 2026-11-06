@@ -60,7 +60,7 @@ The Keboola MCP server can be extended with a `--local-backend` flag that replac
 ### New arguments
 
 ```
---local-backend          Run in local mode. No KBC_STORAGE_TOKEN required.
+--local-backend          Run in local mode. No Keboola credential required.
                          Components execute via Docker. Data stored as CSV on disk.
                          (env: KBC_LOCAL_BACKEND=true|1|yes)
 
@@ -73,7 +73,7 @@ The Keboola MCP server can be extended with a `--local-backend` flag that replac
 
 | Property | Platform (default) | Local (`--local-backend`) |
 |----------|--------------------|---------------------------|
-| Token required | `KBC_STORAGE_TOKEN` | None |
+| Credential required | a `login` session or an `Authorization: Bearer` token | None |
 | Components run via | Keboola Jobs API | `docker run` locally |
 | Data stored in | Keboola Storage (Snowflake/BQ) | CSV files on disk (`--data-dir`) |
 | SQL queries | Keboola workspace (Snowflake/BQ) | Native `duckdb` (Python) |

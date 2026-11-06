@@ -47,12 +47,6 @@ from keboola_mcp_server.auth_login import (
     introspect_token,
     load_tokens,
 )
-from keboola_mcp_server.clients.auth_bridge import (
-    StorageTokenExchangeError,
-    StorageTokenResolver,
-    is_programmatic_token,
-    strip_bearer,
-)
 from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import FLOW_TYPES, BranchNotFoundError, KeboolaClient
 from keboola_mcp_server.config import (
@@ -60,6 +54,7 @@ from keboola_mcp_server.config import (
     ServerRuntimeInfo,
     build_tracing_headers,
     deployed_sa_token_path,
+    is_programmatic_token,
     is_same_stack,
 )
 from keboola_mcp_server.oauth import ProxyAccessToken
@@ -289,38 +284,6 @@ class ServerState:
     runtime_info: ServerRuntimeInfo
     session_store: SessionStore | None = None
     kai_scope_store: KaiScopeStore | None = None
-    _token_resolvers: dict[str, StorageTokenResolver] = dataclasses.field(
-        default_factory=dict, compare=False, repr=False
-    )
-
-    def storage_token_resolver(self, storage_api_url: str | None) -> StorageTokenResolver | None:
-        """The auth-bridge resolver for `storage_api_url`, or None when this process is not the
-        deployed server.
-
-        One instance per stack URL, reused for the life of the server -- each holds its own pooled
-        `httpx.AsyncClient` (see `StorageTokenResolver`), so a fanned-out multi-project call, and
-        every request after it, reuse one connection instead of a TLS handshake per resolve. This
-        is also the single place that answers "am I the deployed server?" for token exchange --
-        `KeboolaClient.create` just uses the resolver it is handed, or skips the exchange when
-        handed None.
-        """
-        path = deployed_sa_token_path()
-        if not path or not storage_api_url:
-            return None
-        # `path` is not part of the cache key: it comes from the process environment only
-        # (KBC_KUBERNETES_TOKEN_PATH), so it is a constant for the life of this ServerState.
-        if (resolver := self._token_resolvers.get(storage_api_url)) is None:
-            resolver = self._token_resolvers[storage_api_url] = StorageTokenResolver(
-                storage_api_url=storage_api_url, kubernetes_token_path=path
-            )
-        return resolver
-
-    async def aclose(self) -> None:
-        """Closes every pooled connection held by `storage_token_resolver`. Call once, from the
-        server's lifespan teardown."""
-        for resolver in self._token_resolvers.values():
-            await resolver.aclose()
-        self._token_resolvers.clear()
 
     @property
     def own_stack_storage_api_url(self) -> str | None:
@@ -685,7 +648,7 @@ class SessionStateMiddleware(fmw.Middleware):
                 and config.conversation_id
                 and deployed_sa_token_path()
                 and self._oauth_access_token(http_rq) is None
-                and is_programmatic_token(config.storage_token)
+                and config.bearer_token
                 and server_state.kai_scope_store is not None
             ):
                 scope = await self._read_persisted_kai_scope(config, server_state.kai_scope_store)
@@ -755,9 +718,6 @@ class SessionStateMiddleware(fmw.Middleware):
                 runtime_info,
                 readonly=readonly,
                 own_stack_storage_api_url=own_stack_storage_api_url,
-                # /list must add no Connection auth round-trips (see the is_list comment above):
-                # no resolver means no auth-bridge exchange. Mirrors `refresh=not is_list` above.
-                token_resolver=None if is_list else server_state.storage_token_resolver(config.storage_api_url),
             )
             if scope is not None:
                 state[SCOPE_KEY] = scope
@@ -819,7 +779,7 @@ class SessionStateMiddleware(fmw.Middleware):
         if not cls._is_local_programmatic(config):
             return
         storage_api_url = cast(str, config.storage_api_url)
-        access_token = strip_bearer(cast(str, config.storage_token))
+        access_token = cast(str, config.bearer_token)
         tokens = load_tokens(storage_api_url)
         if tokens is None or tokens.access_token != access_token:
             return
@@ -896,10 +856,9 @@ class SessionStateMiddleware(fmw.Middleware):
         `is_same_stack()`); no prefix or pattern matching is used.
 
         A programmatic bearer token (`kbc_at_`/`kbc_pat_`) is likewise treated specially: it
-        arrives only as `Authorization: Bearer <token>`, which `Config.replace_by` cannot route
-        into `storage_token` (no header/alias maps to it), so it is read directly off the request
-        here into an otherwise-empty `storage_token` slot for `create_session_state`'s exchange to
-        pick up.
+        arrives only as `Authorization: Bearer <token>`, and `bearer_token` is not settable from
+        headers, so it is read directly off the request here into an otherwise-empty `bearer_token`
+        slot for `create_session_state` to pick up.
 
         :param http_rq: The incoming HTTP request whose headers are applied.
         :param config: The server's own configuration (from CLI parameters and environment).
@@ -920,14 +879,11 @@ class SessionStateMiddleware(fmw.Middleware):
         # and the other deployment-level fields permanently unreachable from a request.
         config = config.replace_by_headers(http_rq.headers)
 
-        # A programmatic bearer token (kbc_at_/kbc_pat_) is sent as `Authorization: Bearer <token>`,
-        # never as a Storage-token header/alias -- `Config.replace_by` above has no way to route it
-        # into `storage_token` (`Authorization` matches no field name or alias). Read it here, but
-        # only into an otherwise-empty slot and only when it actually looks like one of these
-        # tokens, so this never overrides an explicit X-Storage-(Api-)Token or forwards an unrelated
-        # bearer scheme downstream as if it were a Storage token.
-        if not config.storage_token and is_programmatic_token(auth_header := http_rq.headers.get('Authorization')):
-            config = dataclasses.replace(config, storage_token=strip_bearer(auth_header))
+        # A programmatic bearer token (kbc_at_/kbc_pat_) is sent as `Authorization: Bearer <token>`. Read it
+        # here, but only into an otherwise-empty slot and only when it actually looks like one of these
+        # tokens, so this never forwards an unrelated bearer scheme downstream as if it were a Keboola token.
+        if not config.bearer_token and is_programmatic_token(auth_header := http_rq.headers.get('Authorization')):
+            config = dataclasses.replace(config, bearer_token=auth_header)
 
         # A workspace pin (`workspace_id`/`workspace_schema`) configured on the server fences
         # off which project data a request can reach -- mirror the `own_stack_storage_api_url`
@@ -980,13 +936,13 @@ class SessionStateMiddleware(fmw.Middleware):
             )
             # The exchanged kbc_at_ token is a Keboola programmatic token; is_programmatic_token()
             # detects it downstream and the full PSGO-261 multi-project machinery applies unchanged.
-            config = dataclasses.replace(config, storage_token=user.access_token.kbc_access_token)
+            config = dataclasses.replace(config, bearer_token=user.access_token.kbc_access_token)
 
         if is_anonymous_entry(http_rq):
             # The unauthenticated endpoint serves exactly one shape of caller: one who has no
             # credential of their own (see `anonymous_entry`). The caller's own headers were already
             # refused at the ASGI layer; what is dropped here is everything the *server* would
-            # otherwise lend them -- a `KBC_STORAGE_TOKEN` in the pod's environment, a project pin --
+            # otherwise lend them -- a project pin, a local login --
             # so that no request on this path can act under an identity it did not provision for
             # itself. From here the only token it can ever acquire is `resolve_provisioned_session`'s,
             # for a session whose handle it already holds. Last in this method on purpose: whatever
@@ -1026,7 +982,7 @@ class SessionStateMiddleware(fmw.Middleware):
         key = resolve_scope_key(config)
         candidates: list[bytes | None] = []
         for aad in (
-            resolve_scope_binding_aad(config.storage_token),
+            resolve_scope_binding_aad(config.bearer_token),
             resolve_provisioned_binding_aad(oauth_session_id),
             None,  # minted for a caller that held no credential to bind to
         ):
@@ -1113,9 +1069,7 @@ class SessionStateMiddleware(fmw.Middleware):
         `DatabaseUnavailableMiddleware`), reachable even without OAuth configured.
         """
         try:
-            introspection = await introspect_token(
-                config.storage_api_url, subject_token=strip_bearer(config.storage_token)
-            )
+            introspection = await introspect_token(config.storage_api_url, subject_token=config.bearer_token)
             if introspection.user_id is None:
                 return None
             stored = await store.get(config.conversation_id, introspection.user_id)
@@ -1135,10 +1089,7 @@ class SessionStateMiddleware(fmw.Middleware):
     def _is_local_programmatic(cls, config: Config) -> bool:
         """True for a local (non-deployed) session carrying a Keboola programmatic token."""
         return (
-            not deployed_sa_token_path()
-            and bool(config.storage_token)
-            and bool(config.storage_api_url)
-            and is_programmatic_token(config.storage_token)
+            not deployed_sa_token_path() and bool(config.storage_api_url) and is_programmatic_token(config.bearer_token)
         )
 
     @classmethod
@@ -1151,7 +1102,7 @@ class SessionStateMiddleware(fmw.Middleware):
         reads the stored token WITHOUT any network refresh, so listing never blocks on Connection.
         If there is no stored session, leaves the config unchanged.
         """
-        if config.storage_token or not config.storage_api_url:
+        if config.bearer_token or not config.storage_api_url:
             return config
         if deployed_sa_token_path():
             return config
@@ -1174,7 +1125,7 @@ class SessionStateMiddleware(fmw.Middleware):
                     return config
             else:
                 access_token = tokens.access_token
-        return dataclasses.replace(config, storage_token=access_token)
+        return dataclasses.replace(config, bearer_token=access_token)
 
     @classmethod
     async def _read_persisted_login_scope(cls, config: Config) -> 'SessionScope | None':
@@ -1198,7 +1149,7 @@ class SessionStateMiddleware(fmw.Middleware):
         Introspects the programmatic token once to enumerate the projects it can reach and returns a
         scope covering all of them (no minted token — the whole-stack parent token is used, narrowed
         per request only by the ``X-KBC-ProjectId`` header). Returns None when introspection is
-        unavailable (deployed server, legacy token, or no reachable projects) so the caller falls
+        unavailable (deployed server or no reachable projects) so the caller falls
         back to the existing single-project behavior.
         """
         if not cls._is_local_programmatic(config):
@@ -1206,7 +1157,7 @@ class SessionStateMiddleware(fmw.Middleware):
         try:
             parent = await get_access_token(config.storage_api_url)
         except RuntimeError:
-            parent = strip_bearer(config.storage_token)
+            parent = config.bearer_token
         try:
             introspection = await introspect_token(config.storage_api_url, subject_token=parent)
         except Exception as e:
@@ -1229,7 +1180,7 @@ class SessionStateMiddleware(fmw.Middleware):
         has explicitly narrowed scope (a minted scoped token is present), that token is re-minted from
         the parent when it nears expiry. The default (auto-leased) multi-project scope carries no
         minted token and simply uses the parent token, narrowed per request by ``X-KBC-ProjectId``.
-        On the deployed server (``KBC_KUBERNETES_TOKEN_PATH`` set), ``config.storage_token`` is
+        On the deployed server (``KBC_KUBERNETES_TOKEN_PATH`` set), ``config.bearer_token`` is
         already the freshly-refreshed OAuth ``kbc_access_token`` (refreshed by
         ``SimpleOAuthProvider.load_access_token``'s lazy refresh before this ever runs) -- that part
         needs no help here. Nothing else threads a confirmed scope's active project id into
@@ -1266,7 +1217,7 @@ class SessionStateMiddleware(fmw.Middleware):
                 try:
                     minted = await exchange_scoped_token(
                         config.storage_api_url,
-                        subject_token=strip_bearer(config.storage_token),
+                        subject_token=config.bearer_token,
                         project_ids=scope.project_ids,
                         read_only=scope.read_only,
                     )
@@ -1279,9 +1230,7 @@ class SessionStateMiddleware(fmw.Middleware):
                     LOG.warning(f'Could not refresh the deployed session scoped token: {e}', exc_info=True)
             return config, scope
 
-        # Strip any inbound `Bearer ` scheme; introspect/exchange helpers add the scheme themselves,
-        # so a pre-prefixed token would produce an `Authorization: Bearer Bearer …` header.
-        parent = strip_bearer(config.storage_token)
+        parent = config.bearer_token
         try:
             # Refreshes (and persists the rotated pair) when near expiry; raises if no stored creds.
             parent = await get_access_token(config.storage_api_url)
@@ -1310,7 +1259,7 @@ class SessionStateMiddleware(fmw.Middleware):
                         scope = dataclasses.replace(scope, scoped_token=None, scoped_expires_at=None)
                 token = scope.scoped_token or parent
 
-        config = dataclasses.replace(config, storage_token=token, project_id=project_id)
+        config = dataclasses.replace(config, bearer_token=token, project_id=project_id)
         return config, scope
 
     @classmethod
@@ -1321,7 +1270,6 @@ class SessionStateMiddleware(fmw.Middleware):
         readonly: bool | None = None,
         *,
         own_stack_storage_api_url: str | None,
-        token_resolver: StorageTokenResolver | None = None,
     ) -> dict[str, Any]:
         """
         Creates `KeboolaClient` and `WorkspaceManager` instances and returns them in the session state.
@@ -1335,10 +1283,6 @@ class SessionStateMiddleware(fmw.Middleware):
             to the `KeboolaClient`, which sends the Kubernetes ServiceAccount step-up header only when
             the session talks to that stack. It must never come from a request header, so it is passed
             separately instead of being read off `config`, whose Storage API URL a header can set.
-        :param token_resolver: The auth-bridge resolver `KeboolaClient.create` uses to exchange a
-            programmatic token for a project's legacy Storage token, or None to skip that exchange
-            (a local/non-deployed server, or a request -- `/list` -- that must add no auth
-            round-trips; see the `on_request` call site).
         :return: The session state dictionary containing the created client and workspace manager instances.
         """
         _PROJECT_ID_LOG_CTX.set(config.project_id)
@@ -1346,7 +1290,7 @@ class SessionStateMiddleware(fmw.Middleware):
 
         state: dict[str, Any] = {STORAGE_API_URL: config.storage_api_url}
 
-        if not config.storage_token:
+        if not config.bearer_token:
             # Bootstrap session (agent_provisioning RFC): no credential anywhere -- no header, no
             # env, no stored login. The session carries no KeboolaClient and no WorkspaceManager;
             # `KeboolaClient.from_state` tells any tool that needs one how to get a credential, and
@@ -1361,20 +1305,16 @@ class SessionStateMiddleware(fmw.Middleware):
             if not config.storage_api_url:
                 raise ValueError('Storage API URL is not provided.')
 
-            # A programmatic token (kbc_at_/kbc_pat_) is narrowed to a specific project via
-            # X-KBC-ProjectId when known (header, or a prior scope selection) -- unset
-            # (whole-stack) is exactly what get_accessible_projects/set_project_scope need before
-            # a project is chosen. A legacy project-bound Storage token derives its project from
-            # the token itself and must not get the header.
-            project_id = config.project_id if is_programmatic_token(config.storage_token) else None
+            # The programmatic token (kbc_at_/kbc_pat_; `KeboolaClient.create` rejects anything else) is
+            # narrowed to a specific project via X-KBC-ProjectId when known (header, or a prior scope
+            # selection) -- unset (whole-stack) is exactly what get_accessible_projects/set_project_scope
+            # need before a project is chosen.
+            project_id = config.project_id
             try:
                 client = await KeboolaClient.create(
                     storage_api_url=config.storage_api_url,
-                    storage_token=config.storage_token,
                     bearer_token=config.bearer_token,
                     branch_id=config.branch_id,
-                    project_id=project_id,
-                    token_resolver=token_resolver,
                     headers={
                         **build_tracing_headers(runtime_info),
                         **({'X-KBC-ProjectId': project_id} if project_id else {}),
@@ -1395,12 +1335,7 @@ class SessionStateMiddleware(fmw.Middleware):
             state[KeboolaClient.STATE_KEY] = client
             LOG.info('Successfully initialized Storage API client.')
         except Exception as e:
-            # A caller's own token being rejected (StorageTokenExchangeError with a pass-through
-            # 400/401/403, already logged as such in StorageTokenResolver.resolve()) is not this
-            # server's fault -- avoid double-logging the same routine failure at ERROR here too.
-            is_caller_fault = isinstance(e, StorageTokenExchangeError) and e.status_code != int(HTTPStatus.BAD_GATEWAY)
-            log = LOG.warning if is_caller_fault else LOG.error
-            log(f'Failed to initialize Keboola client: {e}')
+            LOG.error(f'Failed to initialize Keboola client: {e}')
             raise
 
         try:
@@ -1463,25 +1398,10 @@ class ToolsFilteringMiddleware(fmw.Middleware):
     The middleware also intercepts the `on_call_tool()` call and raises an exception if a call is attempted to a tool
     that is not available in the current project.
 
-    Tool visibility for modify_flow and update_flow:
-
-    | Token Type       | Role        | modify_flow | update_flow | Read-Only Tools |
-    |-----------------|-------------|-------------|-------------|-----------------|
-    | OAuth (any)     | any         | ✅          | ❌          | ✅              |
-    | SAPI            | admin/share | ✅          | ❌          | ✅              |
-    | SAPI            | ''/guest    | ❌          | ✅          | ✅              |
-    | SAPI/OAuth      | readOnly    | ❌          | ❌          | ✅              |
+    Every accepted credential is a programmatic token, so the tool set does not depend on the credential kind; only
+    the project role matters: a `readOnly` role is limited to the read-only tools. `modify_flow` is the flow-update
+    tool for everyone; `update_flow` is never listed and is refused, as a tool call and in the preview route.
     """
-
-    @staticmethod
-    def _is_oauth_authenticated(ctx: Context) -> bool:
-        """
-        Detect if the user is authenticated via OAuth.
-
-        Returns True if bearer token is present, False otherwise.
-        """
-        keboola_client = KeboolaClient.from_state(ctx.session.state)
-        return bool(keboola_client.bearer_token)
 
     @staticmethod
     async def get_token_info(ctx: Context) -> JsonDict:
@@ -1540,17 +1460,14 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         # fail tools/list -- that 401 disconnected clients before (#605); fall back to the superset
         # minus the semantic tools, whose metastore check needs no verify_token (AI-4074).
         client = KeboolaClient.from_state(context.fastmcp_context.session.state)
-        if is_programmatic_token(client.bearer_token):
-            if not client.project_id:
-                return tools
-            token_info = await self._get_token_info_or_none(context.fastmcp_context)
-            if token_info is None:
-                return await self._filter_semantic_tools(tools, client)
-        else:
-            token_info = await self.get_token_info(context.fastmcp_context)
+        if not client.project_id:
+            return tools
+        token_info = await self._get_token_info_or_none(context.fastmcp_context)
+        if token_info is None:
+            return await self._filter_semantic_tools(tools, client)
 
         is_main_branch = await self._is_listed_branch_main(context.fastmcp_context)
-        tools = self._filter_by_token_info(tools, token_info, context.fastmcp_context, is_main_branch)
+        tools = self._filter_by_token_info(tools, token_info, is_main_branch)
         return await self._filter_semantic_tools(tools, client)
 
     @staticmethod
@@ -1575,9 +1492,7 @@ class ToolsFilteringMiddleware(fmw.Middleware):
             return None
 
     @classmethod
-    def _filter_by_token_info(
-        cls, tools: list[Tool], token_info: JsonDict, ctx: Context, is_main_branch: bool
-    ) -> list[Tool]:
+    def _filter_by_token_info(cls, tools: list[Tool], token_info: JsonDict, is_main_branch: bool) -> list[Tool]:
         features = cls.get_project_features(token_info)
         token_role = cls.get_token_role(token_info).lower()
 
@@ -1586,25 +1501,18 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         else:
             tools = [t for t in tools if t.name != 'create_flow']
 
-        # Show modify_flow to: admin, share, OR OAuth users
-        # Show update_flow to: everyone else (except readOnly, handled below)
-        is_oauth = cls._is_oauth_authenticated(ctx)
-        if token_role in ('admin', 'share') or is_oauth:
-            tools = [t for t in tools if t.name != UPDATE_FLOW_TOOL_NAME]
-        else:
-            tools = [t for t in tools if t.name != MODIFY_FLOW_TOOL_NAME]
+        # `modify_flow` is the flow-update tool for every credential; `update_flow` is never listed.
+        tools = [t for t in tools if t.name != UPDATE_FLOW_TOOL_NAME]
 
         if not is_main_branch:
             # Filter out data app tools when the client is not using the main/production branch
             tools = [t for t in tools if t.name not in DATA_APP_BRANCH_GATED_TOOLS]
 
-        # Merge-request tools: hidden when the project lacks the feature; the writes hidden for roles that cannot
-        # use them. The branch-only tools stay visible on production on purpose (call-time denial only) so the
-        # model keeps their descriptions and can hand the user off to a development-branch session.
+        # Merge-request tools: hidden when the project lacks the feature. The branch-only tools stay visible on
+        # production on purpose (call-time denial only) so the model keeps their descriptions and can hand the user
+        # off to a development-branch session.
         if MERGE_REQUESTS_FEATURE not in features:
             tools = [t for t in tools if t.name not in MERGE_REQUEST_TOOL_NAMES]
-        elif not (token_role in ('admin', 'share') or is_oauth):
-            tools = [t for t in tools if t.name not in MERGE_REQUEST_TOOL_NAMES or is_read_only_tool(t)]
 
         if token_role == 'readonly':
             tools = [t for t in tools if is_read_only_tool(t)]
@@ -1627,7 +1535,6 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         has_semantic_models: bool,
         token_role: str,
         features: set[str],
-        is_oauth: bool,
         is_main_branch: bool,
     ) -> str | None:
         """
@@ -1670,34 +1577,19 @@ class ToolsFilteringMiddleware(fmw.Middleware):
                     'please use "create_conditional_flow" tool instead.'
                 )
 
-        if token_role in ('admin', 'share') or is_oauth:
-            if tool_name == UPDATE_FLOW_TOOL_NAME:
-                return (
-                    'The "update_flow" tool is not available for admin/OAuth tokens. '
-                    f'Use "{MODIFY_FLOW_TOOL_NAME}" to manage schedules instead.'
-                )
-        else:
-            if tool_name == MODIFY_FLOW_TOOL_NAME:
-                return (
-                    f'The "{MODIFY_FLOW_TOOL_NAME}" tool is not available for this token. '
-                    f'Use "{UPDATE_FLOW_TOOL_NAME}" to update flow configuration instead.'
-                )
+        if tool_name == UPDATE_FLOW_TOOL_NAME:
+            return f'The "update_flow" tool is not available. Use "{MODIFY_FLOW_TOOL_NAME}" to update a flow instead.'
 
         if tool_name in DATA_APP_BRANCH_GATED_TOOLS and not is_main_branch:
             return 'Data apps are supported only in the main production branch.'
 
         if tool_name in MERGE_REQUEST_TOOL_NAMES:
-            # Three axes (RFC feature_spec/branches_merge_requests_mcp): feature, role (+ OAuth carve-out as for
-            # the flow tools above), and session branch. Reads are open to every role.
+            # Two axes (RFC feature_spec/branches_merge_requests_mcp): feature and session branch. Role is enforced
+            # by Storage itself; a read-only role was already refused above.
             if MERGE_REQUESTS_FEATURE not in features:
                 return (
                     f'The tool "{tool_name}" is not available in this project. Merge requests require the '
                     f'"{MERGE_REQUESTS_FEATURE}" project feature; ask Keboola support to enable it.'
-                )
-            if not is_read_only and token_role not in ('admin', 'share') and not is_oauth:
-                return (
-                    f'The tool "{tool_name}" is not available for your role ({token_role or "unknown"}). '
-                    'Only project admins (role "admin" or "share") can modify merge requests.'
                 )
             if is_main_branch and tool_name in MERGE_REQUEST_BRANCH_ONLY_TOOLS:
                 return MERGE_REQUEST_BRANCH_ONLY_MESSAGE
@@ -1762,7 +1654,6 @@ class ToolsFilteringMiddleware(fmw.Middleware):
             has_semantic_models=has_semantic_models,
             token_role=self.get_token_role(token_info),
             features=self.get_project_features(token_info),
-            is_oauth=self._is_oauth_authenticated(context.fastmcp_context),
             is_main_branch=self.is_client_using_main_branch(context.fastmcp_context),
         )
         if denial:

@@ -21,7 +21,7 @@ from keboola_mcp_server.tools.components.utils import get_nested, set_nested_val
 async def starlette_app() -> Starlette:
     """Create a Starlette app with the preview endpoint."""
     config = Config(
-        storage_token='test-token',
+        bearer_token='kbc_at_test-token',
         storage_api_url='https://connection.test.keboola.com',
         workspace_schema='test-workspace',
     )
@@ -128,8 +128,8 @@ class TestPreviewConfigDiff:
             ('update_config', 'readOnly', None, 'read-only operations'),
             # Data app tools are gated to the main/production branch.
             ('modify_streamlit_data_app', 'admin', 'dev-123', 'main production branch'),
-            # update_flow is not available to admin/OAuth tokens (they use modify_flow).
-            ('update_flow', 'admin', None, 'admin/OAuth'),
+            # update_flow is never available (modify_flow replaces it).
+            ('update_flow', 'admin', None, 'Use "modify_flow"'),
             # Merge-request tools need the branches-merge-requests project feature (the preview mock has none).
             ('create_merge_request', 'admin', None, 'branches-merge-requests'),
         ],
@@ -697,81 +697,6 @@ class TestPreviewConfigDiff:
         else:
             assert (result['originalConfig']['folder'], result['updatedConfig']['folder']) == expected_folders
 
-    def test_preview_update_flow_success(self, test_client: TestClient, mocker):
-        """Test successful preview of update_flow tool."""
-        # Mock the flow configuration data
-        original_config_data = {
-            'id': 'flow-123',
-            'name': 'Original Flow',
-            'description': 'Original flow description',
-            'configuration': {
-                'phases': [
-                    {
-                        'id': 'phase1',
-                        'name': 'Simple Phase',
-                        'description': 'A simple conditional flow phase',
-                        'next': [{'id': 'transition1', 'name': 'Simple Transition', 'goto': None}],
-                    },
-                ],
-                'tasks': [
-                    {
-                        'id': 'task1',
-                        'name': 'Simple Task',
-                        'phase': 'phase1',
-                        'enabled': True,
-                        'task': {
-                            'componentId': 'keboola.ex-test',
-                            'type': 'notification',
-                            'recipients': [{'channel': 'email', 'address': 'admin@company.com'}],
-                            'title': 'Simple Notification',
-                            'message': 'This is a simple notification task',
-                        },
-                    },
-                ],
-            },
-        }
-
-        # Mock the KeboolaClient
-        mock_client = mocker.AsyncMock(KeboolaClient)
-        _configure_preview_auth(mock_client, mocker)  # admin/main default; overridden below where needed
-
-        async def mock_config_detail(**kwargs):
-            return copy.deepcopy(original_config_data)
-
-        mock_client.storage_client.configuration_detail = mocker.AsyncMock(side_effect=mock_config_detail)
-        # update_flow is the flow tool exposed to non-admin/non-OAuth tokens, so preview it as one.
-        _configure_preview_auth(mock_client, mocker, role='')
-
-        mocker.patch('keboola_mcp_server.preview.KeboolaClient.from_state', return_value=mock_client)
-
-        # Request payload
-        request_payload = {
-            'toolName': 'update_flow',
-            'toolParams': {
-                'flow_type': 'keboola.orchestrator',
-                'configuration_id': 'flow-123',
-                'change_description': 'Update flow',
-                'name': 'Updated Flow',
-                'description': 'Updated flow description',
-            },
-        }
-
-        # Make the request
-        response = test_client.post('/preview/configuration', json=request_payload)
-
-        # Assertions
-        assert response.status_code == 200
-        result = response.json()
-
-        # Check response structure
-        assert result['isValid'] is True
-        assert result['coordinates']['componentId'] == 'keboola.orchestrator'
-        assert result['coordinates']['configurationId'] == 'flow-123'
-
-        # Check updated config
-        assert result['updatedConfig']['name'] == 'Updated Flow'
-        assert result['updatedConfig']['description'] == 'Updated flow description'
-
     @pytest.mark.parametrize(
         ('existing_schedule_dicts', 'schedules_request', 'expected_original', 'expected_updated'),
         [
@@ -1081,7 +1006,6 @@ class TestPreviewConfigDiff:
         # Mock the KeboolaClient
         mock_client = mocker.AsyncMock(KeboolaClient)
         _configure_preview_auth(mock_client, mocker)  # admin/main default; overridden below where needed
-        mock_client.legacy_storage_token = 'test-token'
         mock_client.storage_api_url = 'https://connection.test.keboola.com'
 
         async def mock_config_detail(**kwargs):

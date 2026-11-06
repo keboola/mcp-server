@@ -99,7 +99,7 @@ async def resolve_session(config: Config, scope: 'SessionScope | None', store: S
     if _needs_refresh(session):
         access_token = await refresh_session(config, session, store, scope.active_project_id)
     project_id = str(scope.active_project_id) if scope.active_project_id is not None else config.project_id
-    return dataclasses.replace(config, storage_token=access_token, project_id=project_id)
+    return dataclasses.replace(config, bearer_token=access_token, project_id=project_id)
 
 
 @dataclasses.dataclass(frozen=True)

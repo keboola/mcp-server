@@ -791,7 +791,7 @@ class _ExtendedAuthorizationCode(AuthorizationCode):
 class ProxyAccessToken(AccessToken):
     # The whole-stack Keboola programmatic session obtained by exchanging the league OAuth
     # access token (`oauth_session_exchange` RFC). `kbc_access_token` is forwarded downstream
-    # as `config.storage_token`, exactly like a directly-supplied `kbc_at_*` token. The refresh
+    # as `config.bearer_token`, exactly like a directly-supplied `kbc_at_*` token. The refresh
     # token is deliberately NOT carried here (only on `ProxyRefreshToken`, which is what
     # `exchange_refresh_token` actually receives) — access tokens are sent/handled far more often,
     # so duplicating the longer-lived refresh token onto them would needlessly widen its exposure.

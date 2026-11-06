@@ -19,7 +19,6 @@ from keboola_mcp_server.auth_login import (
     sanitize_client_id,
     save_tokens,
 )
-from keboola_mcp_server.clients.auth_bridge import is_programmatic_token, strip_bearer
 from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import MetadataField, deployed_sa_token_path
@@ -125,17 +124,12 @@ async def _parent_subject_token(client: KeboolaClient) -> str:
     into another's request. Falls back to whatever bearer the client currently carries (a
     directly-supplied PAT, an HTTP bearer, or an OAuth-exchanged session token).
     """
-    if not is_programmatic_token(client.bearer_token):
-        raise ValueError(
-            'Project scoping requires a Keboola programmatic token (kbc_at_/kbc_pat_). '
-            'Run "keboola-mcp-server login --api-url <url>" first, or supply such a token.'
-        )
     if deployed_sa_token_path():
-        return strip_bearer(cast(str, client.bearer_token))
+        return client.bearer_token
     try:
         return await get_access_token(client.storage_api_url)
     except RuntimeError:
-        return strip_bearer(cast(str, client.bearer_token))
+        return client.bearer_token
 
 
 async def _resolve_branch_context(client: KeboolaClient) -> tuple[str | int, str, bool]:
@@ -426,7 +420,7 @@ async def _persist_kai_scope(ctx: Context, scope: SessionScope, client: KeboolaC
     No-op (returns False) when this isn't such a session, or no conversation_id/store is available.
     """
     conversation_id = ctx.session.state.get(CONVERSATION_ID)
-    if not conversation_id or not deployed_sa_token_path() or not is_programmatic_token(client.bearer_token):
+    if not conversation_id or not deployed_sa_token_path():
         return False
     server_state = ServerState.from_context(ctx)
     store = server_state.kai_scope_store

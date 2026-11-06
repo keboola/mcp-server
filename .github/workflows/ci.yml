@@ -6,7 +6,8 @@ name: CI
 #   publishing results, integration tests) to avoid exposing them. Only safe checks like local tests and flake8 are run.
 # - For pull requests from branches in this repository, the workflow is skipped to avoid running it twice (once for the
 #   push and once for the PR).
-# - The full workflow (including jobs requiring secrets) runs only on pushes events to branches in this repository
+# - The full workflow (including jobs requiring secrets) runs only on pushes events to branches in this repository;
+#   the integration tests (service-user login secrets in the `integtests` environment) only on `main` and tags
 # - KaiBench evaluation is opt-in per pull request: add the `run-kaibench` label. It is the one job that
 #   deliberately runs on `pull_request` (it needs the PR's labels), so it is not double-run by the push event.
 on:
@@ -117,9 +118,13 @@ jobs:
   integration_tests:
     name: Integration Tests
     needs: build
-    # run this job only for push events (not pull requests)
-    if: github.event_name == 'push'
+    # run this job only for pushes to `main` and tags (not pull requests or feature branches): it needs the service
+    # user's login secrets, which the `integtests` environment releases to those refs only
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))
     runs-on: ubuntu-latest
+    # Holds the INTEGTEST_LOGIN_* secrets (the service user's password and TOTP seed). The environment must restrict
+    # deployment branches to `main` so a pushed feature branch cannot read them.
+    environment: integtests
     steps:
       - uses: actions/checkout@v7
 
@@ -144,10 +149,11 @@ jobs:
           INTEGTEST_STORAGE_TOKENS: ${{ secrets.INTEGTEST_STORAGE_TOKENS }}
           INTEGTEST_POOL_STORAGE_API_URL: ${{ vars.INTEGTEST_POOL_STORAGE_API_URL }}
           INTEGTEST_STORAGE_TOKEN_STORAGE_BRANCHES: ${{ secrets.INTEGTEST_STORAGE_TOKEN_STORAGE_BRANCHES }}
-          # A single programmatic token (kbc_pat_/kbc_at_) whose user is a member of all pool projects.
-          # Drives the PAT/MPA auth modes against the SAME pool projects (uses the pool URL). PAT-auth
-          # tests in integtests/test_pat_multiproject.py skip when it is unset.
-          INTEGTEST_STORAGE_PAT: ${{ secrets.INTEGTEST_STORAGE_PAT }}
+          # The CI service user (password + TOTP login, integtests/service_login.py). It must be a member of all
+          # pool projects, the storage-branches / merge-requests / PRJ2 projects, and has no SSO or WebAuthn-only MFA.
+          INTEGTEST_LOGIN_EMAIL: ${{ secrets.INTEGTEST_LOGIN_EMAIL }}
+          INTEGTEST_LOGIN_PASSWORD: ${{ secrets.INTEGTEST_LOGIN_PASSWORD }}
+          INTEGTEST_LOGIN_TOTP_SECRET: ${{ secrets.INTEGTEST_LOGIN_TOTP_SECRET }}
         run: |
           uv run tox -e integtests
 

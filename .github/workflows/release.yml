@@ -34,6 +34,8 @@ env:
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
+    # Holds the INTEGTEST_LOGIN_* secrets used by the smoke test; limit its deployment refs to the release tags.
+    environment: integtests
     permissions:
       contents: read
       id-token: write
@@ -95,13 +97,29 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      # The server accepts only programmatic tokens, so the smoke test signs in as the CI service user
+      # (password + TOTP, see integtests/service_login.py) and hands the container a token scoped to one project.
       - name: Run simple e2e test
         env:
-          INTEGTEST_STORAGE_TOKENS: ${{ secrets.INTEGTEST_STORAGE_TOKENS }}
+          INTEGTEST_LOGIN_EMAIL: ${{ secrets.INTEGTEST_LOGIN_EMAIL }}
+          INTEGTEST_LOGIN_PASSWORD: ${{ secrets.INTEGTEST_LOGIN_PASSWORD }}
+          INTEGTEST_LOGIN_TOTP_SECRET: ${{ secrets.INTEGTEST_LOGIN_TOTP_SECRET }}
           INTEGTEST_POOL_STORAGE_API_URL: ${{ vars.INTEGTEST_POOL_STORAGE_API_URL }}
+          INTEGTEST_SMOKE_PROJECT_ID: ${{ vars.INTEGTEST_SMOKE_PROJECT_ID }}
         run: |
           set -euo pipefail
-          STORAGE_API_TOKEN=$(echo "$INTEGTEST_STORAGE_TOKENS" | cut -d' ' -f1) \
+          : "${INTEGTEST_SMOKE_PROJECT_ID:?repository variable INTEGTEST_SMOKE_PROJECT_ID is required}"
+          pip install uv
+          KBC_ACCESS_TOKEN=$(uv run --frozen python -m integtests.service_login \
+            --api-url "$INTEGTEST_POOL_STORAGE_API_URL" --project-id "$INTEGTEST_SMOKE_PROJECT_ID")
+          echo "::add-mask::$KBC_ACCESS_TOKEN"
+          KBC_ACCESS_TOKEN="$KBC_ACCESS_TOKEN" \
+          KBC_PROJECT_ID="$INTEGTEST_SMOKE_PROJECT_ID" \
           STORAGE_API_URL="$INTEGTEST_POOL_STORAGE_API_URL" \
           ./tests/docker/ci.sh
 

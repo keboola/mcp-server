@@ -83,7 +83,7 @@ def test_parse_args_gc_sessions() -> None:
 
 class TestLocalLoginFallback:
     """Both stdio and streamable-http go through this so a locally-run server picks up a prior
-    `login`'s stored credentials instead of requiring --storage-token/KBC_STORAGE_TOKEN."""
+    `login`'s stored credentials with no token passed."""
 
     @pytest.mark.asyncio
     async def test_fills_in_token_from_login_store(self, monkeypatch) -> None:
@@ -92,14 +92,14 @@ class TestLocalLoginFallback:
 
         result = await _local_login_fallback(config, allow_interactive=False)
 
-        assert result.storage_token == 'kbc_at_x'
+        assert result.bearer_token == 'kbc_at_x'
         auth_login.ensure_access_token.assert_awaited_once_with(STACK, allow_interactive=False)
 
     @pytest.mark.asyncio
     async def test_noop_when_token_already_set(self, monkeypatch) -> None:
         ensure = AsyncMock()
         monkeypatch.setattr(auth_login, 'ensure_access_token', ensure)
-        config = Config(storage_api_url=STACK, storage_token='kbc_at_already_set')
+        config = Config(storage_api_url=STACK, bearer_token='kbc_at_already_set')
 
         result = await _local_login_fallback(config, allow_interactive=False)
 
@@ -143,7 +143,7 @@ class TestLocalLoginFallback:
         result = await _local_login_fallback(config, allow_interactive=False)
 
         assert result is config
-        assert result.storage_token is None
+        assert result.bearer_token is None
 
 
 class TestRunMigrate:
@@ -737,3 +737,12 @@ class TestDirectoryToolProfile:
         if expect_profile:
             assert call['isError'] is True
             assert 'not available in the Keboola plugin' in call['content'][0]['text']
+
+
+@pytest.mark.parametrize('args', [['--storage-token=x'], ['--storage-token', 'x']])
+def test_parse_args_rejects_the_removed_storage_token_argument(args: list[str]) -> None:
+    # A token is never passed as an argument: the session token comes from `login` or an Authorization header.
+    with pytest.raises(SystemExit) as exc_info:
+        parse_args(args)
+
+    assert exc_info.value.code == 2

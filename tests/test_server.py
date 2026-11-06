@@ -6,7 +6,7 @@ import tempfile
 from dataclasses import asdict
 from pathlib import Path
 from typing import Annotated, Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
@@ -220,7 +220,9 @@ async def test_own_stack_from_cli_parameter_only(tmp_path, monkeypatch):
 
     # This is what cli.run_server() builds from the command line.
     parsed_args = cli.parse_args(['--transport', 'streamable-http', '--api-url', 'https://connection.keboola.com'])
-    config = Config(storage_api_url=parsed_args.api_url, storage_token='user-token', workspace_schema='WORKSPACE_1234')
+    config = Config(
+        storage_api_url=parsed_args.api_url, bearer_token='kbc_at_user-token', workspace_schema='WORKSPACE_1234'
+    )
     created = create_server(
         config,
         runtime_info=ServerRuntimeInfo(transport='http-compat/streamable-http'),
@@ -247,37 +249,51 @@ async def test_own_stack_from_cli_parameter_only(tmp_path, monkeypatch):
     assert stepped.raw_client.headers['X-Kubernetes-Authorization'] == 'Bearer sa-jwt'
 
 
+@pytest.fixture(autouse=True)
+def _no_autolease(mocker) -> None:
+    # A programmatic token (the only accepted kind) makes a local session introspect it over the network
+    # to auto-lease every reachable project; these tests have no network and assert single-project behavior.
+    mocker.patch.object(SessionStateMiddleware, '_autolease_default_scope', AsyncMock(return_value=None))
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ('config', 'envs'),
     [
         (  # config params in Config class
             Config(
-                storage_token='SAPI_1234',
+                bearer_token='kbc_at_SAPI_1234',
+                project_id='1234',
                 storage_api_url='http://connection.test.keboola.com',
                 workspace_schema='WORKSPACE_1234',
             ),
             {},
         ),
-        (  # config params in the OS environment
-            Config(),
+        (  # config params in the OS environment (the token is never read from it)
+            Config(bearer_token='kbc_at_SAPI_1234'),
             {
-                'KBC_STORAGE_TOKEN': 'SAPI_1234',
+                'KBC_PROJECT_ID': '1234',
                 'KBC_STORAGE_API_URL': 'http://connection.test.keboola.com',
                 'KBC_WORKSPACE_SCHEMA': 'WORKSPACE_1234',
             },
         ),
         (  # config params mixed up in both the Config class and the OS environment
-            Config(storage_api_url='http://connection.test.keboola.com'),
-            {'KBC_STORAGE_TOKEN': 'SAPI_1234', 'KBC_WORKSPACE_SCHEMA': 'WORKSPACE_1234'},
+            Config(bearer_token='kbc_at_SAPI_1234', storage_api_url='http://connection.test.keboola.com'),
+            {
+                'KBC_PROJECT_ID': '1234',
+                'KBC_WORKSPACE_SCHEMA': 'WORKSPACE_1234',
+            },
         ),
         (  # the OS environment overrides the initial Config class
             Config(
-                storage_token='foo-bar',
+                bearer_token='kbc_at_SAPI_1234',
                 storage_api_url='http://connection.test.keboola.com',
                 workspace_schema='xyz_123',
             ),
-            {'KBC_STORAGE_TOKEN': 'SAPI_1234', 'KBC_WORKSPACE_SCHEMA': 'WORKSPACE_1234'},
+            {
+                'KBC_PROJECT_ID': '1234',
+                'KBC_WORKSPACE_SCHEMA': 'WORKSPACE_1234',
+            },
         ),
         # TODO: Also test values obtained from an HTTP request.
     ],
@@ -293,7 +309,7 @@ async def test_with_session_state(config: Config, envs: dict[str, Any], mocker):
 
         keboola_client = KeboolaClient.from_state(ctx.session.state)
         assert keboola_client is not None
-        assert keboola_client.legacy_storage_token == 'SAPI_1234'
+        assert keboola_client.bearer_token == 'kbc_at_SAPI_1234'
 
         workspace_manager = WorkspaceManager.from_state(ctx.session.state)
         assert workspace_manager is not None
@@ -339,16 +355,16 @@ async def test_with_session_state(config: Config, envs: dict[str, Any], mocker):
 @pytest.mark.parametrize(
     ('admin_info', 'expected_included', 'expected_excluded'),
     [
+        # every accepted credential is a programmatic (bearer) token, so `modify_flow` is listed whatever the role
         ({'role': 'admin'}, 'modify_flow', 'update_flow'),
-        ({'role': None}, 'update_flow', 'modify_flow'),
-        ({}, 'update_flow', 'modify_flow'),
+        ({'role': None}, 'modify_flow', 'update_flow'),
     ],
 )
 async def test_with_session_state_admin_role_tools(mocker, admin_info, expected_included, expected_excluded):
 
     os_mock = mocker.patch('keboola_mcp_server.server.os')
     os_mock.environ = {
-        'KBC_STORAGE_TOKEN': 'SAPI_1234',
+        'KBC_PROJECT_ID': '1234',
         'KBC_STORAGE_API_URL': 'http://connection.test.keboola.com',
         'KBC_WORKSPACE_SCHEMA': 'WORKSPACE_1234',
     }
@@ -361,7 +377,7 @@ async def test_with_session_state_admin_role_tools(mocker, admin_info, expected_
         },
     )
 
-    mcp = create_server(Config(), runtime_info=ServerRuntimeInfo(transport='stdio'))
+    mcp = create_server(Config(bearer_token='kbc_at_SAPI_1234'), runtime_info=ServerRuntimeInfo(transport='stdio'))
     assert isinstance(mcp, FastMCP)
 
     async with Client(mcp) as client:
@@ -382,7 +398,7 @@ async def test_with_session_state_admin_role_tools(mocker, admin_info, expected_
 async def test_expired_token_is_an_error_result_not_internal_server_error(mocker, branch_id, failing_call):
     os_mock = mocker.patch('keboola_mcp_server.server.os')
     os_mock.environ = {
-        'KBC_STORAGE_TOKEN': 'SAPI_1234',
+        'KBC_PROJECT_ID': '1234',
         'KBC_STORAGE_API_URL': 'http://connection.test.keboola.com',
     } | ({'KBC_BRANCH_ID': branch_id} if branch_id else {})
     mocker.patch(
@@ -394,7 +410,7 @@ async def test_expired_token_is_an_error_result_not_internal_server_error(mocker
         return_value={'id': branch_id, 'isDefault': False},
     )
 
-    mcp = create_server(Config(), runtime_info=ServerRuntimeInfo(transport='stdio'))
+    mcp = create_server(Config(bearer_token='kbc_at_SAPI_1234'), runtime_info=ServerRuntimeInfo(transport='stdio'))
     async with Client(mcp) as client:
         # The token expires once the session is connected.
         mocker.patch(
@@ -450,12 +466,12 @@ async def test_deferred_tools_header_sets_always_load_meta(mocker, headers, expe
 @pytest.mark.parametrize(
     ('os_environ_params', 'expected_params'),
     [
-        # no params in os.environ, tokens as in the config
-        ({}, {'storage_token': 'test-storage-token', 'workspace_schema': 'test-workspace-schema'}),
-        # params in os.environ, tokens configured from os.environ, missing from the config
+        # no params in os.environ, the token as in the config
+        ({}, {'bearer_token': 'kbc_at_test-storage-token', 'workspace_schema': 'test-workspace-schema'}),
+        # params in os.environ override the config
         (
-            {'storage_token': 'test-storage-token-2'},
-            {'storage_token': 'test-storage-token-2', 'workspace_schema': 'test-workspace-schema'},
+            {'workspace_schema': 'env-workspace-schema'},
+            {'bearer_token': 'kbc_at_test-storage-token', 'workspace_schema': 'env-workspace-schema'},
         ),
     ],
 )
@@ -467,13 +483,11 @@ async def test_keboola_injection_and_lifespan(
     is managed by the server.
     Test that the ServerState is properly initialized and that the client and workspace are properly disposed of.
     """
-    cfg_dict = {
-        'storage_token': 'test-storage-token',
-        'workspace_schema': 'test-workspace-schema',
-        'storage_api_url': 'https://connection.keboola.com',
-        'transport': 'stdio',
-    }
-    config = Config.from_dict(cfg_dict)
+    config = Config(
+        bearer_token='kbc_at_test-storage-token',
+        workspace_schema='test-workspace-schema',
+        storage_api_url='https://connection.keboola.com',
+    )
 
     mocker.patch('keboola_mcp_server.server.os.environ', os_environ_params)
     mocker.patch(
@@ -495,7 +509,7 @@ async def test_keboola_injection_and_lifespan(
         server_state = ServerState.from_context(ctx)
         assert asdict(server_state.config) == asdict(config) | os_environ_params
 
-        assert client.legacy_storage_token == expected_params['storage_token']
+        assert client.bearer_token == expected_params['bearer_token']
         assert workspace._workspace_schema == expected_params['workspace_schema']
 
         return param
@@ -687,8 +701,6 @@ async def test_json_logging():
                 'streamable-http',
                 '--api-url',
                 'http://connection.test.keboola.com',
-                '--storage-token',
-                'foo',
                 '--log-config',
                 tmp_log_config_file.absolute(),
             ],

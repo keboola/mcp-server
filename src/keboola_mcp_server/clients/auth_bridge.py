@@ -1,23 +1,12 @@
 """Exchange Keboola auth-bridge tokens against Connection's internal endpoints (PSGO-261).
 
-Two independent exchanges live here, both authenticating to Connection with the MCP
-server's own projected Kubernetes ServiceAccount JWT (`X-Kubernetes-Authorization`); the
-user's/caller's token always travels as `X-Subject-Token`. The SA token file is read per
-call so kubelet rotation is honored. No token material is ever logged or placed in
-exception messages.
+The exchange authenticates to Connection with the MCP server's own projected Kubernetes ServiceAccount JWT
+(`X-Kubernetes-Authorization`); the caller's token travels as `X-Subject-Token`. The SA token file is read per call
+so kubelet rotation is honored. No token material is ever logged or placed in exception messages.
 
-`StorageTokenResolver` exchanges a programmatic bearer token (`kbc_at_*` access token or
-`kbc_pat_*` personal access token) for the legacy per-project Storage token, for downstream
-services that only understand that format (jobs-queue, AI-service, sync-actions -- see
-`SessionStateMiddleware.create_session_state`, which calls this before building `KeboolaClient`
-whenever a project is known).
-
-`OAuthSessionExchanger` exchanges a league OAuth access token from the remote/HTTP OAuth
-login flow (`oauth.py`) for a whole-stack Keboola programmatic session (`kbc_at_*`). The
-resulting session feeds into the same downstream pipe as a directly-supplied programmatic
-token -- forwarded as a Bearer to Storage/data-science/scheduler/metastore, narrowed to a
-project via `X-KBC-ProjectId` once known, and separately resolved via `StorageTokenResolver`
-above for jobs-queue/AI-service/sync-actions, which don't accept that Bearer (INC-02580).
+`OAuthSessionExchanger` exchanges a league OAuth access token from the remote/HTTP OAuth login flow (`oauth.py`) for a
+whole-stack Keboola programmatic session (`kbc_at_*`). That token is forwarded as a Bearer to every Keboola service,
+narrowed to a project via `X-KBC-ProjectId` once known.
 """
 
 import logging
@@ -27,48 +16,16 @@ from typing import cast
 import httpx
 
 from keboola_mcp_server.clients.base import normalize_storage_api_url, read_service_account_jwt
+from keboola_mcp_server.config import strip_bearer
 
 LOG = logging.getLogger(__name__)
 
-_ACCESS_TOKEN_PREFIX = 'kbc_at_'
-_PAT_PREFIX = 'kbc_pat_'
-_RESOLVE_ENDPOINT = 'manage/internal/auth-bridge/resolve-storage-token'
 _EXCHANGE_OAUTH_ENDPOINT = 'manage/internal/auth-bridge/exchange-oauth-token'
-# Resolver statuses passed through to the client verbatim; anything else (incl. 5xx,
+# Exchange statuses passed through to the client verbatim; anything else (incl. 5xx,
 # timeouts, network failures) is mapped to 502 Bad Gateway.
 _PASS_THROUGH_STATUSES = frozenset(
     {int(HTTPStatus.BAD_REQUEST), int(HTTPStatus.UNAUTHORIZED), int(HTTPStatus.FORBIDDEN)}
 )
-
-
-def strip_bearer(token: str) -> str:
-    """Removes a leading case-insensitive ``Bearer `` scheme from a token, if present."""
-    if token[:7].lower() == 'bearer ':
-        return token[7:].strip()
-    return token
-
-
-def is_programmatic_token(token: str | None) -> bool:
-    """True if ``token`` is a Keboola programmatic bearer token (``kbc_at_`` / ``kbc_pat_``)."""
-    if not token:
-        return False
-    bare = strip_bearer(token)
-    return bare.startswith((_ACCESS_TOKEN_PREFIX, _PAT_PREFIX))
-
-
-class StorageTokenExchangeError(RuntimeError):
-    """Raised when the auth-bridge resolver fails to exchange a programmatic token.
-
-    :ivar status_code: The client-facing HTTP status (resolver 400/401/403 pass through;
-        5xx/timeout/network map to 502).
-    """
-
-    def __init__(self, message: str, status_code: int) -> None:
-        super().__init__(message, status_code)
-        self.status_code = status_code
-
-    def __str__(self) -> str:
-        return self.args[0]
 
 
 class OAuthTokenExchangeError(RuntimeError):
@@ -84,101 +41,6 @@ class OAuthTokenExchangeError(RuntimeError):
 
     def __str__(self) -> str:
         return self.args[0]
-
-
-class StorageTokenResolver:
-    """Exchanges a programmatic token for a legacy Storage token via the Connection resolver."""
-
-    def __init__(
-        self,
-        *,
-        storage_api_url: str,
-        kubernetes_token_path: str,
-        timeout: httpx.Timeout | None = None,
-        transport: httpx.AsyncBaseTransport | None = None,
-    ) -> None:
-        """
-        :param storage_api_url: Connection Storage API URL (``https://connection.<stack>``).
-        :param kubernetes_token_path: Path to the projected ServiceAccount token file.
-        :param timeout: Optional HTTP timeout override.
-        :param transport: Optional httpx transport (for testing).
-        """
-        self._base_url = normalize_storage_api_url(storage_api_url)
-        self._kubernetes_token_path = kubernetes_token_path
-        self._timeout = timeout or httpx.Timeout(connect=5.0, read=30.0, write=10.0, pool=5.0)
-        self._transport = transport
-        self._http: httpx.AsyncClient | None = None
-
-    def _read_sa_jwt(self) -> str:
-        # Read per call — the kubelet rotates the projected token in place.
-        return read_service_account_jwt(self._kubernetes_token_path)
-
-    def _client(self) -> httpx.AsyncClient:
-        """One client -- one connection pool -- reused across resolves.
-
-        A resolver is held for the life of the server (`ServerState.storage_token_resolver`), so a
-        multi-project fan-out (and every request after it) pays one TLS handshake instead of one
-        per resolve. Created lazily so `__init__` stays synchronous.
-        """
-        if self._http is None or self._http.is_closed:
-            self._http = httpx.AsyncClient(timeout=self._timeout, transport=self._transport)
-        return self._http
-
-    async def aclose(self) -> None:
-        if self._http is not None:
-            await self._http.aclose()
-            self._http = None
-
-    async def resolve(self, *, subject_token: str, project_id: int) -> str:
-        """
-        Exchanges ``subject_token`` for the legacy Storage token of ``project_id``.
-
-        :return: The legacy Storage token.
-        :raises StorageTokenExchangeError: On any resolver failure (status carried on the error).
-        """
-        headers = {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-            'X-Kubernetes-Authorization': f'Bearer {self._read_sa_jwt()}',
-            'X-Subject-Token': f'Bearer {strip_bearer(subject_token)}',
-        }
-        try:
-            response = await self._client().post(
-                f'{self._base_url}/{_RESOLVE_ENDPOINT}',
-                headers=headers,
-                json={'projectId': project_id},
-            )
-        except httpx.HTTPError as e:
-            # Network / timeout failure. Raise without chaining so no request (and thus no
-            # token material) can surface in a traceback.
-            raise StorageTokenExchangeError(
-                f'Auth-bridge token exchange could not reach Connection ({type(e).__name__}).',
-                status_code=int(HTTPStatus.BAD_GATEWAY),
-            ) from None
-
-        if response.status_code != HTTPStatus.OK:
-            status = response.status_code
-            mapped = status if status in _PASS_THROUGH_STATUSES else int(HTTPStatus.BAD_GATEWAY)
-            # A pass-through status (400/401/403) is the CALLER's token being invalid/expired/
-            # unauthorized for this project -- routine, expected, and observed ~90x/day in
-            # production. Logging that at ERROR pollutes error-rate dashboards/alerts with normal
-            # caller mistakes; only a mapped-to-502 (Connection unreachable/erroring) is this
-            # server's own problem and warrants ERROR.
-            log = LOG.error if mapped == int(HTTPStatus.BAD_GATEWAY) else LOG.warning
-            log(f'Auth-bridge token exchange failed: resolver status {status}, mapped to {mapped}.')
-            raise StorageTokenExchangeError(
-                f'Auth-bridge token exchange was rejected (resolver status {status}).',
-                status_code=mapped,
-            )
-
-        body = cast(dict, response.json())
-        storage_token = body.get('storageToken')
-        if not storage_token:
-            raise StorageTokenExchangeError(
-                'Auth-bridge token exchange returned no storageToken.',
-                status_code=int(HTTPStatus.BAD_GATEWAY),
-            )
-        return cast(str, storage_token)
 
 
 class OAuthSessionExchanger:
@@ -251,9 +113,8 @@ class OAuthSessionExchanger:
         if response.status_code != HTTPStatus.OK:
             status = response.status_code
             mapped = status if status in _PASS_THROUGH_STATUSES else int(HTTPStatus.BAD_GATEWAY)
-            # See the matching comment in StorageTokenResolver.resolve(): a pass-through status is
-            # the caller's own token being rejected, not a server fault -- only ERROR when mapped
-            # to 502 (Connection itself unreachable/erroring).
+            # A pass-through status is the caller's own token being rejected, not a server fault -- only
+            # ERROR when mapped to 502 (Connection itself unreachable/erroring).
             log = LOG.error if mapped == int(HTTPStatus.BAD_GATEWAY) else LOG.warning
             log(f'OAuth-token exchange failed: resolver status {status}, mapped to {mapped}.')
             raise OAuthTokenExchangeError(

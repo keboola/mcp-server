@@ -35,8 +35,6 @@
 - The implemented Oauth provider supports Dynamic Client Registration (DCR), but does not persist the clients info. It's a fake implemnetation.
 - We use whitelisted redirect URIs to accept connections only from the "trusted" OAuth clients.
 - We ignore the OAuth scopes requested/registered by the OAuth clients.
-- The extra SAPI token is created, because some Keboola APIs still require `X-StorageAPI-Token` and don't accepts `Authorization: Bearer` header.
-- SessionStateMiddleware passes this extra SAPI token to KeboolaClient and its specialized Keboola API clients that need it.
 
 ### Tools
 - Tool input schemas are derived automatically from Python signatures and Pydantic models. There is no hand-written JSON schema assembly for normal tool registration.

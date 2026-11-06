@@ -11,8 +11,12 @@ cleanup() {
 trap cleanup EXIT
 
 main() {
-    : "${STORAGE_API_TOKEN:?STORAGE_API_TOKEN is required}"
+    : "${KBC_ACCESS_TOKEN:?KBC_ACCESS_TOKEN (a programmatic kbc_at_ token) is required}"
+    : "${KBC_PROJECT_ID:?KBC_PROJECT_ID is required}"
     : "${STORAGE_API_URL:?STORAGE_API_URL is required}"
+
+    # The server holds no credential: every request carries the token and the project it is for.
+    AUTH_ARGS=(-H "Authorization: Bearer $KBC_ACCESS_TOKEN" -H "X-KBC-ProjectId: $KBC_PROJECT_ID")
 
     # Start container. No --workspace-schema: the smoke test exercises get_buckets, which is a
     # Storage-only tool and needs no workspace, so the server boots without one.
@@ -23,7 +27,6 @@ main() {
         "$IMAGE_NAME" \
         --transport http-compat \
         --api-url "$STORAGE_API_URL" \
-        --storage-token "$STORAGE_API_TOKEN" \
         --host "0.0.0.0" \
         --port 8000 >/dev/null
 
@@ -34,6 +37,7 @@ main() {
     echo "Testing MCP initialize..."
     for i in $(seq 1 30); do
         response=$(curl -s -w "\n%{http_code}" -D "headers.txt" -X POST \
+           "${AUTH_ARGS[@]}" \
            -H "Content-Type: application/json" \
            -H "Accept: application/json, text/event-stream" \
            -d '{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "ci-docker-test", "version": "1.0.0"}}}' \
@@ -46,6 +50,7 @@ main() {
             echo "✓ MCP server initialized successfully, session-less mode"
 
             response=$(curl -s -w "\n%{http_code}" -X POST \
+               "${AUTH_ARGS[@]}" \
                -H "Content-Type: application/json" \
                -H "Accept: application/json, text/event-stream" \
                -d '{"jsonrpc": "2.0", "method": "notifications/initialized"}' \
@@ -58,6 +63,7 @@ main() {
                 echo "✓ MCP initialization confirmed"
 
                 response=$(curl -s -w "\n%{http_code}" -X POST \
+                   "${AUTH_ARGS[@]}" \
                    -H "Content-Type: application/json" \
                    -H "Accept: application/json, text/event-stream" \
                    -d '{"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "get_buckets", "arguments": {}}}' \

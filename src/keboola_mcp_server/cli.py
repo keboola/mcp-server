@@ -73,7 +73,6 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
             '"eu-central-1", use: https://connection.eu-central-1.keboola.com'
         ),
     )
-    parser.add_argument('--storage-token', metavar='STR', help='Keboola Storage API token.')
     parser.add_argument('--workspace-schema', metavar='STR', help='Keboola Storage API workspace schema.')
     parser.add_argument('--workspace-id', metavar='STR', help='Keboola Storage API workspace ID.')
     parser.add_argument('--host', default='localhost', metavar='STR', help='The host to listen on.')
@@ -418,10 +417,9 @@ def _prompt_mfa_code() -> tuple[str | None, str | None]:
 
 
 async def _local_login_fallback(config: Config, *, allow_interactive: bool) -> Config:
-    """Fills in ``config.storage_token`` from the local PKCE `login` credential store when nothing
+    """Fills in ``config.bearer_token`` from the local PKCE `login` credential store when nothing
     else has configured a token or an OAuth client -- so a locally-run server (stdio or
-    streamable-http alike) doesn't need `--storage-token`/`KBC_STORAGE_TOKEN` passed explicitly
-    once `login` has been run. No-op (returns ``config`` unchanged) when a token is already set,
+    streamable-http alike) needs nothing else once `login` has been run. No-op (returns ``config`` unchanged) when a token is already set,
     there's no Storage API URL to log in against, or OAuth is configured (the deployed server
     case, which authenticates per-session instead).
 
@@ -430,7 +428,7 @@ async def _local_login_fallback(config: Config, *, allow_interactive: bool) -> C
     every other tool explains how to get a credential. streamable-http can also still be handed one
     per request via a header.
     """
-    if config.storage_token or not config.storage_api_url or config.oauth_client_id or config.oauth_client_secret:
+    if config.bearer_token or not config.storage_api_url or config.oauth_client_id or config.oauth_client_secret:
         return config
     from keboola_mcp_server.auth_login import ensure_access_token
 
@@ -442,7 +440,7 @@ async def _local_login_fallback(config: Config, *, allow_interactive: bool) -> C
             'Run "keboola-mcp-server login" or call the "create_project" tool to get one.'
         )
         return config
-    return dataclasses.replace(config, storage_token=access_token)
+    return dataclasses.replace(config, bearer_token=access_token)
 
 
 async def _run_login(
@@ -718,22 +716,19 @@ async def run_server(args: list[str] | None = None) -> None:
         # path as any other startup failure, instead of an unhandled traceback.
         config = Config(
             storage_api_url=parsed_args.api_url,
-            storage_token=parsed_args.storage_token,
             workspace_schema=parsed_args.workspace_schema,
             workspace_id=parsed_args.workspace_id,
         ).replace_by(os.environ)
 
-        # Local dev convenience, for stdio and streamable-http alike: with no token configured (CLI,
-        # env, or OAuth) and a Storage API URL known, use the tokens leased by a prior browser `login`
-        # (refreshing them as needed) instead of requiring --storage-token/KBC_STORAGE_TOKEN to be
-        # passed explicitly. No-op for a deployed/OAuth-configured server -- see
+        # Local dev: with no OAuth client configured and a Storage API URL known, use the tokens leased by a
+        # prior `login` (refreshing them as needed). No-op for a deployed/OAuth-configured server -- see
         # `_local_login_fallback`.
         #
         # Only run the interactive browser login when a real terminal is attached. For stdio, an MCP
         # client launches this process with stdin/stdout as pipes (no TTY) and stdout as the JSON-RPC
         # channel -- an interactive login there would corrupt the protocol and block the initialize
         # handshake. In that case (and for any non-interactive streamable-http launch, e.g. a
-        # container) the server starts without a default token: a header can still carry one per
+        # container) the server starts without a default token: an `Authorization` header can still carry one per
         # request, and a session with none at all starts in bootstrap mode, where `create_project`
         # creates a project and a session for it and every other tool says how to get a credential.
         allow_interactive = sys.stdin.isatty() and sys.stderr.isatty()

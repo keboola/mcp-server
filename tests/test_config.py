@@ -7,6 +7,7 @@ from keboola_mcp_server.config import (
     Config,
     ServerRuntimeInfo,
     get_env_storage_api_url,
+    is_programmatic_token,
     is_same_stack,
     resolve_mcp_server_url,
 )
@@ -17,31 +18,19 @@ class TestConfig:
         ('d', 'expected'),
         [
             (
-                {'storage_token': 'foo', 'workspace_schema': 'bar'},
-                Config(storage_token='foo', workspace_schema='bar'),
-            ),
-            (
-                {'KBC_STORAGE_TOKEN': 'foo', 'KBC_WORKSPACE_SCHEMA': 'bar'},
-                Config(storage_token='foo', workspace_schema='bar'),
-            ),
-            (
-                {'X-Storage_Token': 'foo', 'KBC_WORKSPACE_SCHEMA': 'bar'},
-                Config(storage_token='foo', workspace_schema='bar'),
-            ),
-            (
-                {'X-StorageApi_Token': 'foo', 'KBC_WORKSPACE_SCHEMA': 'bar'},
-                Config(storage_token='foo', workspace_schema='bar'),
+                {'KBC_WORKSPACE_SCHEMA': 'bar'},
+                Config(workspace_schema='bar'),
             ),
             (
                 # workspace_id requires the KBC_/X- prefix -- a bare `workspace_id`/`WORKSPACE_ID`
                 # key must NOT be picked up (it collides with the variable Keboola injects into
                 # Data App containers).
-                {'storage_token': 'foo', 'workspace_id': '123'},
-                Config(storage_token='foo'),
+                {'workspace_id': '123'},
+                Config(),
             ),
             (
-                {'storage_token': 'foo', 'KBC_WORKSPACE_ID': '123'},
-                Config(storage_token='foo', workspace_id='123'),
+                {'KBC_WORKSPACE_ID': '123'},
+                Config(workspace_id='123'),
             ),
             (
                 {'X-Workspace-Id': '123'},
@@ -86,27 +75,37 @@ class TestConfig:
         assert Config.from_dict(d) == expected
 
     @pytest.mark.parametrize(
+        'key',
+        [
+            'bearer_token',
+            'KBC_BEARER_TOKEN',
+            'X-Bearer-Token',
+            'storage_token',
+            'KBC_STORAGE_TOKEN',
+            'X-StorageApi-Token',
+            'storage_api_token',
+        ],
+    )
+    def test_the_token_is_never_read_from_a_mapping(self, key: str) -> None:
+        # The token comes from the Authorization header, the login store or an OAuth login -- not from the
+        # environment, CLI arguments or any `X-*` header.
+        assert Config.from_dict({key: 'kbc_at_foo'}).bearer_token is None
+        assert Config().replace_by({key: 'kbc_at_foo'}).bearer_token is None
+        assert Config().replace_by_headers({key: 'kbc_at_foo'}).bearer_token is None
+
+    @pytest.mark.parametrize(
         ('orig', 'd', 'expected'),
         [
             (
                 Config(),
-                {'storage_token': 'foo', 'workspace_schema': 'bar'},
-                Config(storage_token='foo', workspace_schema='bar'),
-            ),
-            (
-                Config(),
-                {'KBC_STORAGE_TOKEN': 'foo', 'KBC_WORKSPACE_SCHEMA': 'bar'},
-                Config(storage_token='foo', workspace_schema='bar'),
-            ),
-            (
-                Config(storage_token='bar'),
-                {'storage_token': 'foo', 'workspace_schema': 'bar'},
-                Config(storage_token='foo', workspace_schema='bar'),
-            ),
-            (
-                Config(storage_token='bar'),
-                {'storage_token': None, 'workspace_schema': 'bar'},
+                {'KBC_WORKSPACE_SCHEMA': 'bar'},
                 Config(workspace_schema='bar'),
+            ),
+            (
+                # The token is internal: no mapping can overwrite (or clear) it.
+                Config(bearer_token='bar'),
+                {'bearer_token': 'foo', 'workspace_schema': 'bar'},
+                Config(bearer_token='bar', workspace_schema='bar'),
             ),
             (Config(branch_id='foo'), {'branch-id': ''}, Config()),
             (Config(branch_id='foo'), {'branch-id': 'none'}, Config()),
@@ -115,13 +114,13 @@ class TestConfig:
             (Config(branch_id='foo'), {'branch-id': 'pRoDuCtIoN'}, Config()),
             (
                 Config(),
-                {'storage_token': 'foo', 'workspace_id': '123'},
-                Config(storage_token='foo'),
+                {'workspace_id': '123'},
+                Config(),
             ),
             (
                 Config(),
-                {'storage_token': 'foo', 'KBC_WORKSPACE_ID': '123'},
-                Config(storage_token='foo', workspace_id='123'),
+                {'KBC_WORKSPACE_ID': '123'},
+                Config(workspace_id='123'),
             ),
             (
                 # An empty header must not un-pin a server-configured workspace_id.
@@ -172,14 +171,14 @@ class TestConfig:
             assert getattr(config, f.name) is None, f'Expected default value for {f.name} to be None'
 
     def test_no_token_password_in_repr(self) -> None:
-        config = Config(storage_token='foo', postgres_dsn='postgresql://u:p@host/db', session_encryption_key='abc')
+        config = Config(bearer_token='foo', postgres_dsn='postgresql://u:p@host/db', session_encryption_key='abc')
         assert str(config) == (
-            "Config(storage_api_url=None, storage_token='****', branch_id=None, workspace_schema=None, "
+            "Config(storage_api_url=None, bearer_token='****', branch_id=None, workspace_schema=None, "
             'workspace_id=None, '
             'oauth_client_id=None, oauth_client_secret=None, '
             'oauth_server_url=None, oauth_scope=None, mcp_server_url=None, '
             "jwt_secret=None, postgres_dsn='****', session_encryption_key='****', "
-            'bearer_token=None, conversation_id=None, project_id=None, oauth_validate_rate_limit=None, oauth_dynamic_client_approval=None, oauth_dynamic_client_approval_daily_limit=None, oauth_validate_fleet_rate_limit=None, oauth_authorize_rate_limit_per_ip=None, oauth_trusted_proxy_hops=None, oauth_resource_binding=None, stack_key=None, router_url=None, allow_anonymous_provisioning=None)'
+            'conversation_id=None, project_id=None, oauth_validate_rate_limit=None, oauth_dynamic_client_approval=None, oauth_dynamic_client_approval_daily_limit=None, oauth_validate_fleet_rate_limit=None, oauth_authorize_rate_limit_per_ip=None, oauth_trusted_proxy_hops=None, oauth_resource_binding=None, stack_key=None, router_url=None, allow_anonymous_provisioning=None)'
         )
 
     def test_workspace_id_must_be_numeric(self) -> None:
@@ -394,3 +393,25 @@ class TestIsSameStack:
         assert is_same_stack(url, other_url) is expected
         # The comparison is symmetric.
         assert is_same_stack(other_url, url) is expected
+
+
+@pytest.mark.parametrize(
+    ('token', 'expected'),
+    [
+        ('kbc_at_019ef801_abc', True),
+        ('kbc_pat_019ef801_abc', True),
+        ('Bearer kbc_at_019ef801_abc', True),
+        ('bearer kbc_pat_019ef801_abc', True),
+        ('123-legacy-storage-token', False),
+        ('kbc_rt_019ef801_abc', False),  # refresh token is not a Storage-token bearer
+        ('', False),
+        (None, False),
+    ],
+)
+def test_is_programmatic_token(token: str | None, expected: bool) -> None:
+    assert is_programmatic_token(token) is expected
+
+
+@pytest.mark.parametrize('token', ['kbc_at_abc', 'Bearer kbc_at_abc', 'bearer  kbc_at_abc  '])
+def test_config_stores_the_token_without_the_bearer_scheme(token: str) -> None:
+    assert Config(bearer_token=token).bearer_token == 'kbc_at_abc'

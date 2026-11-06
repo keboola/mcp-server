@@ -308,7 +308,6 @@ async def preview_config_diff(rq: Request) -> Response:
         server_state.runtime_info,
         readonly=True,
         own_stack_storage_api_url=own_stack_storage_api_url,
-        token_resolver=server_state.storage_token_resolver(config.storage_api_url),
     )
     client = KeboolaClient.from_state(state)
     workspace_manager = WorkspaceManager.from_state(state)
@@ -327,7 +326,6 @@ async def preview_config_diff(rq: Request) -> Response:
         has_semantic_models=has_semantic_models,
         token_role=ToolsFilteringMiddleware.get_token_role(token_info),
         features=ToolsFilteringMiddleware.get_project_features(token_info),
-        is_oauth=bool(client.bearer_token),
         is_main_branch=client.branch_id is None,
     )
     if denial:

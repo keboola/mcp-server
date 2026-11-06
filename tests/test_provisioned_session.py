@@ -72,7 +72,7 @@ class TestProvisionedSessionOnADeployedServer:
 
         config = await resolve_session(Config(storage_api_url=self.STACK), scope, store)
 
-        assert config.storage_token == 'kbc_at_provisioned'
+        assert config.bearer_token == 'kbc_at_provisioned'
         assert config.project_id == '4321'
         store.get_by_id.assert_awaited_once_with('sess-row-1')
 
@@ -86,9 +86,9 @@ class TestProvisionedSessionOnADeployedServer:
         store.get_by_id.return_value = self._session()
         scope = SessionScope(project_ids=[4321], provisioned_session_id='sess-row-1')
 
-        config = await resolve_session(Config(storage_api_url=self.STACK, storage_token='kbc_at_mine'), scope, store)
+        config = await resolve_session(Config(storage_api_url=self.STACK, bearer_token='kbc_at_mine'), scope, store)
 
-        assert config.storage_token == 'kbc_at_provisioned'
+        assert config.bearer_token == 'kbc_at_provisioned'
         assert config.project_id == '4321'
 
     @pytest.mark.asyncio
@@ -117,7 +117,7 @@ class TestProvisionedSessionOnADeployedServer:
 
         with pytest.raises(ProvisionedSessionEnded, match='has ended') as excinfo:
             await resolve_session(
-                Config(storage_api_url=self.STACK, storage_token='kbc_at_mine'),
+                Config(storage_api_url=self.STACK, bearer_token='kbc_at_mine'),
                 scope,
                 store,
             )
@@ -132,7 +132,7 @@ class TestProvisionedSessionOnADeployedServer:
         store = AsyncMock(spec=SessionStore)
         store.get_by_id.side_effect = RuntimeError('connection reset')
         scope = SessionScope(project_ids=[4321], provisioned_session_id='sess-row-1')
-        original = Config(storage_api_url=self.STACK, storage_token='kbc_at_mine')
+        original = Config(storage_api_url=self.STACK, bearer_token='kbc_at_mine')
 
         config = await resolve_session(original, scope, store)
 
@@ -150,7 +150,7 @@ class TestProvisionedSessionOnADeployedServer:
         with patch('keboola_mcp_server.provisioned_session.refresh_tokens', AsyncMock(return_value=refreshed)):
             config = await resolve_session(Config(storage_api_url=self.STACK), scope, store)
 
-        assert config.storage_token == 'kbc_at_fresh'
+        assert config.bearer_token == 'kbc_at_fresh'
         locked.rotate_kbc_tokens.assert_awaited_once()
         assert locked.rotate_kbc_tokens.await_args.kwargs['kbc_access_token'] == 'kbc_at_fresh'
         assert locked.rotate_kbc_tokens.await_args.kwargs['kbc_refresh_token'] == 'kbc_rt_fresh'
@@ -167,7 +167,7 @@ class TestProvisionedSessionOnADeployedServer:
         ):
             config = await resolve_session(Config(storage_api_url=self.STACK), scope, store)
 
-        assert config.storage_token == 'kbc_at_provisioned'
+        assert config.bearer_token == 'kbc_at_provisioned'
         store.rotate_kbc_tokens.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -183,7 +183,7 @@ class TestProvisionedSessionOnADeployedServer:
         with patch('keboola_mcp_server.provisioned_session.refresh_tokens', AsyncMock()) as refresh:
             config = await resolve_session(Config(storage_api_url=self.STACK), scope, store)
 
-        assert config.storage_token == 'kbc_at_winner'
+        assert config.bearer_token == 'kbc_at_winner'
         refresh.assert_not_awaited()
         store.rotate_kbc_tokens.assert_not_awaited()
 
@@ -223,7 +223,7 @@ class TestProvisionedSessionOnADeployedServer:
         with patch('keboola_mcp_server.provisioned_session.refresh_tokens', AsyncMock(side_effect=failed)):
             config = await resolve_session(Config(storage_api_url=self.STACK), scope, store)
 
-        assert config.storage_token == 'kbc_at_provisioned'
+        assert config.bearer_token == 'kbc_at_provisioned'
         locked.revoke.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -260,7 +260,7 @@ class TestProvisionedSessionOnADeployedServer:
         with patch('keboola_mcp_server.provisioned_session.refresh_tokens', AsyncMock(return_value=refreshed)):
             config = await resolve_session(Config(storage_api_url=self.STACK), scope, store)
 
-        assert config.storage_token == 'kbc_at_fresh'
+        assert config.bearer_token == 'kbc_at_fresh'
         store.rotate_kbc_tokens.assert_awaited_once()
         assert store.rotate_kbc_tokens.await_args.kwargs['kbc_refresh_token'] == 'kbc_rt_fresh'
 
@@ -300,7 +300,7 @@ class TestProvisionedSessionOnADeployedServer:
 
         config = await resolve_session(Config(storage_api_url=self.STACK), scope, store)
 
-        assert config.storage_token == 'kbc_at_provisioned'
+        assert config.bearer_token == 'kbc_at_provisioned'
 
 
 class TestProvisionedSessionEndsWhenTheProjectIsClaimed:
@@ -311,7 +311,7 @@ class TestProvisionedSessionEndsWhenTheProjectIsClaimed:
     """
 
     STACK = 'https://connection.keboola.com'
-    CONFIG = Config(storage_api_url=STACK, storage_token='kbc_at_provisioned')
+    CONFIG = Config(storage_api_url=STACK, bearer_token='kbc_at_provisioned')
     SCOPE = SessionScope(project_ids=[4321], confirmed=True, provisioned_session_id='sess-row-1')
 
     def _store(self, session, *, locked_session=...):

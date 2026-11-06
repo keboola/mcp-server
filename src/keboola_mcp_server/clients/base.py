@@ -83,10 +83,7 @@ class RawKeboolaClient:
             'Accept-Encoding': 'gzip',
         }
         if api_token:
-            if api_token.startswith('Bearer '):
-                self.headers['Authorization'] = api_token
-            else:
-                self.headers['X-StorageAPI-Token'] = api_token
+            self.headers['Authorization'] = api_token
         self.timeout = timeout or httpx.Timeout(connect=5.0, read=60.0, write=10.0, pool=5.0)
         # Store retry config, not the transport - transports cannot be shared across concurrent AsyncClient instances
         self._retry = Retry(
@@ -165,10 +162,8 @@ class RawKeboolaClient:
             ).startswith('Bearer '):
                 # A 401 on a programmatic (Bearer) session is often a project scope that was never
                 # confirmed (or has gone stale), not an actually-invalid credential -- steer the agent
-                # toward the tools that fix that instead of telling the user to re-authenticate. Not
-                # added to a legacy Storage token (X-StorageAPI-Token): it is bound to one project and
-                # has no scope to fix. Harmless to suggest on a single pinned project: the tools just
-                # say so.
+                # toward the tools that fix that instead of telling the user to re-authenticate. Harmless
+                # to suggest on a single pinned project: the tools just say so.
                 message_parts.append(
                     'If this session\'s Keboola project scope may be unset or stale, call '
                     '"get_accessible_projects" to see which project(s) this session can reach, then '
