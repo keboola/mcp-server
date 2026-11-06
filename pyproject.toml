@@ -36,7 +36,7 @@ tests = [
     "pytest-cov ~= 7.0",
     "pytest-datadir ~= 1.8",
     "pytest-mock ~= 3.15",
-    "python-dateutil ~= 2.9",
+    "python-dateutil>=2.9,<4.0",
     "python-dotenv ~= 1.2",
 ]
 integtests = [
