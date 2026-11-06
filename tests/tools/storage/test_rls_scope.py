@@ -24,8 +24,8 @@ from keboola_mcp_server.tools.storage.tools import (
 from keboola_mcp_server.workspace import RlsScope, RlsScopeUnavailableError, WorkspaceManager
 from tests.tools.storage.test_tools import (
     _bucket_detail_side_effect,
-    _bucket_table_list_side_effect,
     _table_detail_side_effect,
+    _table_list_side_effect,
 )
 
 _UNAVAILABLE = 'Table metadata of this project is temporarily unavailable. Please try again later.'
@@ -40,7 +40,7 @@ def keboola_client_in_branch_free_project(mocker: MockerFixture, mcp_context_cli
     keboola_client.branch_id = None
     keboola_client.has_feature = mocker.AsyncMock(return_value=False)
     keboola_client.storage_client.bucket_detail = mocker.AsyncMock(side_effect=_bucket_detail_side_effect)
-    keboola_client.storage_client.bucket_table_list = mocker.AsyncMock(side_effect=_bucket_table_list_side_effect)
+    keboola_client.storage_client.table_list = mocker.AsyncMock(side_effect=_table_list_side_effect)
     return keboola_client
 
 
@@ -225,18 +225,24 @@ def _search_tables() -> list[dict[str, Any]]:
     return [
         {
             'id': 'in.c-foo.users',
+            'bucketId': 'in.c-foo',
             'name': 'users',
             'created': '2024-01-01T00:00:00Z',
             'columns': ['user_id', 'salary'],
-            'columnMetadata': {
-                'salary': [{'key': 'KBC.description', 'value': 'The salary of a user', 'provider': 'user'}]
+            'definition': {
+                'columns': [
+                    {'name': 'user_id', 'definition': {'description': 'Identifier of a user'}},
+                    {'name': 'salary', 'definition': {'description': 'Monthly compensation'}},
+                ],
             },
         },
         {
             'id': 'in.c-foo.hidden_users',
+            'bucketId': 'in.c-foo',
             'name': 'hidden_users',
             'created': '2024-01-01T00:00:00Z',
             'columns': ['salary'],
+            'definition': None,
         },
     ]
 
@@ -249,7 +255,7 @@ def searchable_project(mocker: MockerFixture, mcp_context_client: Context) -> Ke
     keboola_client.storage_client.bucket_list = mocker.AsyncMock(
         return_value=[{'id': 'in.c-foo', 'name': 'foo', 'created': '2024-01-01T00:00:00Z'}]
     )
-    keboola_client.storage_client.bucket_table_list = mocker.AsyncMock(return_value=_search_tables())
+    keboola_client.storage_client.table_list = mocker.AsyncMock(return_value=_search_tables())
     keboola_client.storage_client.component_list = mocker.AsyncMock(return_value=[])
     keboola_client.storage_client.workspace_list = mocker.AsyncMock(return_value=[])
     return keboola_client
@@ -279,17 +285,27 @@ async def test_search_of_a_governed_project_hides_tables_and_columns_and_skips_t
     assert by_hidden_column.hits == [] and by_hidden_column.total == 0
 
 
+@pytest.mark.parametrize(
+    ('pattern', 'expected_table_ids'),
+    [
+        ('user_id', ['in.c-foo.users']),
+        # the native description of a readable column is searched
+        ('Identifier', ['in.c-foo.users']),
+        # the native description of a column that the column policy hides is not
+        ('compensation', []),
+    ],
+)
 @pytest.mark.asyncio
 async def test_search_of_a_governed_project_finds_a_readable_column(
-    mcp_context_client: Context, searchable_project: KeboolaClient
+    mcp_context_client: Context, searchable_project: KeboolaClient, pattern: str, expected_table_ids: list[str]
 ) -> None:
     manager = _workspace_manager(mcp_context_client)
     manager.is_governed.return_value = True
     manager.get_rls_scope.return_value = RlsScope(readable={'in.c-foo.users': ['user_id']})
 
-    result = await _search_tables_by(mcp_context_client, 'user_id')
+    result = await _search_tables_by(mcp_context_client, pattern)
 
-    assert [h.table_id for h in result.hits] == ['in.c-foo.users']
+    assert [h.table_id for h in result.hits] == expected_table_ids
 
 
 @pytest.mark.asyncio
@@ -331,7 +347,7 @@ async def test_get_tables_on_a_development_branch_asks_for_the_production_ids(
     keboola_client.branch_id = '1246948'
     keboola_client.has_feature = mocker.AsyncMock(return_value=False)
     keboola_client.storage_client.bucket_detail = mocker.AsyncMock(side_effect=_bucket_detail_side_effect)
-    keboola_client.storage_client.bucket_table_list = mocker.AsyncMock(side_effect=_bucket_table_list_side_effect)
+    keboola_client.storage_client.table_list = mocker.AsyncMock(side_effect=_table_list_side_effect)
     manager = _workspace_manager(mcp_context_client)
     manager.get_rls_scope.return_value = RlsScope(readable={})
 
@@ -391,8 +407,14 @@ async def test_search_on_a_development_branch_asks_for_the_production_ids(
     searchable_project.storage_client.bucket_list.return_value = [
         {'id': bucket_id, 'name': 'foo', 'created': '2024-01-01T00:00:00Z'}
     ]
-    searchable_project.storage_client.bucket_table_list.return_value = [
-        {'id': table_id, 'name': 'users', 'created': '2024-01-01T00:00:00Z', 'columns': ['user_id']}
+    searchable_project.storage_client.table_list.return_value = [
+        {
+            'id': table_id,
+            'bucketId': bucket_id,
+            'name': 'users',
+            'created': '2024-01-01T00:00:00Z',
+            'columns': ['user_id'],
+        }
     ]
     manager = _workspace_manager(mcp_context_client)
     manager.is_governed.return_value = True

@@ -6,6 +6,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime
 from http import HTTPStatus
 from typing import Any, Literal, cast
+from urllib.parse import parse_qs, urlsplit
 
 import httpx
 from pydantic import AliasChoices, BaseModel, Field, field_validator
@@ -314,6 +315,8 @@ class AsyncStorageClient(KeboolaServiceClient):
     JOB_FINAL_STATUSES = frozenset({'success', 'warning', 'error', 'cancelled'})
     JOB_SUCCESS_STATUSES = frozenset({'success', 'warning'})
     DEFINITION_VALIDATION_ERROR_CODE = 'storage.tables.definitionUpdateValidationFailed'
+    # The largest page the table list accepts; a larger `page[limit]` is rejected, not clamped.
+    TABLE_LIST_PAGE_LIMIT = 200
 
     def __init__(
         self,
@@ -543,23 +546,6 @@ class AsyncStorageClient(KeboolaServiceClient):
             'metadata': [{'key': key, 'value': value} for key, value in metadata.items()],
         }
         return cast(list[JsonDict], await self.post(endpoint=f'buckets/{bucket_id}/metadata', data=payload))
-
-    async def bucket_table_list(
-        self, bucket_id: str, include: list[str] | None = None, branch_id: str | None = None
-    ) -> list[JsonDict]:
-        """
-        Lists all tables in a given bucket.
-
-        :param bucket_id: The id of the bucket
-        :param include: List of fields to include in the response
-        :param branch_id: Optional branch ID override (uses client's branch_id if not specified)
-        :return: List of tables as dictionary
-        """
-        bid = branch_id or self._branch_id
-        params = {}
-        if include is not None and isinstance(include, list):
-            params['include'] = ','.join(include)
-        return cast(list[JsonDict], await self.get(endpoint=f'branch/{bid}/buckets/{bucket_id}/tables', params=params))
 
     async def column_metadata_delete(self, column_id: str, metadata_id: str) -> None:
         """
@@ -1044,6 +1030,48 @@ class AsyncStorageClient(KeboolaServiceClient):
         """
         bid = branch_id or self._branch_id
         return cast(JsonDict, await self.get(endpoint=f'branch/{bid}/tables/{table_id}'))
+
+    async def table_list(
+        self,
+        include: Sequence[str] = (),
+        bucket_id: str | None = None,
+        inherit_production: bool | None = None,
+        branch_id: str | None = None,
+    ) -> list[JsonDict]:
+        """
+        Lists the tables of a branch through the table list V2, walking all its pages.
+
+        A development branch with storage branches is listed over production: its own tables and the production
+        tables it has no table of the same ID for. Each item carries the native table `description`.
+
+        :param include: Item fields to add: 'columns', 'metadata' (table-level metadata) and 'definition' (the native
+            table definition, `null` for a typed table whose column types are not all on the native fields).
+        :param bucket_id: Only the tables of this bucket.
+        :param inherit_production: False lists only the development branch's own tables; ignored on production.
+        :param branch_id: Optional branch ID override (uses client's branch_id if not specified)
+        :return: List of tables as dictionary
+        """
+        bid = branch_id or self._branch_id
+        params: dict[str, Any] = {'page[limit]': self.TABLE_LIST_PAGE_LIMIT}
+        if include:
+            params['include'] = ','.join(include)
+        if bucket_id is not None:
+            params['filter[bucketId]'] = bucket_id
+        if inherit_production is not None:
+            params['filter[inheritProduction]'] = 'true' if inherit_production else 'false'
+
+        tables: list[JsonDict] = []
+        while True:
+            page = cast(JsonDict, await self.get(endpoint=f'branch/{bid}/table-list', params=params))
+            tables.extend(cast(list[JsonDict], page.get('data') or []))
+            next_link = cast(str | None, cast(JsonDict, page.get('links') or {}).get('next'))
+            if not next_link:
+                return tables
+            # `links.next` is an absolute URL of the API host; only its cursor is taken, the request stays relative.
+            after = parse_qs(urlsplit(next_link).query).get('page[after]')
+            if not after:
+                raise ValueError(f'The next page link of the table list has no cursor: {next_link}')
+            params = params | {'page[after]': after[0]}
 
     async def table_metadata_delete(self, table_id: str, metadata_id: str) -> None:
         """

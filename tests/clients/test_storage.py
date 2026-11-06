@@ -214,6 +214,87 @@ class TestEmptyIds:
         raw_client.get.assert_not_called()
 
 
+def _table_list_page(table_ids: list[str], next_link: str | None) -> JsonDict:
+    return {'data': [{'id': table_id} for table_id in table_ids], 'meta': {'total': 3}, 'links': {'next': next_link}}
+
+
+class TestTableList:
+    @pytest.mark.parametrize(
+        ('kwargs', 'expected_endpoint', 'expected_params'),
+        [
+            ({}, 'branch/123/table-list', {'page[limit]': 200}),
+            (
+                {'include': ['columns', 'definition'], 'bucket_id': 'in.c-foo', 'branch_id': 'default'},
+                'branch/default/table-list',
+                {'page[limit]': 200, 'include': 'columns,definition', 'filter[bucketId]': 'in.c-foo'},
+            ),
+            (
+                {'include': ['metadata'], 'inherit_production': False},
+                'branch/123/table-list',
+                {'page[limit]': 200, 'include': 'metadata', 'filter[inheritProduction]': 'false'},
+            ),
+        ],
+        ids=['no_options', 'include_and_bucket', 'own_branch_tables'],
+    )
+    @pytest.mark.asyncio
+    async def test_single_page(
+        self,
+        raw_client: RawKeboolaClient,
+        kwargs: dict[str, Any],
+        expected_endpoint: str,
+        expected_params: dict[str, Any],
+    ) -> None:
+        raw_client.get.return_value = _table_list_page(['in.c-foo.a'], None)
+        client = AsyncStorageClient(raw_client=raw_client, branch_id='123')
+
+        result = await client.table_list(**kwargs)
+
+        assert result == [{'id': 'in.c-foo.a'}]
+        raw_client.get.assert_called_once_with(endpoint=expected_endpoint, params=expected_params)
+
+    @pytest.mark.asyncio
+    async def test_walks_all_pages_by_the_cursor_of_the_next_link(self, raw_client: RawKeboolaClient) -> None:
+        raw_client.get.side_effect = [
+            _table_list_page(
+                ['in.c-foo.a', 'in.c-foo.b'],
+                'https://connection.keboola.com/v2/storage/branch/default/table-list'
+                '?include=definition&page%5Blimit%5D=200&page%5Bafter%5D=cursor-1',
+            ),
+            _table_list_page(
+                ['in.c-foo.c'],
+                'https://connection.keboola.com/v2/storage/branch/default/table-list'
+                '?include=definition&page[limit]=200&page[after]=cursor-2',
+            ),
+            _table_list_page([], None),
+        ]
+        client = AsyncStorageClient(raw_client=raw_client)
+
+        result = await client.table_list(include=['definition'])
+
+        assert [table['id'] for table in result] == ['in.c-foo.a', 'in.c-foo.b', 'in.c-foo.c']
+        assert [c.kwargs for c in raw_client.get.call_args_list] == [
+            {'endpoint': 'branch/default/table-list', 'params': {'page[limit]': 200, 'include': 'definition'}},
+            {
+                'endpoint': 'branch/default/table-list',
+                'params': {'page[limit]': 200, 'include': 'definition', 'page[after]': 'cursor-1'},
+            },
+            {
+                'endpoint': 'branch/default/table-list',
+                'params': {'page[limit]': 200, 'include': 'definition', 'page[after]': 'cursor-2'},
+            },
+        ]
+
+    @pytest.mark.asyncio
+    async def test_a_next_link_without_a_cursor_fails(self, raw_client: RawKeboolaClient) -> None:
+        raw_client.get.return_value = _table_list_page(
+            ['in.c-foo.a'], 'https://connection.keboola.com/v2/storage/branch/default/table-list?page[limit]=200'
+        )
+        client = AsyncStorageClient(raw_client=raw_client)
+
+        with pytest.raises(ValueError, match='has no cursor'):
+            await client.table_list()
+
+
 class TestSharedBuckets:
     @pytest.mark.asyncio
     async def test_shared_bucket_list_uses_branch_scoped_endpoint(self, raw_client: RawKeboolaClient) -> None:

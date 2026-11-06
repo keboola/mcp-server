@@ -2,7 +2,7 @@ import asyncio
 import logging
 from collections import defaultdict
 from collections.abc import AsyncGenerator, Sequence
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 
 from fastmcp import Context, FastMCP
 from fastmcp.exceptions import ToolError
@@ -37,7 +37,7 @@ from keboola_mcp_server.tools.search_models import (
     SearchSpec,
     SearchType,
 )
-from keboola_mcp_server.tools.storage_helpers import merged_bucket_list, merged_bucket_table_list, prod_storage_id
+from keboola_mcp_server.tools.storage_helpers import branch_table_list, merged_bucket_list, prod_storage_id
 from keboola_mcp_server.workspace import RlsScope, RlsScopeUnavailableError, WorkspaceManager
 
 LOG = logging.getLogger(__name__)
@@ -100,16 +100,21 @@ def _get_field_value(item: JsonDict, fields: Sequence[str]) -> Any | None:
     return None
 
 
+def _definition_columns(table: JsonDict) -> list[JsonDict]:
+    """The columns of the native table definition; none when the definition is `null` (not on the native fields)."""
+    return cast(list[JsonDict], get_nested(table, 'definition.columns') or [])
+
+
 def _check_column_match(table: JsonDict, cfg: SearchSpec) -> list[PatternMatch]:
     """Check if any column name or description matches the patterns."""
     # Check column names (list of strings)
     if (col_names := table.get('columns', [])) and (matched := cfg.match_texts(col_names)):
         return matched
 
-    if col_metadata := table.get('columnMetadata', {}):
-        col_descs = (get_metadata_property(col_meta, MetadataField.DESCRIPTION) for col_meta in col_metadata.values())
-        if matched := cfg.match_texts(filter(None, col_descs)):
-            return matched
+    # An untyped column without a description has an empty definition, which may come as `{}` or `[]`.
+    col_descs = (cast(JsonDict, col.get('definition') or {}).get('description') for col in _definition_columns(table))
+    if matched := cfg.match_texts(filter(None, col_descs)):
+        return matched
     return []
 
 
@@ -145,12 +150,12 @@ def _limit_raw_columns(table: JsonDict, allowed: Sequence[str] | None) -> JsonDi
         return table
 
     allowed_set = set(allowed)
-    return table | {
-        'columns': [column for column in table.get('columns', []) if column in allowed_set],
-        'columnMetadata': {
-            column: metadata for column, metadata in table.get('columnMetadata', {}).items() if column in allowed_set
-        },
-    }
+    limited = table | {'columns': [column for column in table.get('columns', []) if column in allowed_set]}
+    if isinstance(definition := table.get('definition'), dict):
+        limited['definition'] = definition | {
+            'columns': [column for column in _definition_columns(table) if column.get('name') in allowed_set]
+        }
+    return limited
 
 
 async def _fetch_tables(
@@ -161,13 +166,12 @@ async def _fetch_tables(
     :param workspace_manager: Set for a project that enforces row-level security: only the tables that Query Service
         lets the reader read are searched, and only in the columns of their column policy.
     """
-    raw_tables: list[JsonDict] = []
-    for bucket in await merged_bucket_list(client):
-        if not (bucket_id := bucket.get('id')):
-            continue
-
-        tables = await merged_bucket_table_list(client, bucket_id, include=['columns', 'columnMetadata'])
-        raw_tables.extend(table for table in tables if table.get('id'))
+    bucket_ids = {bucket_id for bucket in await merged_bucket_list(client) if (bucket_id := bucket.get('id'))}
+    raw_tables = [
+        table
+        for table in await branch_table_list(client, include=['columns', 'definition'])
+        if table.get('id') and table.get('bucketId') in bucket_ids
+    ]
 
     scope: RlsScope | None = None
     if workspace_manager and raw_tables:
@@ -186,7 +190,7 @@ async def _fetch_tables(
 
         table_name = table.get('name')
         table_display_name = table.get('displayName')
-        table_description = get_metadata_property(table.get('metadata', []), MetadataField.DESCRIPTION)
+        table_description = table.get('description') or None
 
         matches = spec.match_texts([table_id, table_name, table_display_name, table_description])
         matches.extend(_check_column_match(table, spec))

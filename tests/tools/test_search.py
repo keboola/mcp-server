@@ -54,11 +54,11 @@ class TestSearch:
             ]
         )
 
-        # Mock bucket_table_list
-        keboola_client.storage_client.bucket_table_list = mocker.AsyncMock(
+        keboola_client.storage_client.table_list = mocker.AsyncMock(
             return_value=[
                 {
                     'id': 'in.c-test-bucket.test-table',
+                    'bucketId': 'in.c-test-bucket',
                     'name': 'test-table',
                     'created': '2024-01-01T00:00:00Z',
                 }
@@ -144,7 +144,7 @@ class TestSearch:
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
 
         keboola_client.storage_client.bucket_list = mocker.AsyncMock(return_value=[])
-        keboola_client.storage_client.bucket_table_list = mocker.AsyncMock(return_value=[])
+        keboola_client.storage_client.table_list = mocker.AsyncMock(return_value=[])
         keboola_client.storage_client.workspace_list = mocker.AsyncMock(return_value=[])
 
         def component_list_side_effect(component_type, include=None):
@@ -192,7 +192,7 @@ class TestSearch:
         )
 
         # Mock other endpoints
-        keboola_client.storage_client.bucket_table_list = mocker.AsyncMock(return_value=[])
+        keboola_client.storage_client.table_list = mocker.AsyncMock(return_value=[])
         keboola_client.storage_client.component_list = mocker.AsyncMock(return_value=[])
         keboola_client.storage_client.workspace_list = mocker.AsyncMock(return_value=[])
 
@@ -241,7 +241,7 @@ class TestSearch:
         keboola_client.storage_client.bucket_list = mocker.AsyncMock(return_value=buckets)
 
         # Mock other endpoints
-        keboola_client.storage_client.bucket_table_list = mocker.AsyncMock(return_value=[])
+        keboola_client.storage_client.table_list = mocker.AsyncMock(return_value=[])
         keboola_client.storage_client.component_list = mocker.AsyncMock(return_value=[])
         keboola_client.storage_client.workspace_list = mocker.AsyncMock(return_value=[])
 
@@ -273,7 +273,7 @@ class TestSearch:
         keboola_client.storage_client.bucket_list = mocker.AsyncMock(return_value=buckets)
 
         # Mock other endpoints
-        keboola_client.storage_client.bucket_table_list = mocker.AsyncMock(return_value=[])
+        keboola_client.storage_client.table_list = mocker.AsyncMock(return_value=[])
         keboola_client.storage_client.component_list = mocker.AsyncMock(return_value=[])
         keboola_client.storage_client.workspace_list = mocker.AsyncMock(return_value=[])
 
@@ -309,7 +309,7 @@ class TestSearch:
         keboola_client.storage_client.bucket_list = mocker.AsyncMock(return_value=buckets)
 
         # Mock other endpoints
-        keboola_client.storage_client.bucket_table_list = mocker.AsyncMock(return_value=[])
+        keboola_client.storage_client.table_list = mocker.AsyncMock(return_value=[])
         keboola_client.storage_client.component_list = mocker.AsyncMock(return_value=[])
         keboola_client.storage_client.workspace_list = mocker.AsyncMock(return_value=[])
 
@@ -338,7 +338,7 @@ class TestSearch:
         keboola_client.storage_client.bucket_list = mocker.AsyncMock(return_value=buckets)
 
         # Mock other endpoints
-        keboola_client.storage_client.bucket_table_list = mocker.AsyncMock(return_value=[])
+        keboola_client.storage_client.table_list = mocker.AsyncMock(return_value=[])
         keboola_client.storage_client.component_list = mocker.AsyncMock(return_value=[])
         keboola_client.storage_client.workspace_list = mocker.AsyncMock(return_value=[])
 
@@ -409,7 +409,7 @@ class TestSearch:
         )
 
         # Mock other endpoints
-        keboola_client.storage_client.bucket_table_list = mocker.AsyncMock(return_value=[])
+        keboola_client.storage_client.table_list = mocker.AsyncMock(return_value=[])
         keboola_client.storage_client.component_list = mocker.AsyncMock(return_value=[])
         keboola_client.storage_client.workspace_list = mocker.AsyncMock(return_value=[])
 
@@ -451,24 +451,30 @@ class TestSearch:
             ]
         )
 
-        def _bucket_table_list_side_effect(bucket_id: str, include: Any = None, **kwargs: Any) -> list[JsonDict]:
-            if bucket_id == 'in.c-test-bucket-a':
-                return [
-                    {'id': 'in.c-test-bucket-a.test-table', 'name': 'test-table', 'created': '2024-01-01T00:00:00Z'}
-                ]
-            elif bucket_id == 'in.c-test-bucket-b':
-                return [
-                    {
-                        'id': 'in.c-test-bucket-b.test-table',
-                        'name': 'test-table',
-                        'created': '2024-01-01T00:00:00Z',
-                        'lastChangeDate': '2024-01-02T00:00:00Z',
-                    }
-                ]
-            else:
-                return []
-
-        keboola_client.storage_client.bucket_table_list = mocker.AsyncMock(side_effect=_bucket_table_list_side_effect)
+        keboola_client.storage_client.table_list = mocker.AsyncMock(
+            return_value=[
+                {
+                    'id': 'in.c-test-bucket-a.test-table',
+                    'bucketId': 'in.c-test-bucket-a',
+                    'name': 'test-table',
+                    'created': '2024-01-01T00:00:00Z',
+                },
+                {
+                    'id': 'in.c-test-bucket-b.test-table',
+                    'bucketId': 'in.c-test-bucket-b',
+                    'name': 'test-table',
+                    'created': '2024-01-01T00:00:00Z',
+                    'lastChangeDate': '2024-01-02T00:00:00Z',
+                },
+                # a table of a bucket that the bucket listing does not return (e.g. of another legacy branch)
+                {
+                    'id': 'in.c-other-branch-bucket.test-table',
+                    'bucketId': 'in.c-other-branch-bucket',
+                    'name': 'test-table',
+                    'created': '2024-01-01T00:00:00Z',
+                },
+            ]
+        )
 
         def _component_list_side_effect(
             component_type: str | None = None, include: Any | None = None
@@ -625,12 +631,8 @@ class TestSearch:
         keboola_client.storage_client.bucket_list.assert_has_calls(
             [call(branch_id='default'), call(branch_id='default')]
         )
-        keboola_client.storage_client.bucket_table_list.assert_has_calls(
-            [
-                call('in.c-test-bucket-a', include=['columns', 'columnMetadata'], branch_id='default'),
-                call('in.c-test-bucket-b', include=['columns', 'columnMetadata'], branch_id='default'),
-                call('in.c-test-bucket-c', include=['columns', 'columnMetadata'], branch_id='default'),
-            ]
+        keboola_client.storage_client.table_list.assert_called_once_with(
+            include=['columns', 'definition'], branch_id='default'
         )
         keboola_client.storage_client.component_list.assert_called_once_with(None, include=['configuration', 'rows'])
         keboola_client.storage_client.workspace_list.assert_not_called()
@@ -647,14 +649,13 @@ class TestSearch:
                         'name': 'users',
                         'created': '2024-01-01T00:00:00Z',
                         'columns': ['id', 'email', 'name'],
-                        'columnMetadata': {},
                     }
                 ],
                 'email',
                 1,
                 'in.c-test-bucket.users',
             ),
-            # Test: search finds table by matching column description
+            # Test: search finds table by matching the native column description
             (
                 [
                     {
@@ -662,14 +663,54 @@ class TestSearch:
                         'name': 'customers',
                         'created': '2024-01-01T00:00:00Z',
                         'columns': ['id', 'contact_info'],
-                        'columnMetadata': {
-                            'contact_info': [{'key': MetadataField.DESCRIPTION, 'value': 'Customer email address'}]
+                        'definition': {
+                            'columns': [
+                                # an untyped column without a description may come as an empty list
+                                {'name': 'id', 'definition': []},
+                                {'name': 'contact_info', 'definition': {'description': 'Customer email address'}},
+                            ]
                         },
                     }
                 ],
                 'email',
                 1,
                 'in.c-test-bucket.customers',
+            ),
+            # Test: search finds table by matching the native table description
+            (
+                [
+                    {
+                        'id': 'in.c-test-bucket.customers',
+                        'name': 'customers',
+                        'created': '2024-01-01T00:00:00Z',
+                        'description': 'Customer email addresses',
+                        'columns': ['id'],
+                    }
+                ],
+                'email',
+                1,
+                'in.c-test-bucket.customers',
+            ),
+            # Test: KBC.description metadata is not searched, neither of the table nor of its columns
+            (
+                [
+                    {
+                        'id': 'in.c-test-bucket.customers',
+                        'name': 'customers',
+                        'created': '2024-01-01T00:00:00Z',
+                        'description': None,
+                        'metadata': [{'key': MetadataField.DESCRIPTION, 'value': 'Customer email addresses'}],
+                        'columns': ['id', 'contact_info'],
+                        'columnMetadata': {
+                            'contact_info': [{'key': MetadataField.DESCRIPTION, 'value': 'Customer email address'}]
+                        },
+                        # a typed table whose column types are not on the native fields has no definition
+                        'definition': None,
+                    }
+                ],
+                'email',
+                0,
+                None,
             ),
             # Test: table appears only once when both table name and column match
             (
@@ -679,14 +720,14 @@ class TestSearch:
                         'name': 'customer_data',
                         'created': '2024-01-01T00:00:00Z',
                         'columns': ['customer_id', 'name', 'email'],
-                        'columnMetadata': {},
+                        'definition': {'columns': [{'name': 'customer_id', 'definition': {'description': 'customer'}}]},
                     }
                 ],
                 'customer',
                 1,
                 'in.c-test-bucket.customer_data',
             ),
-            # Test: handles tables without columns or columnMetadata gracefully
+            # Test: handles tables without columns or definition gracefully
             (
                 [
                     {
@@ -694,14 +735,14 @@ class TestSearch:
                         'name': 'table1',
                         'created': '2024-01-01T00:00:00Z',
                         # No 'columns' field
-                        # No 'columnMetadata' field
+                        # No 'definition' field
                     },
                     {
                         'id': 'in.c-test-bucket.table2',
                         'name': 'table2',
                         'created': '2024-01-01T00:00:00Z',
                         'columns': [],  # Empty columns
-                        'columnMetadata': {},  # Empty metadata
+                        'definition': {'columns': []},  # Empty definition
                     },
                 ],
                 'test',
@@ -717,9 +758,9 @@ class TestSearch:
         tables_data: list[JsonDict],
         search_pattern: str,
         expected_count: int,
-        expected_first_table_id: str,
+        expected_first_table_id: str | None,
     ):
-        """Test search functionality with table columns and metadata."""
+        """Test search over the table and column names and their native descriptions."""
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
 
         # Mock bucket_list
@@ -729,8 +770,9 @@ class TestSearch:
             ]
         )
 
-        # Mock bucket_table_list with provided test data
-        keboola_client.storage_client.bucket_table_list = mocker.AsyncMock(return_value=tables_data)
+        keboola_client.storage_client.table_list = mocker.AsyncMock(
+            return_value=[table | {'bucketId': 'in.c-test-bucket'} for table in tables_data]
+        )
 
         result = await search(
             ctx=mcp_context_client, patterns=[search_pattern], item_types=(cast(SearchItemType, 'table'),)
@@ -920,7 +962,7 @@ class TestSearch:
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
 
         keboola_client.storage_client.bucket_list = mocker.AsyncMock(return_value=[])
-        keboola_client.storage_client.bucket_table_list = mocker.AsyncMock(return_value=[])
+        keboola_client.storage_client.table_list = mocker.AsyncMock(return_value=[])
         keboola_client.storage_client.component_list = mocker.AsyncMock(
             side_effect=lambda component_type, include=None: (
                 [

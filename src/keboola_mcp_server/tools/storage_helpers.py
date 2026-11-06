@@ -62,22 +62,17 @@ async def merged_bucket_list(client: KeboolaClient, **kwargs: Any) -> list[JsonD
         return _filter_current_branch(raw, client.branch_id)
 
 
-async def merged_bucket_table_list(client: KeboolaClient, bucket_id: str, **kwargs: Any) -> list[JsonDict]:
+async def branch_table_list(client: KeboolaClient, **kwargs: Any) -> list[JsonDict]:
     """
-    List all tables in a bucket, merging production and branch data.
+    List all tables visible from the current branch context through the table list V2.
 
-    For storage-branches: fetches from both default and branch endpoints for the given bucket_id.
-    For legacy branches: fetches from the default endpoint (which includes branched data).
+    For storage-branches the branch is listed over production by the server. On the default branch or legacy
+    branches the default endpoint is listed, which holds the tables of every legacy branch: callers keep only the
+    tables of the buckets `merged_bucket_list` returns.
     """
     if await has_storage_branches(client):
-        prod_data, branch_data = await asyncio.gather(
-            client.storage_client.bucket_table_list(bucket_id, branch_id='default', **kwargs),
-            client.storage_client.bucket_table_list(bucket_id, branch_id=client.branch_id, **kwargs),
-        )
-        return _merge_by_id(prod_data, branch_data)
-    else:
-        raw = await client.storage_client.bucket_table_list(bucket_id, branch_id='default', **kwargs)
-        return _filter_current_branch(raw, client.branch_id)
+        return await client.storage_client.table_list(branch_id=client.branch_id, **kwargs)
+    return await client.storage_client.table_list(branch_id='default', **kwargs)
 
 
 async def merged_bucket_detail(client: KeboolaClient, bucket_id: str) -> tuple[JsonDict | None, JsonDict | None]:
