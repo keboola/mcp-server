@@ -1,5 +1,6 @@
 """Tests for the auth-bridge programmatic-token exchange (PSGO-261)."""
 
+import json
 from http import HTTPStatus
 from pathlib import Path
 
@@ -200,6 +201,35 @@ async def test_exchange_success_sends_expected_request(sa_token_file: Path) -> N
     assert 'X-KBC-ManageApiToken' not in rq.headers
     # Subject token is normalized to a single Bearer scheme regardless of inbound form.
     assert rq.headers['X-Subject-Token'] == 'Bearer league-oauth-token'
+    assert json.loads(rq.content) == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('app_client_id', 'reported_client_name', 'expected_body'),
+    [
+        ('local-mcp-client', 'Codex', {'app_client_id': 'local-mcp-client', 'reported_client_name': 'Codex'}),
+        # the pair or nothing: Connection stores a name only with the row it is for
+        ('local-mcp-client', None, {}),
+        (None, 'Codex', {}),
+    ],
+)
+async def test_exchange_sends_the_reported_client_name_in_the_body(
+    sa_token_file: Path, app_client_id: str | None, reported_client_name: str | None, expected_body: dict
+) -> None:
+    """The wire format of Connection's `exchange-oauth-token` body (DMD-2599/DMD-2600)."""
+    captured: dict[str, httpx.Request] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured['request'] = request
+        return httpx.Response(HTTPStatus.OK, json={'accessToken': 'a', 'refreshToken': 'r', 'expiresIn': 3600})
+
+    exchanger = _exchanger(sa_token_file, handler)
+    await exchanger.exchange(
+        oauth_access_token='league-oauth-token', app_client_id=app_client_id, reported_client_name=reported_client_name
+    )
+
+    assert json.loads(captured['request'].content) == expected_body
 
 
 @pytest.mark.asyncio

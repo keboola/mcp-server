@@ -9,7 +9,7 @@ import time
 from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
-from typing import Any
+from typing import Any, cast
 from unittest import mock
 from urllib.parse import parse_qs, urlparse
 
@@ -392,6 +392,11 @@ class TestConnectionClientIdentity:
             ('https://chatgpt.com/connector_platform_oauth_redirect', 'chatgpt'),
             # DMD-2642: pre-registered by PreRegisterCursorOAuthClientMigration (AI-4022)
             ('https://www.cursor.com/agents/mcp/oauth/callback', 'cursor'),
+            # DMD-2600: pre-registered by PreRegisterLocalMcpOAuthClientMigration (DMD-2599), on any port
+            ('http://127.0.0.1/callback', 'local-mcp-client'),
+            ('http://127.0.0.1:53123/callback', 'local-mcp-client'),
+            ('http://[::1]/callback', 'local-mcp-client'),
+            ('http://[::1]:40000/callback', 'local-mcp-client'),
         ],
     )
     def test_well_known_redirect_uri_maps_to_pre_registered_client_id(self, redirect_uri: str, client_id: str):
@@ -405,6 +410,33 @@ class TestConnectionClientIdentity:
         from keboola_mcp_server.oauth import _connection_client_id
 
         assert _connection_client_id('http://localhost:8787/callback', _KEY).startswith('mcp-')
+
+    @pytest.mark.parametrize(
+        'redirect_uri',
+        [
+            # Connection's row matches localhost port-exact and does not carry it, so these tools stay on Flow B
+            'http://localhost:53123/callback',
+            'http://127.0.0.1:53123/other',
+            'http://127.0.0.1:53123/callback?x=1',
+            'https://127.0.0.1:53123/callback',
+            'http://user@127.0.0.1:53123/callback',
+        ],
+    )
+    def test_other_loopback_callbacks_are_not_mapped_to_the_local_client(self, redirect_uri: str):
+        from keboola_mcp_server.oauth import _connection_client_id, _well_known_redirect_uri
+
+        assert _well_known_redirect_uri(redirect_uri) is None
+        assert _connection_client_id(redirect_uri, _KEY).startswith('mcp-')
+
+    def test_a_loopback_callback_is_looked_up_without_its_port(self):
+        """Caches, the limiter exemption and the Connection call are keyed on this one value, so a tool's random port never
+        adds an entry or a call to Connection."""
+        from keboola_mcp_server.oauth import _well_known_redirect_uri
+
+        assert {_well_known_redirect_uri(f'http://127.0.0.1:{port}/callback') for port in (1, 53123, 65535)} == {
+            'http://127.0.0.1/callback'
+        }
+        assert _well_known_redirect_uri('http://[::1]:40000/callback') == 'http://[::1]/callback'
 
     def test_unknown_redirect_uri_derives_a_stable_short_id(self):
         from keboola_mcp_server.oauth import _connection_client_id
@@ -434,7 +466,8 @@ class TestConnectionClientIdentity:
 
     @pytest.mark.parametrize(
         'host',
-        ['localhost', '127.0.0.1', '[::1]'],
+        # 127.0.0.1 and [::1] map to `local-mcp-client` instead (DMD-2600)
+        ['localhost'],
     )
     def test_loopback_client_id_is_stable_across_ephemeral_ports(self, host: str) -> None:
         """A loopback tool (Claude Code, VS Code, MCP Inspector, Codex, Gemini CLI, ...) reconnects
@@ -865,6 +898,158 @@ class TestSimpleOAuthProvider:
         assert f'pre_registered={pre_registered}' in record.message
         assert 'client_id=foo-client-id' in record.message
 
+    @staticmethod
+    async def _named_client_id(oauth_provider: SimpleOAuthProvider, name: str) -> str:
+        """The client id the regional `/register` hands a local tool that reported `name`."""
+        info = OAuthClientInformationFull(
+            client_id='foo-client-id',
+            client_name=name,
+            redirect_uris=[AnyUrl('http://127.0.0.1:53123/callback')],
+            token_endpoint_auth_method='none',
+        )
+        await oauth_provider.register_client(info)
+        assert info.client_id != 'foo-client-id'
+        return cast(str, info.client_id)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ('redirect_uri', 'named', 'expected_name'),
+        [
+            ('http://127.0.0.1:53123/callback', True, 'Codex'),
+            ('http://[::1]:40000/callback', True, 'Codex'),
+            # a tool that reported no name: Connection shows the row's own name
+            ('http://127.0.0.1:53123/callback', False, None),
+            # a reported name is never sent for another row, whatever the client id carries
+            ('https://chatgpt.com/connector_platform_oauth_redirect', True, None),
+        ],
+    )
+    async def test_authorize_sends_a_local_tools_reported_name_to_consent(
+        self,
+        oauth_provider: SimpleOAuthProvider,
+        monkeypatch: pytest.MonkeyPatch,
+        redirect_uri: str,
+        named: bool,
+        expected_name: str | None,
+    ):
+        """DMD-2600: a local tool on the shared `local-mcp-client` row is named on Connection's consent screen by the
+        name it reported, signed for this flow (v2 `mcp_client_name_sig`), next to the unchanged v1 claim. Connection
+        is asked once, about the row and the callback without the port."""
+        from keboola_mcp_server.oauth import (
+            _WELL_KNOWN_CONNECTION_CLIENT_IDS,
+            _ClientRegistration,
+            _sign_mcp_client_id,
+            _sign_mcp_client_name,
+            _well_known_redirect_uri,
+        )
+
+        checked = self._stub_client_registration(monkeypatch, _ClientRegistration.REGISTERED)
+        client_id = await self._named_client_id(oauth_provider, 'Codex') if named else 'foo-client-id'
+        client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id=client_id)
+        params = AuthorizationParams(
+            redirect_uri=AnyUrl(redirect_uri),
+            redirect_uri_provided_explicitly=True,
+            code_challenge='challenge',
+            state='client-state',
+            scopes=None,
+        )
+
+        query = parse_qs(urlparse(await oauth_provider.authorize(client, params)).query)
+
+        key = cast(str, _well_known_redirect_uri(redirect_uri))
+        assert checked == [(_WELL_KNOWN_CONNECTION_CLIENT_IDS[key], key)]
+        state_jwt = query['state'][0]
+        mcp_client_id = query['mcp_client_id'][0]
+        assert query['mcp_client_sig'] == [
+            _sign_mcp_client_id(oauth_provider._oauth_client_secret, mcp_client_id, state_jwt)
+        ]
+        if expected_name is None:
+            assert 'mcp_client_name' not in query
+            assert 'mcp_client_name_sig' not in query
+            return
+        assert mcp_client_id == 'local-mcp-client'
+        assert query['mcp_client_name'] == [expected_name]
+        assert query['mcp_client_name_sig'] == [
+            _sign_mcp_client_name(oauth_provider._oauth_client_secret, mcp_client_id, expected_name, state_jwt)
+        ]
+        # the client gets its own callback back, port included
+        assert oauth_provider._decode(state_jwt)['redirect_uri'] == redirect_uri
+
+    @pytest.mark.asyncio
+    async def test_authorize_asks_connection_about_a_local_tool_once_whatever_its_port(
+        self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
+    ):
+        """A local tool listens on a new port on every login. The pair is cached and exempt from the local limiter
+        under the callback without the port, so a new port costs Connection no call."""
+        from keboola_mcp_server import oauth as oauth_module
+
+        calls: list[dict[str, Any]] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls.append(json.loads(request.content))
+            return httpx.Response(200, json={})
+
+        monkeypatch.setattr(
+            oauth_module,
+            '_create_http_client',
+            lambda **_kw: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        )
+        client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
+        for port in (53123, 53124, 60000):
+            params = AuthorizationParams(
+                redirect_uri=AnyUrl(f'http://127.0.0.1:{port}/callback'),
+                redirect_uri_provided_explicitly=True,
+                code_challenge='challenge',
+                state='client-state',
+                scopes=None,
+            )
+            assert urlparse(await oauth_provider.authorize(client, params)).path == '/oauth/consent'
+
+        assert calls == [{'client_id': 'local-mcp-client', 'redirect_uri': 'http://127.0.0.1/callback'}]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ('redirect_uri', 'named', 'expected_body'),
+        [
+            (
+                'http://127.0.0.1:53123/callback',
+                True,
+                {'app_client_id': 'local-mcp-client', 'reported_client_name': 'Codex'},
+            ),
+            ('http://127.0.0.1:53123/callback', False, {'app_client_id': None, 'reported_client_name': None}),
+            (
+                'https://chatgpt.com/connector_platform_oauth_redirect',
+                True,
+                {'app_client_id': None, 'reported_client_name': None},
+            ),
+        ],
+    )
+    async def test_exchange_authorization_code_carries_a_local_tools_reported_name(
+        self,
+        oauth_provider: SimpleOAuthProvider,
+        monkeypatch: pytest.MonkeyPatch,
+        redirect_uri: str,
+        named: bool,
+        expected_body: dict[str, str | None],
+    ):
+        """DMD-2600: Connection stores the reported name on the session it issues, for the account's session list."""
+        from keboola_mcp_server import oauth as oauth_module
+
+        monkeypatch.setattr(oauth_module, 'deployed_sa_token_path', lambda: '/tmp/sa-token')
+        monkeypatch.setattr(
+            oauth_module, 'introspect_token', mock.AsyncMock(side_effect=httpx.ConnectError('unreachable'))
+        )
+        captured: dict[str, Any] = {}
+        self._stub_exchanger(monkeypatch, captured)
+        client_id = await self._named_client_id(oauth_provider, 'Codex') if named else 'foo-client-id'
+        client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id=client_id)
+        auth_code = _ExtendedAuthorizationCode.model_validate(
+            {**self.authorization_code(), 'client_id': client_id, 'redirect_uri': redirect_uri}
+        )
+
+        await oauth_provider.exchange_authorization_code(client, auth_code)
+
+        assert captured['body'] == expected_body
+
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         ('registered_against', 'expected_path', 'expected_checks'),
@@ -1007,6 +1192,20 @@ class TestSimpleOAuthProvider:
         assert (
             _sign_mcp_client_id('broker-secret', 'mcp-0123456789abcdef01234567', 'state.jwt.value')
             == '6f21b75053aecb737a45bddc7093e67bc0bda5b9e0d093873d6cc01430ab359b'
+        )
+
+    def test_mcp_client_name_signature_known_answer(self) -> None:
+        """The vectors Connection's RequestingMcpClientNameResolverTest pins for `mcp_client_name_sig` (DMD-2599): lengths
+        in UTF-8 bytes, so a non-ASCII name ("C\u00f6dex \u2713" is 10 bytes) must sign the same in both languages."""
+        from keboola_mcp_server.oauth import _sign_mcp_client_name
+
+        assert (
+            _sign_mcp_client_name('broker-secret', 'local-mcp-client', 'Codex', 'flow-state')
+            == '018bada4539cffddb9a1da9076cc6ca5221f590c5c2cc0dcc38f79e6e34de7ff'
+        )
+        assert (
+            _sign_mcp_client_name('broker-secret', 'local-mcp-client', 'C\u00f6dex \u2713', 'flow-state')
+            == '93811f0ef5f6c80f9178db88bb578835e5a4b232602eed27c7bbd528a834daf2'
         )
 
     def test_approval_client_name_keeps_the_end_of_a_very_long_host(self):
@@ -1485,6 +1684,8 @@ class TestSimpleOAuthProvider:
             'https://claude.ai/api/mcp/auth_callback',
             'https://chatgpt.com/connector_platform_oauth_redirect',
             'https://www.cursor.com/agents/mcp/oauth/callback',
+            'http://127.0.0.1:53123/callback',
+            'http://[::1]:40000/callback',
         ],
     )
     @pytest.mark.parametrize('approval_on', [True, False])
@@ -1988,8 +2189,9 @@ class TestSimpleOAuthProvider:
             def __init__(self, **kwargs):
                 captured['init_kwargs'] = kwargs
 
-            async def exchange(self, *, oauth_access_token: str):
+            async def exchange(self, *, oauth_access_token: str, **body: str | None):
                 captured['oauth_access_token'] = oauth_access_token
+                captured['body'] = body
                 return {'accessToken': 'kbc_at_new', 'refreshToken': 'kbc_rt_new', 'expiresIn': 3600}
 
         monkeypatch.setattr(oauth_module, 'OAuthSessionExchanger', _FakeExchanger)
@@ -2495,7 +2697,7 @@ class TestSimpleOAuthProvider:
             def __init__(self, **kwargs):
                 pass
 
-            async def exchange(self, *, oauth_access_token: str):
+            async def exchange(self, *, oauth_access_token: str, **_body: str | None):
                 raise OAuthTokenExchangeError('rejected', status_code=int(HTTPStatus.FORBIDDEN))
 
         monkeypatch.setattr(oauth_module, 'OAuthSessionExchanger', _FailingExchanger)

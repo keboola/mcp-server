@@ -53,6 +53,7 @@ from keboola_mcp_server.auth_login import (
 from keboola_mcp_server.clients.auth_bridge import OAuthSessionExchanger, OAuthTokenExchangeError
 from keboola_mcp_server.config import deployed_sa_token_path
 from keboola_mcp_server.jwt_utils import decode_jwt, encode_jwt
+from keboola_mcp_server.reported_client_name import embed_reported_name, is_loopback_ip_callback, reported_name
 from keboola_mcp_server.router.stacks import STACK_KEY_SEPARATOR, is_valid_stack_key, router_issuer, router_resource
 from keboola_mcp_server.session_store import DatabaseUnavailableError
 from keboola_mcp_server.session_store.rate_limit import RateLimitStore
@@ -79,6 +80,9 @@ _LOOPBACK_HOSTS = frozenset({'localhost', '127.0.0.1', '[::1]'})
 # authority backing it, so unlike https, "any host" is never a shape Connection will register).
 _ALLOWED_CURSOR_HOSTS = frozenset({'anysphere.cursor-retrieval', 'anysphere.cursor-mcp'})
 
+# Connection's one shared row for every local tool on a loopback IP callback (DMD-2599).
+_LOCAL_MCP_CLIENT_ID = 'local-mcp-client'
+
 # redirect_uri -> the literal client_id Keboola pre-registered for it in Connection's oauth2_client
 # table (a migration on the Connection side).
 # Not a trust decision -- it only picks which Connection row to ask about; /oauth/clients/validate
@@ -94,8 +98,13 @@ _WELL_KNOWN_CONNECTION_CLIENT_IDS: dict[str, str] = {
     'https://chatgpt.com/connector_platform_oauth_redirect': 'chatgpt',
     # Cursor's web and Cloud Agents callback, pre-registered by PreRegisterCursorOAuthClientMigration (AI-4022). Its
     # desktop callback `http://localhost:8787/callback` is left out on purpose: any local agent can listen there, so it
-    # gets the derived id like every other loopback client rather than Cursor's (DMD-2642).
+    # gets the derived id like every other `localhost` client rather than Cursor's (DMD-2642).
     'https://www.cursor.com/agents/mcp/oauth/callback': 'cursor',
+    # Codex and every other local tool on an http loopback IP callback, on any port: one shared row, pre-registered by
+    # PreRegisterLocalMcpOAuthClientMigration (DMD-2599). Looked up without the port (`_well_known_redirect_uri`). The
+    # consent screen names the tool by the name it reported at /register (`reported_client_name`, DMD-2600).
+    'http://127.0.0.1/callback': _LOCAL_MCP_CLIENT_ID,
+    'http://[::1]/callback': _LOCAL_MCP_CLIENT_ID,
 }
 
 # Cap on the in-process client_id -> client_name cache (see ConnectionClientRegistry.remember_client_name)
@@ -212,6 +221,34 @@ def _without_port_for_loopback(redirect_uri: str) -> str:
     return urlunparse(parsed._replace(netloc=host))
 
 
+def _well_known_redirect_uri(redirect_uri: str) -> str | None:
+    """The `_WELL_KNOWN_CONNECTION_CLIENT_IDS` key `redirect_uri` maps to, or None. Exact, except that an http loopback
+    IP callback is looked up without its port: a local tool listens on a new port on every login, and Connection ignores
+    that port as well (`LoopbackRedirectUri::withoutPort()`). Callers key their caches and their Connection call on the
+    returned key, so a random port never adds a cache entry or a call to Connection."""
+    if redirect_uri in _WELL_KNOWN_CONNECTION_CLIENT_IDS:
+        return redirect_uri
+    if not is_loopback_ip_callback(redirect_uri):
+        return None
+    parsed = urlparse(redirect_uri)
+    try:
+        _ = parsed.port  # raises on a malformed port
+    except ValueError:
+        return None
+    host = '[::1]' if parsed.hostname == '::1' else parsed.hostname
+    key = urlunparse(parsed._replace(netloc=host))
+    return key if key in _WELL_KNOWN_CONNECTION_CLIENT_IDS else None
+
+
+def _local_client_reported_name(redirect_uri: str, client_id: str | None) -> str | None:
+    """The name a local tool reported at /register, for a flow on Connection's `local-mcp-client` row only: no other
+    row ever shows a reported name (Connection's `ReportedClientName::isAllowedFor()`)."""
+    key = _well_known_redirect_uri(redirect_uri)
+    if key is None or _WELL_KNOWN_CONNECTION_CLIENT_IDS[key] != _LOCAL_MCP_CLIENT_ID:
+        return None
+    return reported_name(client_id)
+
+
 def _connection_client_id(redirect_uri: str, key: bytes) -> str:
     """
     Maps an AI assistant's own redirect_uri to the client_id used when talking to Connection's
@@ -233,12 +270,12 @@ def _connection_client_id(redirect_uri: str, key: bytes) -> str:
 
     The port is stripped first for localhost/127.0.0.1/[::1] (see _without_port_for_loopback) -- a loopback
     tool's ephemeral port changes on every reconnect (RFC 8252 §7.3; examples: Claude Code, VS
-    Code, MCP Inspector, Codex, Gemini CLI), and without this every reconnect would derive a new
+    Code, MCP Inspector, Gemini CLI), and without this every reconnect would derive a new
     id, need a fresh human approval, and leave behind a permanent, never-cleaned-up
     oauth2_client row on every stack (Vojtěch Biberle review, AI-2883/connection#8573).
     """
-    if known := _WELL_KNOWN_CONNECTION_CLIENT_IDS.get(redirect_uri):
-        return known
+    if (well_known := _well_known_redirect_uri(redirect_uri)) is not None:
+        return _WELL_KNOWN_CONNECTION_CLIENT_IDS[well_known]
     digest = hmac.new(key, _without_port_for_loopback(redirect_uri).encode(), hashlib.sha256).hexdigest()[:24]
     return f'mcp-{digest}'
 
@@ -261,6 +298,14 @@ def _sign_mcp_client_id(secret: str, mcp_client_id: str, state: str) -> str:
     # Length-prefixed so the (id, state) pair has exactly one encoding: with a plain separator, a
     # signature for ("a", "b.c") would also verify ("a.b", "c") because both fields may contain dots.
     message = f'{len(mcp_client_id.encode())}:{mcp_client_id}:{state}'
+    return hmac.new(secret.encode(), message.encode(), hashlib.sha256).hexdigest()
+
+
+def _sign_mcp_client_name(secret: str, mcp_client_id: str, name: str, state: str) -> str:
+    """`mcp_client_name_sig` for the name a local tool reported (DMD-2600): like `_sign_mcp_client_id`, over
+    `<len(id)>:<id>:<len(name)>:<name>:<state>`, lengths in UTF-8 bytes (PHP `strlen`). It proves the name came
+    from this server for this flow, not that the name is true."""
+    message = f'{len(mcp_client_id.encode())}:{mcp_client_id}:{len(name.encode())}:{name}:{state}'
     return hmac.new(secret.encode(), message.encode(), hashlib.sha256).hexdigest()
 
 
@@ -1486,6 +1531,8 @@ class SimpleOAuthProvider(OAuthProvider):
 
         :param client_info: The full information of the OAuth client to be registered.
         """
+        # First, so the name is cached under the id the client receives and sends back.
+        embed_reported_name(client_info)
         self._client_registry.remember_client_name(client_info.client_id, client_info.client_name)
         # Log the sanitized/capped name just stored, not the raw submission -- /register is
         # unauthenticated, so the raw client_name can carry control characters or be arbitrarily
@@ -1589,7 +1636,10 @@ class SimpleOAuthProvider(OAuthProvider):
                 error_description='Could not verify OAuth client with Connection.',
             )
 
-        if registration is _ClientRegistration.NOT_REGISTERED and redirect_uri_str in _WELL_KNOWN_CONNECTION_CLIENT_IDS:
+        if (
+            registration is _ClientRegistration.NOT_REGISTERED
+            and _well_known_redirect_uri(redirect_uri_str) is not None
+        ):
             # The pre-registered row is missing, deactivated or without this URI on this stack; never approve the
             # literal id (see `_WELL_KNOWN_CONNECTION_CLIENT_IDS`). WARNING whatever the approval switch: the stack is
             # misdeployed, not the client unknown.
@@ -1675,7 +1725,9 @@ class SimpleOAuthProvider(OAuthProvider):
             # callback (RFC Decision §15) -- so the client's real redirect target goes into the
             # displayed name instead, so the approver can still see where the client sends users.
             name = _sanitize_client_name(
-                self._client_registry.get_client_name(client.client_id) or connection_client_id
+                self._client_registry.get_client_name(client.client_id)
+                or reported_name(client.client_id)
+                or connection_client_id
             )
             return self._client_registry.pending_approval_url(
                 connection_client_id=connection_client_id,
@@ -1701,7 +1753,12 @@ class SimpleOAuthProvider(OAuthProvider):
         redirect_uri as `invalid_client`, a dead end the user cannot get out of."""
         connection_redirect_uri = self._connection_redirect_uri(redirect_uri)
         registration = await self._client_registry.check_registration(connection_client_id, connection_redirect_uri)
-        if registration is _ClientRegistration.NOT_REGISTERED and connection_redirect_uri != redirect_uri:
+        if (
+            registration is _ClientRegistration.NOT_REGISTERED
+            and connection_redirect_uri != redirect_uri
+            # A loopback callback's key differs from it by the port only; it is no client approved before AI-3995.
+            and _well_known_redirect_uri(redirect_uri) is None
+        ):
             registration = await self._client_registry.check_registration(connection_client_id, redirect_uri)
         return registration
 
@@ -1719,14 +1776,24 @@ class SimpleOAuthProvider(OAuthProvider):
 
     def _connection_redirect_uri(self, redirect_uri: str) -> str:
         """The redirect_uri Connection has registered for this client: the client's own for a
-        Keboola pre-registered one, this server's /oauth/callback for a dynamically approved one."""
-        return redirect_uri if redirect_uri in _WELL_KNOWN_CONNECTION_CLIENT_IDS else self._mcp_callback_url
+        Keboola pre-registered one (without the port for a loopback one), this server's /oauth/callback for a
+        dynamically approved one."""
+        return _well_known_redirect_uri(redirect_uri) or self._mcp_callback_url
 
     def _connection_consent_url(self, state: dict[str, Any]) -> str:
         """Connection's /oauth/consent URL for an already-registered client; `state` comes back to
         handle_oauth_callback() with the authorization code."""
         state_jwt = self._encode(state)
-        mcp_client_id = _connection_client_id(cast(str, state['redirect_uri']), self._client_id_key)
+        redirect_uri = cast(str, state['redirect_uri'])
+        mcp_client_id = _connection_client_id(redirect_uri, self._client_id_key)
+        # v2 (DMD-2600): the shared `local-mcp-client` row says nothing about the app, so add the name the tool reported,
+        # signed for this flow. Connection shows it only as unverified, and a Connection without v2 ignores it.
+        reported_name_params: dict[str, str] = {}
+        if name := _local_client_reported_name(redirect_uri, cast(str | None, state.get('client_id'))):
+            reported_name_params = {
+                'mcp_client_name': name,
+                'mcp_client_name_sig': _sign_mcp_client_name(self._oauth_client_secret, mcp_client_id, name, state_jwt),
+            }
         return construct_redirect_uri(
             self._oauth_server_auth_url,
             client_id=self._oauth_client_id,
@@ -1739,6 +1806,7 @@ class SimpleOAuthProvider(OAuthProvider):
             # signature below matches. Both are ignored by a Connection that doesn't know them yet.
             mcp_client_id=mcp_client_id,
             mcp_client_sig=_sign_mcp_client_id(self._oauth_client_secret, mcp_client_id, state_jwt),
+            **reported_name_params,
         )
 
     async def _continue_after_approval(self, state_data: dict[str, Any]) -> str:
@@ -1889,7 +1957,7 @@ class SimpleOAuthProvider(OAuthProvider):
         if state_data is None or state_data.get('pending'):
             return None
         redirect_uri = cast(str, state_data['redirect_uri'])
-        if redirect_uri not in _WELL_KNOWN_CONNECTION_CLIENT_IDS:
+        if _well_known_redirect_uri(redirect_uri) is None:
             return None
         return construct_redirect_uri(
             redirect_uri, error='access_denied', state=state_data['state'], iss=self._response_issuer(state_data)
@@ -1978,7 +2046,10 @@ class SimpleOAuthProvider(OAuthProvider):
 
         # Exchange the league OAuth access token for a whole-stack Keboola programmatic session.
         # The league token is used exactly once, here, and then never referenced again.
-        token_set = await self._exchange_oauth_for_session(authorization_code.oauth_access_token.token)
+        token_set = await self._exchange_oauth_for_session(
+            authorization_code.oauth_access_token.token,
+            reported_client_name=_local_client_reported_name(str(authorization_code.redirect_uri), client.client_id),
+        )
         access_token, refresh_token, session = await self._session_store.create(
             client_id=client.client_id,
             user_email=None,
@@ -2302,7 +2373,9 @@ class SimpleOAuthProvider(OAuthProvider):
 
         return access_token, refresh_token
 
-    async def _exchange_oauth_for_session(self, oauth_access_token: str) -> TokenSet:
+    async def _exchange_oauth_for_session(
+        self, oauth_access_token: str, *, reported_client_name: str | None = None
+    ) -> TokenSet:
         """
         Exchanges a league OAuth access token -- ``claudai projectless`` scope for a whole-stack
         session (Flow A), or ``claudai`` alone for a session pinned to the one project the admin
@@ -2314,6 +2387,9 @@ class SimpleOAuthProvider(OAuthProvider):
         invoked by the mcp SDK's own ``/token`` endpoint handler, which only recognizes ``TokenError``
         and formats it into a spec-compliant ``TokenErrorResponse`` body. An ``HTTPException`` here
         would bubble up uncaught and reach the client as an opaque, non-OAuth-shaped error.
+
+        ``reported_client_name`` is the name a local tool reported (DMD-2600), stored by Connection on the session for
+        the account's session list; only for a login on the ``local-mcp-client`` row.
         """
         kubernetes_token_path = deployed_sa_token_path()
         if not kubernetes_token_path:
@@ -2330,7 +2406,11 @@ class SimpleOAuthProvider(OAuthProvider):
             kubernetes_token_path=kubernetes_token_path,
         )
         try:
-            body = await exchanger.exchange(oauth_access_token=oauth_access_token)
+            body = await exchanger.exchange(
+                oauth_access_token=oauth_access_token,
+                app_client_id=_LOCAL_MCP_CLIENT_ID if reported_client_name else None,
+                reported_client_name=reported_client_name,
+            )
         except OAuthTokenExchangeError as e:
             LOG.error(f'[_exchange_oauth_for_session] {e}')
             raise TokenError(error='invalid_grant', error_description=str(e)) from e

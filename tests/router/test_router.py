@@ -7,6 +7,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from keboola_mcp_server.cli import parse_args
+from keboola_mcp_server.reported_client_name import reported_name
 from keboola_mcp_server.router import app as router_app
 from keboola_mcp_server.router import rate_limit
 from keboola_mcp_server.router.picker import render_picker
@@ -65,6 +66,25 @@ class TestMetadata:
         assert first.status_code == second.status_code == 201
         assert first.json()['client_id'] != second.json()['client_id']
         assert upstream.requests == []
+
+    @pytest.mark.parametrize(
+        ('redirect_uri', 'expected_name'),
+        [
+            ('http://127.0.0.1:53123/callback', 'Codex'),
+            # only a loopback IP client carries its name; every other client keeps a plain id
+            ('https://chatgpt.com/connector_platform_oauth_redirect', None),
+        ],
+    )
+    def test_register_carries_a_local_tools_name_in_the_client_id(
+        self, redirect_uri: str, expected_name: str | None
+    ) -> None:
+        """The router keeps nothing, so the name the regional server shows on consent travels in the id (DMD-2600)."""
+        body = {'redirect_uris': [redirect_uri], 'client_name': 'Codex', 'token_endpoint_auth_method': 'none'}
+        with router_client(Upstream()) as client:
+            response = client.post('/register', json=body)
+
+        assert response.status_code == 201
+        assert reported_name(response.json()['client_id']) == expected_name
 
 
 class TestAuthorize:
