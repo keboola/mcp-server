@@ -3214,7 +3214,6 @@ def test_validate_branch_update_rejects_managed_and_unknown(is_managed_git_repo:
     [
         # python-js used to omit configVersion, so DSAPI kept the old published version while the tool
         # reported the latest one as deployed.
-        pytest.param('python-js', 'dev', '5', '5', False, id='python_js_dev_publishes_latest'),
         pytest.param('python-js', None, '5', '5', False, id='python_js_prod_publishes_latest'),
         pytest.param('streamlit', None, '5', '5', False, id='streamlit_publishes_latest'),
         # The config was saved again after the deploy was triggered: report the drift, not the latest version.
@@ -4825,18 +4824,33 @@ async def test_modify_python_js_data_app_update_rebind_rejected(
 
 
 @pytest.mark.asyncio
-async def test_deploy_data_app_rejects_dev_mode_on_organization_git_app(mocker, mcp_context_client: Context) -> None:
-    """Dev mode is refused up front: no config version lookup and no deploy call."""
+@pytest.mark.parametrize(
+    ('app_kind', 'mode', 'match'),
+    [
+        ('organization', 'dev', 'cannot be deployed in dev mode'),
+        ('prod', 'dev', 'cannot be deployed in dev mode'),
+        (
+            'draft',
+            None,
+            r'legacy draft.*create_python_js_data_app_draft\(configuration_id="cfg-prod-1", git_branch="[^"]+"\)',
+        ),
+    ],
+    ids=['organization_dev', 'prod_dev', 'legacy_draft'],
+)
+async def test_deploy_data_app_refuses_dev_mode_and_legacy_drafts(
+    mocker, mcp_context_client: Context, app_kind: str, mode: Literal['dev'] | None, match: str
+) -> None:
+    """Dev mode and legacy drafts are refused up front: no config version lookup and no deploy call."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
     keboola_client.storage_client.configuration_version_latest = mocker.AsyncMock(return_value=5)
-    mocker.patch(
-        'keboola_mcp_server.tools.data_apps._fetch_data_app',
-        mocker.AsyncMock(return_value=_make_organization_git_data_app()),
-    )
+    data_app = _preview_app(app_kind)
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=data_app))
 
-    with pytest.raises(ValueError, match=r'dev mode and the preview link are not supported.*without `mode`'):
-        await deploy_data_app(ctx=mcp_context_client, action='deploy', configuration_id='cfg-org-1', mode='dev')
+    with pytest.raises(ValueError, match=match):
+        await deploy_data_app(
+            ctx=mcp_context_client, action='deploy', configuration_id=data_app.configuration_id, mode=mode
+        )
 
     keboola_client.storage_client.configuration_version_latest.assert_not_called()
     keboola_client.data_science_client.deploy_data_app_in_mode.assert_not_called()

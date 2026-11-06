@@ -2388,11 +2388,10 @@ branch-delete — is yours. This tool only triggers deploys against existing git
 - For prod redeploys (including after merging a draft's branch into `main`), use no `mode` —
   the prod app picks up the current `main`.
 - A draft from `create_python_js_data_app_draft` needs no deploy: it serves its branch live.
-- `mode='dev'` deploys a **legacy draft** (`isDraft=true`) as a dev version with hot reload, on the
-  branch pinned in its `parameters.dataApp.git.branch`.
+- `mode='dev'` is rejected, and so is a deploy of a legacy draft (`isDraft=true`): convert the legacy
+  draft to a draft on its branch instead.
 - An app on a customer GitHub repository (`git_auth_type='organization'`) deploys in production
-  mode only: `mode='dev'` is rejected before anything is deployed, and a deploy without `mode`
-  switches an app left in dev mode back to production.
+  mode only: a deploy without `mode` switches an app left in dev mode back to production.
 
 ## Configuration publishing
 - Every deploy **publishes the latest saved configuration version** (for both python-js and
@@ -2449,7 +2448,7 @@ Streamlit apps have no managed git repo, so `mode` has no effect on the deployed
         }
       ],
       "default": null,
-      "description": "Deployment mode. \"dev\" deploys a python-js **legacy draft** (`isDraft=true`) as a dev version with hot reload and preview links. Leave None (default) for prod redeploys and Streamlit apps.\nA draft from `create_python_js_data_app_draft` runs in dev mode by itself and needs no deploy."
+      "description": "Leave None (default). \"dev\" is rejected: an app never runs in dev mode by a deploy.\nA draft from `create_python_js_data_app_draft` runs in dev mode by itself and needs no deploy."
     },
     "project_id": {
       "anyOf": [
