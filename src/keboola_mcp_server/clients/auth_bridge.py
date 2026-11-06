@@ -210,10 +210,19 @@ class OAuthSessionExchanger:
         # Read per call — the kubelet rotates the projected token in place.
         return read_service_account_jwt(self._kubernetes_token_path)
 
-    async def exchange(self, *, oauth_access_token: str) -> dict:
+    async def exchange(
+        self,
+        *,
+        oauth_access_token: str,
+        app_client_id: str | None = None,
+        reported_client_name: str | None = None,
+    ) -> dict:
         """
         Exchanges ``oauth_access_token`` for a ``CliTokenResponse`` (same shape as a PKCE login).
 
+        :param app_client_id: The Connection client row the login is for; sent only with ``reported_client_name``.
+        :param reported_client_name: The name a local tool reported for itself (DMD-2600). Display-only: Connection
+            stores it on the session only for its ``local-mcp-client`` row and never fails the exchange over it.
         :return: The raw response body (``accessToken``/``refreshToken``/``expiresIn``/``sessionId``).
         :raises OAuthTokenExchangeError: On any exchange failure (status carried on the error).
         """
@@ -227,9 +236,12 @@ class OAuthSessionExchanger:
             'X-Kubernetes-Authorization': f'Bearer {sa_jwt}',
             'X-Subject-Token': f'Bearer {strip_bearer(oauth_access_token)}',
         }
+        body: dict[str, str] = {}
+        if app_client_id and reported_client_name:
+            body = {'app_client_id': app_client_id, 'reported_client_name': reported_client_name}
         try:
             async with httpx.AsyncClient(timeout=self._timeout, transport=self._transport) as client:
-                response = await client.post(f'{self._base_url}/{_EXCHANGE_OAUTH_ENDPOINT}', headers=headers, json={})
+                response = await client.post(f'{self._base_url}/{_EXCHANGE_OAUTH_ENDPOINT}', headers=headers, json=body)
         except httpx.HTTPError as e:
             raise OAuthTokenExchangeError(
                 f'OAuth-token exchange could not reach Connection ({type(e).__name__}).',

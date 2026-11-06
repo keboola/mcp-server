@@ -21,6 +21,7 @@ from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, R
 from starlette.routing import Route, request_response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from keboola_mcp_server.reported_client_name import embed_reported_name
 from keboola_mcp_server.router.mcp_proxy import create_mcp_proxy
 from keboola_mcp_server.router.picker import PICKER_CSS, PICKER_HEADERS, PICKER_STYLESHEET_PATH, render_picker
 from keboola_mcp_server.router.rate_limit import (
@@ -91,10 +92,11 @@ class _RequestLogMiddleware:
 class _StatelessClients:
     """`/register` with the regional server's semantics: a fresh client id and nothing persisted. Trust never comes
     from a registration but from the Connection client row the regional server looks up by `redirect_uri`, and the
-    regional server accepts any client id (its `get_client` builds the client from the id alone)."""
+    regional server accepts any client id (its `get_client` builds the client from the id alone). The one thing the
+    regional server needs from a registration, a local tool's reported name, travels in the client id (DMD-2600)."""
 
     async def register_client(self, client_info: OAuthClientInformationFull) -> None:
-        return None
+        embed_reported_name(client_info)
 
 
 # One set for every cross-origin route: what a browser-based client sends to and reads from the MCP transport and the

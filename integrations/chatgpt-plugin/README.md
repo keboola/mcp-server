@@ -55,6 +55,13 @@ write tool without `project_id`.
 3. Restart the ChatGPT desktop app (or Codex), install "Keboola" from the local marketplace, pick your Keboola stack
    on the router's page and log in with your Keboola account.
 
+Codex signs in with dynamic client registration, `client_name: "Codex"` and the callback
+`http://127.0.0.1:<random port>/callback`. Connection has one shared client for every local tool on an http
+`127.0.0.1` or `[::1]` callback, `local-mcp-client`, which matches any port; `_WELL_KNOWN_CONNECTION_CLIENT_IDS`
+maps both callbacks to it. That client's name says nothing about the app, so the consent screen also shows the name
+the tool reported, marked as unverified. The router keeps no state, so `/register` carries that name inside the
+client id it returns (`src/keboola_mcp_server/reported_client_name.py`).
+
 ## Cursor and Grok Bot
 
 The same directory is a Cursor plugin. Cursor reads `.cursor-plugin/plugin.json`, which names the router URL itself
@@ -66,7 +73,7 @@ Cursor signs in with dynamic client registration and its fixed callback
 `https://www.cursor.com/agents/mcp/oauth/callback`, which Connection has pre-registered as the client `cursor` and
 `_WELL_KNOWN_CONNECTION_CLIENT_IDS` in `src/keboola_mcp_server/oauth.py` maps to it. Cursor's documented desktop
 callback `http://localhost:8787/callback` is not mapped: any local agent can listen there, so it is handled like
-every other loopback client. Like ChatGPT, a session through the router gets the directory
+every other `localhost` client. Like ChatGPT, a session through the router gets the directory
 tools only.
 
 To try it, copy this directory to `~/.cursor/plugins/local/keboola` (Cursor does not follow a symlink that points
