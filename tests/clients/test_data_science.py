@@ -557,3 +557,23 @@ async def test_delete_data_app_retries_dsapi_500(
 
     assert client.delete.await_args_list == [call(endpoint='v2/apps/app-123')] * len(delete_outcomes)
     assert sleep.await_args_list == [call(delay) for delay in expected_sleeps]
+
+
+@pytest.mark.asyncio
+async def test_draft_endpoints() -> None:
+    """Drafts live under `/v2/apps/{appId}/drafts`; create sends only the git branch."""
+    draft = {'id': 'd-1', 'url': None, 'gitBranch': 'feat', 'runState': 'neverRun', 'createdAt': 't'}
+    client = DataScienceClient.create('https://api.example.com', token=None)
+    client.post = AsyncMock(return_value=draft)  # type: ignore[assignment]
+    client.get = AsyncMock(return_value=[draft])  # type: ignore[assignment]
+    client.delete = AsyncMock(return_value=None)  # type: ignore[assignment]
+
+    created = await client.create_draft('app-1', 'feat')
+    listed = await client.list_drafts('app-1')
+    await client.delete_draft('app-1', 'd-1')
+
+    client.post.assert_awaited_once_with(endpoint='v2/apps/app-1/drafts', data={'gitBranch': 'feat'})
+    client.get.assert_awaited_once_with(endpoint='v2/apps/app-1/drafts')
+    client.delete.assert_awaited_once_with(endpoint='v2/apps/app-1/drafts/d-1')
+    assert (created.git_branch, created.run_state, created.url) == ('feat', 'neverRun', None)
+    assert [d.id for d in listed] == ['d-1']
