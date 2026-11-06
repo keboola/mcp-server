@@ -2206,8 +2206,7 @@ async def deploy_data_app(
         Literal['dev', 'production'] | None,
         Field(
             description=(
-                'Deployment mode. "dev" deploys a python-js **legacy draft** (`isDraft=true`) as a dev version '
-                'with hot reload and preview links. Leave None (default) for prod redeploys and Streamlit apps.\n'
+                'Leave None (default). "dev" is rejected: an app never runs in dev mode by a deploy.\n'
                 '<!-- directory:omit -->\n'
                 'A draft from `create_python_js_data_app_draft` runs in dev mode by itself and needs no deploy.\n'
                 '<!-- /directory:omit -->\n'
@@ -2228,11 +2227,10 @@ async def deploy_data_app(
     <!-- directory:omit -->
     - A draft from `create_python_js_data_app_draft` needs no deploy: it serves its branch live.
     <!-- /directory:omit -->
-    - `mode='dev'` deploys a **legacy draft** (`isDraft=true`) as a dev version with hot reload, on the
-      branch pinned in its `parameters.dataApp.git.branch`.
+    - `mode='dev'` is rejected, and so is a deploy of a legacy draft (`isDraft=true`): convert the legacy
+      draft to a draft on its branch instead.
     - An app on a customer GitHub repository (`git_auth_type='organization'`) deploys in production
-      mode only: `mode='dev'` is rejected before anything is deployed, and a deploy without `mode`
-      switches an app left in dev mode back to production.
+      mode only: a deploy without `mode` switches an app left in dev mode back to production.
 
     ## Configuration publishing
     - Every deploy **publishes the latest saved configuration version** (for both python-js and
@@ -2261,9 +2259,14 @@ async def deploy_data_app(
     links_manager = await ProjectLinksManager.from_client(client)
     if action == 'deploy':
         data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
+        if _is_draft_config(data_app.configuration):
+            raise ValueError(_legacy_draft_deploy_message(data_app))
+        if mode == 'dev':
+            raise ValueError(
+                f'Data app "{configuration_id}" cannot be deployed in dev mode. Deploy it without `mode`; to preview '
+                'a change, create a draft with `create_python_js_data_app_draft`.'
+            )
         if _uses_organization_git_auth(data_app.configuration):
-            if mode == 'dev':
-                raise ValueError(_organization_git_dev_mode_message(data_app.configuration_id))
             # An app keeps the mode of its last deploy, and the platform refuses organization auth in dev
             # mode: an external-repo app once deployed in dev mode would stay there on a deploy without
             # `mode`, so switch it to production explicitly.
@@ -2687,6 +2690,18 @@ def _draft_preview_link_error(exc: httpx.HTTPStatusError, configuration_id: str,
     ):
         return _not_authorized_error(configuration_id, api_error)
     return None
+
+
+def _legacy_draft_deploy_message(data_app: DataApp) -> str:
+    """How to move on from a legacy draft, which is never deployed again."""
+    block = _data_app_block(data_app.configuration)
+    parent = block.get('parentConfigurationId')
+    branch = _config_git_branch(data_app.configuration)
+    return (
+        f'Configuration "{data_app.configuration_id}" is a legacy draft, which is no longer deployed. Convert it: '
+        f'`create_python_js_data_app_draft(configuration_id="{parent}", git_branch="{branch}")`, then '
+        f'`delete_python_js_data_app_draft(configuration_id="{data_app.configuration_id}")`. The branch keeps the work.'
+    )
 
 
 def _legacy_workload_message(data_app: DataApp) -> str:
