@@ -2281,7 +2281,7 @@ async def deploy_data_app(
         data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
         logs, last_run, images = await asyncio.gather(
             _fetch_logs(client, data_app.data_app_id),
-            _fetch_latest_run(client, data_app.data_app_id),
+            _fetch_latest_run(client, data_app),
             _fetch_app_images(client, data_app),
         )
         if data_app.state == 'disabled':
@@ -3003,7 +3003,7 @@ async def _fetch_data_app_details_task(
         )
         logs, last_run = await asyncio.gather(
             _fetch_logs(client, data_app.data_app_id),
-            _fetch_latest_run(client, data_app.data_app_id),
+            _fetch_latest_run(client, data_app),
         )
         data_app = data_app.with_links(links).with_deployment_info(logs, last_run=last_run)
         # Legacy drafts and Streamlit apps have no drafts of their own.
@@ -3236,20 +3236,25 @@ async def _fetch_logs(client: KeboolaClient, data_app_id: str) -> list[str]:
         return []
 
 
-async def _fetch_latest_run(client: KeboolaClient, data_app_id: str) -> AppRunInfo | None:
-    """Fetches the most recent run (deployment attempt) of a data app, or None when there is none.
+_LATEST_RUN_LOOKBACK = 20
 
-    Diagnostics must not break the detail fetch: any error (e.g. an older DSAPI without the
-    runs endpoint) is logged and reported as "no run info" rather than raised.
+
+async def _fetch_latest_run(client: KeboolaClient, data_app: DataApp) -> AppRunInfo | None:
+    """The most recent run (deployment attempt) of a data app, or None when there is none.
+
+    - A prod app's runs also list its drafts' runs (`mode="dev"`); those are skipped.
+    - Diagnostics must not break the detail fetch: any error is logged and reported as "no run info".
     """
+    skip_dev = not _is_draft_config(data_app.configuration)
     try:
-        runs = await client.data_science_client.list_app_runs(data_app_id, limit=1)
-        if not runs:
-            return None
-        return AppRunInfo.from_api_response(runs[0])
+        runs = await client.data_science_client.list_app_runs(
+            data_app.data_app_id, limit=_LATEST_RUN_LOOKBACK if skip_dev else 1
+        )
     except Exception:
-        LOG.exception(f'Failed to fetch app runs for data app: {data_app_id}')
+        LOG.exception(f'Failed to fetch app runs for data app: {data_app.data_app_id}')
         return None
+    run = next((run for run in runs if not (skip_dev and run.mode == 'dev')), None)
+    return AppRunInfo.from_api_response(run) if run else None
 
 
 def _oidc_provider(authorization: Mapping[str, Any]) -> Mapping[str, Any] | None:

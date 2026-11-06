@@ -4112,15 +4112,27 @@ def test_app_run_info_truncates_long_logs_and_message() -> None:
 
 
 @pytest.mark.asyncio
-async def test_fetch_latest_run_returns_newest_run_info(mocker, mcp_context_client: Context) -> None:
+@pytest.mark.parametrize(
+    ('app_kind', 'expected_reason'),
+    [('prod', 'ConfigDecryptionFailed'), ('draft', 'InternalError')],
+    ids=['prod_skips_draft_runs', 'legacy_draft_keeps_its_dev_run'],
+)
+async def test_fetch_latest_run_returns_newest_run_info(
+    mocker, mcp_context_client: Context, app_kind: str, expected_reason: str
+) -> None:
+    """A prod app's runs list its drafts' runs too (`mode="dev"`); its last run is its own newest."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-    keboola_client.data_science_client.list_app_runs = mocker.AsyncMock(return_value=[_make_failed_app_run()])
+    draft_run = _make_failed_app_run(
+        id='run-draft', mode='dev', failureReason={'reason': 'InternalError', 'message': 'App deleted'}
+    )
+    keboola_client.data_science_client.list_app_runs = mocker.AsyncMock(
+        return_value=[draft_run, _make_failed_app_run()]
+    )
 
-    info = await _fetch_latest_run(keboola_client, 'app-prod-1')
+    info = await _fetch_latest_run(keboola_client, _preview_app(app_kind))
 
-    keboola_client.data_science_client.list_app_runs.assert_awaited_once_with('app-prod-1', limit=1)
     assert info is not None
-    assert info.failure_reason == 'ConfigDecryptionFailed'
+    assert info.failure_reason == expected_reason
 
 
 @pytest.mark.asyncio
@@ -4137,7 +4149,7 @@ async def test_fetch_latest_run_degrades_to_none(
         mock = mocker.AsyncMock(side_effect=RuntimeError('404 Not Found'))
     keboola_client.data_science_client.list_app_runs = mock
 
-    assert await _fetch_latest_run(keboola_client, 'app-prod-1') is None
+    assert await _fetch_latest_run(keboola_client, _preview_app('prod')) is None
 
 
 @pytest.mark.asyncio
