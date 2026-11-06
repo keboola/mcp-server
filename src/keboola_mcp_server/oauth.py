@@ -988,6 +988,11 @@ class AuthorizeRateLimitMiddleware:
 
 
 _METADATA_PATH_PREFIXES = ('/.well-known/oauth-authorization-server', '/.well-known/openid-configuration')
+# Where the MCP endpoint is served (`cli.build_http_app` mounts the streamable-HTTP app there) and the RFC 9728 document
+# that describes it. FastMCP derives the PRM `resource` from the path it is given, and `http_app(path='/')` hands it
+# `/`, which would name the host rather than the endpoint.
+_MCP_PATH = '/mcp'
+_PRM_PATH = '/.well-known/oauth-protected-resource'
 
 
 class _PatchAuthServerMetadata:
@@ -1243,8 +1248,9 @@ class SimpleOAuthProvider(OAuthProvider):
         self.trusted_redirect_origins = frozenset(
             o for o in (_origin(mcp_server_url), _origin(server_url)) if o is not None
         )
-        # The RFC 8707 resources this server's tokens may be issued for: the PRM `resource` (the server's own URL) and
-        # the MCP endpoint a client was configured with (`/mcp`, or the legacy `/sse` that forwards to it).
+        # The RFC 8707 resources this server's tokens may be issued for: the server's own URL (what the PRM named as
+        # `resource` before AI-4080) and the MCP endpoint a client was configured with (`/mcp`, or the legacy `/sse`
+        # that forwards to it).
         own_path = urlparse(mcp_server_url).path.rstrip('/')
         self._own_resources = [urljoin(mcp_server_url, own_path + path) for path in ('', '/mcp', '/sse')]
         self._own_resource_keys = frozenset(key for url in self._own_resources if (key := _resource_key(url)))
@@ -1287,9 +1293,14 @@ class SimpleOAuthProvider(OAuthProvider):
     def get_routes(self, mcp_path: str | None = None) -> list[Route]:
         """The SDK's routes, with the authorization-server metadata documents patched by `_PatchAuthServerMetadata`, the
         token and authorization endpoints wrapped by `_CaptureParameter` (`resource` and `via`), and `_revoke` as the
-        revocation endpoint."""
+        revocation endpoint.
+
+        The protected-resource metadata always names the MCP endpoint (`/mcp`) as the `resource`, whatever `mcp_path`
+        the caller passes (RFC 9728 §3.3: it must equal the URL the client connected to, and GitHub Copilot checks it).
+        The SDK serves that document at `/.well-known/oauth-protected-resource/mcp`; the same document is also served at
+        the root path, which older clients and the `WWW-Authenticate` challenge still use."""
         routes: list[Route] = []
-        for route in super().get_routes(mcp_path):
+        for route in super().get_routes(_MCP_PATH):
             if isinstance(route, Route) and route.path.startswith(_METADATA_PATH_PREFIXES):
                 route = Route(route.path, endpoint=_PatchAuthServerMetadata(route.endpoint), methods=route.methods)
             elif isinstance(route, Route) and route.path == '/token':
@@ -1306,6 +1317,8 @@ class SimpleOAuthProvider(OAuthProvider):
                 endpoint = _CaptureParameter(route.endpoint, name='via', var=_AUTHORIZE_REQUEST_VIA, in_query=True)
                 route = Route(route.path, endpoint=endpoint, methods=route.methods)
             routes.append(route)
+            if isinstance(route, Route) and route.path == f'{_PRM_PATH}{_MCP_PATH}':
+                routes.append(Route(_PRM_PATH, endpoint=route.endpoint, methods=route.methods))
         return routes
 
     async def _revoke(self, request: Request) -> Response:
