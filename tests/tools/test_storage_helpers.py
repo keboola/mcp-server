@@ -1,6 +1,8 @@
 import pytest
+from pytest_mock import MockerFixture
 
-from keboola_mcp_server.tools.storage_helpers import prod_storage_id
+from keboola_mcp_server.clients.client import KeboolaClient
+from keboola_mcp_server.tools.storage_helpers import branch_table_list, prod_storage_id
 
 
 @pytest.mark.parametrize(
@@ -31,3 +33,28 @@ from keboola_mcp_server.tools.storage_helpers import prod_storage_id
 )
 def test_prod_storage_id(storage_id: str, branch_id: str | None, expected: str) -> None:
     assert prod_storage_id(storage_id, branch_id) == expected
+
+
+@pytest.mark.parametrize(
+    ('branch_id', 'storage_branches', 'expected_branch_id'),
+    [
+        # a storage-branches development branch is listed over production by the server
+        ('123', True, '123'),
+        # a legacy development branch and production are listed from the default branch
+        ('123', False, 'default'),
+        (None, False, 'default'),
+    ],
+)
+@pytest.mark.asyncio
+async def test_branch_table_list(
+    mocker: MockerFixture, branch_id: str | None, storage_branches: bool, expected_branch_id: str
+) -> None:
+    client = mocker.Mock(KeboolaClient)
+    client.branch_id = branch_id
+    client.has_feature = mocker.AsyncMock(return_value=storage_branches)
+    client.storage_client.table_list = mocker.AsyncMock(return_value=[{'id': 'in.c-crm.orders'}])
+
+    result = await branch_table_list(client, include=['columns'])
+
+    assert result == [{'id': 'in.c-crm.orders'}]
+    client.storage_client.table_list.assert_awaited_once_with(branch_id=expected_branch_id, include=['columns'])
