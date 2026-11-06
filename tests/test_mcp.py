@@ -2512,6 +2512,7 @@ class TestDirectoryToolProfile:
         'create_project',
         'create_python_js_data_app_git_credential',
         'modify_python_js_data_app',
+        'create_python_js_data_app_draft',
         'delete_python_js_data_app_draft',
         'get_data_app_preview_link',
     )

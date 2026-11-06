@@ -184,6 +184,7 @@ async def _assert_basic_setup(client: Client):
         'create_python_js_data_app_git_credential',
         'create_sql_transformation',
         'create_stream',
+        'create_python_js_data_app_draft',
         'delete_python_js_data_app_draft',
         'deploy_data_app',
         'docs_query',
