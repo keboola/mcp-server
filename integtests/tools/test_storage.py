@@ -10,6 +10,8 @@ from integtests.conftest import BucketDef, TableDef
 from keboola_mcp_server.clients.client import KeboolaClient, get_metadata_property
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.tools.components.utils import get_nested
+from keboola_mcp_server.tools.search import _fetch_tables
+from keboola_mcp_server.tools.search_models import SearchSpec
 from keboola_mcp_server.tools.storage.tools import (
     BucketDetail,
     DescriptionUpdate,
@@ -307,6 +309,14 @@ async def test_update_descriptions_mixed_types(mcp_context: Context, buckets: li
         assert not [
             m for m in table_metadata if m.get('key') == MetadataField.DESCRIPTION and m.get('provider') == 'user'
         ]
+
+        # The listing and the search read the native descriptions through the table list V2
+        listed = await get_tables(mcp_context, [table.bucket_id])
+        assert {t.id: t.description for t in listed.tables}[table.table_id] == 'Mixed Table Description'
+        for pattern in ('Mixed Table Description', 'Mixed Column Description'):
+            spec = SearchSpec(patterns=[pattern], item_types=['table'], pattern_mode='literal')
+            hits = await _fetch_tables(client, spec)
+            assert [hit.table_id for hit in hits] == [table.table_id], f'pattern: {pattern}'
 
     finally:
         # Clean up metadata

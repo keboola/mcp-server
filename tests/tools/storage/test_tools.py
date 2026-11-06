@@ -58,7 +58,9 @@ def _get_sapi_tables(details: bool | None = None) -> list[dict[str, Any]]:
             'tableType': 'table',
             'path': '/users',
             'attributes': [],
-            'metadata': [],
+            # the native description, which the listing shows instead of the stale KBC.description metadata
+            'description': 'Users with a native description.',
+            'metadata': [{'id': '1234', 'key': 'KBC.description', 'value': 'Stale metadata description.'}],
             'columns': ['user_id', 'name', 'surname'],
             'columnMetadata': {
                 'user_id': [
@@ -230,8 +232,8 @@ def _get_sapi_tables(details: bool | None = None) -> list[dict[str, Any]]:
     return tables
 
 
-def _bucket_table_list_side_effect(bid: str, *, include: list[str], **kwargs: Any) -> list[dict[str, Any]]:
-    prefix = f'{bid}.'
+def _table_list_side_effect(*, bucket_id: str, **kwargs: Any) -> list[dict[str, Any]]:
+    prefix = f'{bucket_id}.'
     return [table for table in _get_sapi_tables() if table['id'].startswith(prefix)]
 
 
@@ -992,6 +994,7 @@ async def test_get_table(
                     id='in.c-foo.users',
                     name='users',
                     display_name='All system users.',
+                    description='Users with a native description.',
                     primary_key=['user_id'],
                     created='2025-08-17T07:39:18+0200',
                     updated='2025-08-20T19:11:52+0200',
@@ -1033,6 +1036,7 @@ async def test_get_table(
                     id='in.c-foo.users',
                     name='users',
                     display_name='All system users.',
+                    description='Users with a native description.',
                     primary_key=['user_id'],
                     created='2025-08-17T07:39:18+0200',
                     updated='2025-08-20T19:11:52+0200',
@@ -1101,7 +1105,7 @@ async def test_get_tables(
     keboola_client.branch_id = branch_id
     keboola_client.has_feature = mocker.AsyncMock(return_value=False)
     keboola_client.storage_client.bucket_detail = mocker.AsyncMock(side_effect=_bucket_detail_side_effect)
-    keboola_client.storage_client.bucket_table_list = mocker.AsyncMock(side_effect=_bucket_table_list_side_effect)
+    keboola_client.storage_client.table_list = mocker.AsyncMock(side_effect=_table_list_side_effect)
     links_manager = await ProjectLinksManager.from_client(keboola_client)
 
     result = await get_tables(mcp_context_client, [bucket_id])
@@ -1121,7 +1125,6 @@ async def test_get_tables(
         assert 'fullyQualifiedName' not in dumped
         assert 'columns' not in dumped
 
-    sapi_includes = ['metadata', 'columnMetadata', 'sourceMetadata', 'sourceColumnMetadata']
     if branch_id:
         keboola_client.storage_client.bucket_detail.assert_has_calls(
             [
@@ -1129,16 +1132,16 @@ async def test_get_tables(
                 call(bucket_id.replace('c-', f'c-{branch_id}-'), branch_id='default'),
             ]
         )
-        keboola_client.storage_client.bucket_table_list.assert_has_calls(
+        keboola_client.storage_client.table_list.assert_has_calls(
             [
-                call(bucket_id, include=sapi_includes, branch_id='default'),
-                call(bucket_id.replace('c-', f'c-{branch_id}-'), include=sapi_includes, branch_id='default'),
+                call(include=['metadata'], bucket_id=bucket_id, branch_id='default'),
+                call(include=['metadata'], bucket_id=bucket_id.replace('c-', f'c-{branch_id}-'), branch_id='default'),
             ]
         )
     else:
         keboola_client.storage_client.bucket_detail.assert_called_once_with(bucket_id, branch_id='default')
-        keboola_client.storage_client.bucket_table_list.assert_called_once_with(
-            bucket_id, include=sapi_includes, branch_id='default'
+        keboola_client.storage_client.table_list.assert_called_once_with(
+            include=['metadata'], bucket_id=bucket_id, branch_id='default'
         )
 
 
@@ -1248,32 +1251,33 @@ def test_bucket_detail_description_fallback(raw_data: dict[str, Any], expected_d
             },
             'Meta desc',
         ),
-        # the listing still reads the KBC.description metadata until it can use the native definition
+        # the listing shows the native description of the table list V2 item, never the KBC.description metadata
+        # of the table or of its source table
         (
             TableSummary,
             {
-                'description': 'Table created by Transformation API',
+                'description': 'Native desc',
                 'metadata': [{'key': 'KBC.description', 'value': 'Meta desc'}],
                 'sourceTable': {'metadata': [{'key': 'KBC.description', 'value': 'Source desc'}]},
             },
-            'Meta desc',
+            'Native desc',
         ),
         (
             TableSummary,
             {
                 'description': '',
-                'metadata': [],
+                'metadata': [{'key': 'KBC.description', 'value': 'Meta desc'}],
                 'sourceTable': {'metadata': [{'key': 'KBC.description', 'value': 'S'}]},
             },
-            'S',
+            None,
         ),
-        (TableSummary, {'description': 'Direct desc', 'metadata': []}, 'Direct desc'),
+        (TableSummary, {'description': None, 'metadata': []}, None),
     ],
 )
 def test_table_description_resolution(
     model: type[TableSummary], raw_data: dict[str, Any], expected_description: str | None
 ) -> None:
-    """Test the table description resolution of the detail (native) and of the listing (metadata)."""
+    """Test the table description resolution of the detail and of the listing."""
     base = {
         'id': 'in.c-test.table1',
         'name': 'table1',
@@ -2042,6 +2046,42 @@ async def test_find_buckets_storage_branches(mocker: MockerFixture, mcp_context_
 
     # bucket_detail called twice (default and branch)
     assert keboola_client.storage_client.bucket_detail.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_list_tables_storage_branches(mocker: MockerFixture, mcp_context_client: Context) -> None:
+    """With storage-branches the branch bucket lists only the branch's own tables, which win over production."""
+    branch_id = '35403'
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.branch_id = branch_id
+    keboola_client.has_feature = mocker.AsyncMock(return_value=True)
+    keboola_client.storage_client.bucket_detail = mocker.AsyncMock(
+        side_effect=lambda bid, branch_id=None: (
+            _get_sb_prod_buckets()[1] if branch_id == 'default' else _get_sb_branch_buckets('35403')[0]
+        )
+    )
+
+    def table_list(*, branch_id: str, **kwargs: Any) -> list[JsonDict]:
+        description = 'Branch orders.' if branch_id == '35403' else 'Production orders.'
+        orders = {'id': 'out.c-model.orders', 'name': 'orders', 'displayName': 'orders', 'description': description}
+        if branch_id == '35403':
+            return [orders]
+        return [orders, {'id': 'out.c-model.items', 'name': 'items', 'displayName': 'items', 'description': None}]
+
+    keboola_client.storage_client.table_list = mocker.AsyncMock(side_effect=table_list)
+
+    result = await get_tables(mcp_context_client, ['out.c-model'])
+
+    assert sorted((t.id, t.description) for t in result.tables) == [
+        ('out.c-model.items', None),
+        ('out.c-model.orders', 'Branch orders.'),
+    ]
+    keboola_client.storage_client.table_list.assert_has_calls(
+        [
+            call(include=['metadata'], bucket_id='out.c-model', branch_id='default'),
+            call(include=['metadata'], bucket_id='out.c-model', inherit_production=False, branch_id='35403'),
+        ]
+    )
 
 
 @pytest.mark.asyncio

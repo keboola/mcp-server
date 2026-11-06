@@ -366,7 +366,8 @@ class TableSummary(BaseModel):
     @model_validator(mode='before')
     @classmethod
     def set_description(cls, values: dict[str, Any]) -> dict[str, Any]:
-        values['description'] = _metadata_table_description(values)
+        # The table list V2 item holds the native description, resolved along the source chain of an alias.
+        values['description'] = values.get('description') or None
         return values
 
     @model_validator(mode='before')
@@ -946,14 +947,15 @@ async def _list_tables(
     """
     has_sb = await has_storage_branches(client)
     tables_by_prod_id: dict[str, TableSummary] = {}
-    sapi_includes = ['metadata', 'columnMetadata', 'sourceMetadata', 'sourceColumnMetadata']
+    # The metadata carries the legacy branch marker that maps a table of a legacy branch bucket to its production ID.
+    sapi_includes = ['metadata']
 
     for bucket_id in bucket_ids:
         prod_bucket, dev_bucket = await _find_buckets(client, bucket_id)
 
         if prod_bucket:
-            raw_table_data = await client.storage_client.bucket_table_list(
-                prod_bucket.id, include=sapi_includes, branch_id='default'
+            raw_table_data = await client.storage_client.table_list(
+                include=sapi_includes, bucket_id=prod_bucket.id, branch_id='default'
             )
             for raw in raw_table_data:
                 table_name = cast(str, raw.get('name', ''))
@@ -964,10 +966,15 @@ async def _list_tables(
                 tables_by_prod_id[table.id] = table
 
         if dev_bucket:
-            dev_branch_id = client.branch_id if has_sb else 'default'
-            raw_table_data = await client.storage_client.bucket_table_list(
-                dev_bucket.id, include=sapi_includes, branch_id=dev_branch_id
-            )
+            if has_sb:
+                # Only the branch's own tables: the production ones come from the production bucket above.
+                raw_table_data = await client.storage_client.table_list(
+                    include=sapi_includes, bucket_id=dev_bucket.id, inherit_production=False, branch_id=client.branch_id
+                )
+            else:
+                raw_table_data = await client.storage_client.table_list(
+                    include=sapi_includes, bucket_id=dev_bucket.id, branch_id='default'
+                )
             for raw in raw_table_data:
                 table = TableSummary.model_validate(raw)
                 tables_by_prod_id[table.prod_id] = table.model_copy(
