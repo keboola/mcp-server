@@ -535,7 +535,9 @@ class TestLegacySsePath:
     @pytest.mark.parametrize('prefix', ['', '/mcp'])
     def test_oauth_metadata_names_one_issuer(self, prefix: str) -> None:
         """RFC 9207 (DMD-2468): ChatGPT compares the `iss` of an authorization response with the issuer it discovered,
-        by exact string, so the authorization-server metadata and the PRM must name the very same one."""
+        by exact string, so the authorization-server metadata and the PRM must name the very same one. RFC 9728
+        (AI-4080, AI-4039): the PRM `resource` must be the MCP endpoint's URL, at the root, path-suffixed and mounted
+        metadata URL alike."""
         config = Config(
             storage_api_url=STACK,
             oauth_client_id='client-id',
@@ -547,10 +549,18 @@ class TestLegacySsePath:
         )
         with _http_client(config) as client:
             metadata = client.get(f'{prefix}/.well-known/oauth-authorization-server').json()
-            prm = client.get('/.well-known/oauth-protected-resource').json()
+            prms = [
+                client.get(path).json()
+                for path in (
+                    '/.well-known/oauth-protected-resource',
+                    '/.well-known/oauth-protected-resource/mcp',
+                    '/mcp/.well-known/oauth-protected-resource',
+                )
+            ]
 
         assert metadata['issuer'] == 'https://mcp.keboola.com/'
-        assert prm['authorization_servers'] == [metadata['issuer']]
+        assert [p['resource'] for p in prms] == ['https://mcp.keboola.com/mcp'] * 3
+        assert [p['authorization_servers'] for p in prms] == [[metadata['issuer']]] * 3
         assert metadata['authorization_response_iss_parameter_supported'] is True
         # DMD-2481: /revoke, which public clients call without a secret like /token
         assert metadata['revocation_endpoint'] == 'https://mcp.keboola.com/revoke'
@@ -561,7 +571,7 @@ class TestLegacySsePath:
         ('session_resource', 'foreign'),
         [
             ('https://mcp.keboola.com/mcp', False),
-            # normalized: scheme and host case, default port, trailing slash, the origin (the PRM `resource`) and /mcp
+            # normalized: scheme and host case, default port, trailing slash, the origin (the pre-AI-4080 PRM `resource`) and /mcp
             ('https://MCP.keboola.com:443/', False),
             ('HTTPS://Mcp.Keboola.com/mcp/', False),
             # minted for some other resource: logged in the `log` mode (the default), not replayed in `enforce`
