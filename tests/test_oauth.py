@@ -899,17 +899,15 @@ class TestSimpleOAuthProvider:
         assert 'client_id=foo-client-id' in record.message
 
     @staticmethod
-    def _named_client_id(name: str) -> str:
-        """The client id `/register` hands a local tool that reported `name` (see `embed_reported_name`)."""
-        from keboola_mcp_server.reported_client_name import embed_reported_name
-
+    async def _named_client_id(oauth_provider: SimpleOAuthProvider, name: str) -> str:
+        """The client id the regional `/register` hands a local tool that reported `name`."""
         info = OAuthClientInformationFull(
             client_id='foo-client-id',
             client_name=name,
             redirect_uris=[AnyUrl('http://127.0.0.1:53123/callback')],
             token_endpoint_auth_method='none',
         )
-        embed_reported_name(info)
+        await oauth_provider.register_client(info)
         assert info.client_id != 'foo-client-id'
         return cast(str, info.client_id)
 
@@ -945,7 +943,7 @@ class TestSimpleOAuthProvider:
         )
 
         checked = self._stub_client_registration(monkeypatch, _ClientRegistration.REGISTERED)
-        client_id = self._named_client_id('Codex') if named else 'foo-client-id'
+        client_id = await self._named_client_id(oauth_provider, 'Codex') if named else 'foo-client-id'
         client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id=client_id)
         params = AuthorizationParams(
             redirect_uri=AnyUrl(redirect_uri),
@@ -1042,7 +1040,7 @@ class TestSimpleOAuthProvider:
         )
         captured: dict[str, Any] = {}
         self._stub_exchanger(monkeypatch, captured)
-        client_id = self._named_client_id('Codex') if named else 'foo-client-id'
+        client_id = await self._named_client_id(oauth_provider, 'Codex') if named else 'foo-client-id'
         client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id=client_id)
         auth_code = _ExtendedAuthorizationCode.model_validate(
             {**self.authorization_code(), 'client_id': client_id, 'redirect_uri': redirect_uri}
