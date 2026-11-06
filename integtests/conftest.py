@@ -50,7 +50,6 @@ STORAGE_API_TOKEN_ENV_VAR_2 = 'INTEGTEST_STORAGE_TOKEN_PRJ2'
 WORKSPACE_SCHEMA_ENV_VAR_2 = 'INTEGTEST_WORKSPACE_SCHEMA_PRJ2'
 # We reset dev environment variables to integtest values to ensure tests run locally using .env settings.
 DEV_STORAGE_API_URL_ENV_VAR = 'STORAGE_API_URL'
-DEV_STORAGE_TOKEN_ENV_VAR = 'KBC_STORAGE_TOKEN'
 DEV_PROJECT_ID_ENV_VAR = 'KBC_PROJECT_ID'
 DEV_WORKSPACE_SCHEMA_ENV_VAR = 'KBC_WORKSPACE_SCHEMA'
 INTEGTEST_CLIENT_INFO = Implementation(
@@ -143,12 +142,9 @@ def _patch_session_middleware_user_agent() -> Generator[None, None, None]:
 
 
 @pytest.fixture(scope='session')
-def env_init(
-    env_file_loaded: bool, mcp_token: str, project_lock: AcquiredProject, storage_api_url: str, workspace_schema: str
-) -> bool:
+def env_init(env_file_loaded: bool, project_lock: AcquiredProject, storage_api_url: str, workspace_schema: str) -> bool:
     # We reset the development environment variables to the values of the integtest environment variables.
     os.environ[DEV_STORAGE_API_URL_ENV_VAR] = storage_api_url
-    os.environ[DEV_STORAGE_TOKEN_ENV_VAR] = mcp_token
     os.environ[DEV_PROJECT_ID_ENV_VAR] = project_lock.endpoint.project_id
     os.environ[DEV_WORKSPACE_SCHEMA_ENV_VAR] = workspace_schema
     return env_file_loaded
@@ -191,8 +187,8 @@ def mcp_token(service_session_token: str, storage_api_url: str, project_lock: Ac
 
 
 @pytest.fixture(scope='session')
-def mcp_config(storage_api_token: str, storage_api_url: str) -> Config:
-    return Config(storage_api_url=storage_api_url, storage_token=storage_api_token)
+def mcp_config(mcp_token: str, storage_api_url: str) -> Config:
+    return Config(storage_api_url=storage_api_url, bearer_token=mcp_token)
 
 
 @pytest.fixture(scope='session')
@@ -618,7 +614,6 @@ def keboola_client(
     sync_storage_client: SyncStorageClient, mcp_token: str, project_lock: AcquiredProject
 ) -> KeboolaClient:
     return KeboolaClient(
-        legacy_storage_token=sync_storage_client.token,
         bearer_token=mcp_token,
         storage_api_url=sync_storage_client.root_url,
         # Storage and the other services refuse a programmatic token without the project it is meant for.
@@ -690,7 +685,7 @@ def mcp_context(
 def mcp_server(storage_api_url: str, mcp_token: str, project_lock: AcquiredProject, workspace_schema: str) -> FastMCP:
     config = Config(
         storage_api_url=storage_api_url,
-        storage_token=mcp_token,
+        bearer_token=mcp_token,
         project_id=project_lock.endpoint.project_id,
         workspace_schema=workspace_schema,
     )

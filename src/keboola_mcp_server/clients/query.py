@@ -153,8 +153,8 @@ class QueryServiceClient(KeboolaServiceClient):
 
         Used to surface the cancellation handle to MCP clients via a progress notification so
         that they can cancel the query directly against Query Service without routing through
-        the originating MCP server replica. The endpoint accepts the same auth header the client
-        already uses to talk to the MCP server (`X-StorageAPI-Token` or `Authorization: Bearer`).
+        the originating MCP server replica. The endpoint accepts the same `Authorization: Bearer`
+        header the client already uses to talk to the MCP server.
         """
         return f'{self.raw_client.base_api_url}/queries/{job_id}/cancel'
 

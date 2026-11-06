@@ -167,7 +167,6 @@ def dev_branch(mr_project: MergeRequestProject) -> Generator[str, Any, None]:
 async def _build_context(mocker, project: MergeRequestProject, *, branch_id: str | None) -> Context:
     keboola_client = KeboolaClient(
         storage_api_url=project.storage_api_url,
-        legacy_storage_token=project.storage_api_token,
         bearer_token=project.bearer_token,
         # Programmatic tokens need the project they are meant for (a Storage token starts with its project id).
         headers={
@@ -188,7 +187,7 @@ async def _build_context(mocker, project: MergeRequestProject, *, branch_id: str
     ctx.session_id = None
     ctx.request_context = mocker.MagicMock()
     ctx.request_context.lifespan_context = ServerState(
-        Config(storage_api_url=project.storage_api_url, storage_token=project.bearer_token),
+        Config(storage_api_url=project.storage_api_url, bearer_token=project.bearer_token),
         ServerRuntimeInfo(transport='stdio'),
     )
     return ctx

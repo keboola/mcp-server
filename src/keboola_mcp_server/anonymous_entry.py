@@ -21,7 +21,7 @@ all) but the rule enforced here and in `SessionStateMiddleware`: a request arriv
   ignored, so a client that believes it is authenticated finds out here instead of quietly
   provisioning throwaway projects under an anonymous session.
 * Nothing the *server* holds counts as one either. `strip_credentials` clears the whole credential
-  side of the config -- a `KBC_STORAGE_TOKEN` in the pod's environment, a local login file, an
+  side of the config -- a local login file, an
   auto-leased scope -- so the only token such a request can ever act under is the one
   `resolve_session` hands back for a provisioned session whose handle the caller already has.
 """
@@ -58,16 +58,10 @@ def is_anonymous_entry(http_rq: object | None) -> bool:
 def carries_a_credential(headers: Headers) -> bool:
     """Whether the caller sent anything this server would treat as a Keboola credential.
 
-    Asks `Config` itself rather than matching header names here: `replace_by_headers` is the one
-    place that knows every spelling a credential can arrive under (`X-Storage-Api-Token`,
-    `KBC_Storage_Token`, the `storage_api_token` alias, ...), and a check that re-listed them would
-    silently stop covering a spelling the day one is added. `Authorization` is tested separately
-    because it maps to no field name and is routed by hand in `apply_request_config`.
+    The only credential a request can carry is `Authorization` (it is routed by hand in
+    `apply_request_config`); no `X-*` header or alias maps to a credential field.
     """
-    if headers.get('Authorization'):
-        return True
-    from_headers = Config().replace_by_headers(headers)
-    return bool(from_headers.storage_token or from_headers.bearer_token)
+    return bool(headers.get('Authorization'))
 
 
 def strip_credentials(config: Config) -> Config:
@@ -76,7 +70,7 @@ def strip_credentials(config: Config) -> Config:
     Leaves the stack URL and the request's own non-credential settings alone: an anonymous caller
     still needs to reach a stack, and `create_project` needs to know which one.
     """
-    return dataclasses.replace(config, storage_token=None, bearer_token=None, project_id=None)
+    return dataclasses.replace(config, bearer_token=None, project_id=None)
 
 
 class AnonymousCredentialLeak(RuntimeError):
@@ -96,12 +90,12 @@ def only_provisioned_credential(config: Config, provisioned_session_id: str | No
 
     :raises AnonymousCredentialLeak: when the request holds a credential and no provisioned handle.
     """
-    if config.storage_token and not provisioned_session_id:
+    if config.bearer_token and not provisioned_session_id:
         raise AnonymousCredentialLeak(
             'A request on the anonymous endpoint acquired a credential without holding a provisioned '
             'session handle. Refusing to serve it.'
         )
-    return config.storage_token
+    return config.bearer_token
 
 
 def credential_unchanged(config: Config, expected: str | None) -> None:
@@ -114,7 +108,7 @@ def credential_unchanged(config: Config, expected: str | None) -> None:
 
     :raises AnonymousCredentialLeak: when the credential is no longer the provisioned one.
     """
-    if config.storage_token != expected:
+    if config.bearer_token != expected:
         raise AnonymousCredentialLeak(
             'The credential of a request on the anonymous endpoint was replaced after its provisioned '
             'session was resolved. Refusing to serve it.'

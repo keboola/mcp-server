@@ -48,7 +48,6 @@ async def auth_client(
     body is identical across modes.
     """
     # `env_init` pins a single-project token/project in the environment, which would override these configs
-    monkeypatch.delenv('KBC_STORAGE_TOKEN', raising=False)
     monkeypatch.delenv('KBC_PROJECT_ID', raising=False)
     auth_mode = request.param
     primary_id = int(project_lock.endpoint.project_id)
@@ -59,7 +58,7 @@ async def auth_client(
         if second is not None:
             target_ids.append(int(second.endpoint.project_id))
 
-    config = Config(storage_api_url=storage_api_url, storage_token=service_session_token)
+    config = Config(storage_api_url=storage_api_url, bearer_token=service_session_token)
     async with Client(_make_server(config), client_info=INTEGTEST_CLIENT_INFO) as client:
         scope = ProjectScope.model_validate(
             (
@@ -89,9 +88,8 @@ async def test_pat_accessible_projects_enrichment(
     monkeypatch: pytest.MonkeyPatch,
 ):
     """PAT bootstrap: per-project SQL dialect + dialect-grouped base instructions."""
-    monkeypatch.delenv('KBC_STORAGE_TOKEN', raising=False)
     monkeypatch.delenv('KBC_PROJECT_ID', raising=False)
-    config = Config(storage_api_url=storage_api_url, storage_token=service_session_token)
+    config = Config(storage_api_url=storage_api_url, bearer_token=service_session_token)
     async with Client(_make_server(config), client_info=INTEGTEST_CLIENT_INFO) as client:
         result = AccessibleProjects.model_validate(
             (await client.call_tool('get_accessible_projects', {'with_llm_instruction': True})).structured_content

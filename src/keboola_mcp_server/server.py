@@ -134,7 +134,6 @@ def create_keboola_lifespan(
         try:
             yield server_state
         finally:
-            await server_state.aclose()
             if oauth_provider is not None:
                 await oauth_provider.aclose()
 

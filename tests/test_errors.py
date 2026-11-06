@@ -285,13 +285,11 @@ async def test_get_session_id(
 class TestPydanticValidationErrors:
     @pytest.fixture
     def mcp_server(self) -> FastMCP:
-        cfg_dict = {
-            'storage_token': 'kbc_at_123-test-storage-token',
-            'project_id': '123',
-            'storage_api_url': 'https://connection.keboola.com',
-            'transport': 'stdio',
-        }
-        config = Config.from_dict(cfg_dict)
+        config = Config(
+            bearer_token='kbc_at_123-test-storage-token',
+            project_id='123',
+            storage_api_url='https://connection.keboola.com',
+        )
         server = create_server(config, runtime_info=ServerRuntimeInfo(transport='stdio'))
         assert isinstance(server, FastMCP)
         return server
@@ -592,7 +590,6 @@ async def test_event_step_up_header_only_for_own_stack(
     # stack is the one it was configured with when it started (see `ServerState.own_stack_storage_api_url`).
     client = KeboolaClient(
         storage_api_url=session_storage_api_url,
-        legacy_storage_token='user-token',
         bearer_token='kbc_at_test',
         own_stack_storage_api_url='https://connection.keboola.com',
     )
@@ -615,7 +612,7 @@ def storage_event_post(monkeypatch, mocker, empty_context: Context):
     """A real storage client with a mocked HTTP POST, so the `[trigger_event]` log line is emitted as well."""
     monkeypatch.delenv('KBC_KUBERNETES_TOKEN_PATH', raising=False)
     empty_context.session.state[KeboolaClient.STATE_KEY] = KeboolaClient(
-        storage_api_url='https://connection.keboola.com', legacy_storage_token='fake-token', bearer_token='kbc_at_test'
+        storage_api_url='https://connection.keboola.com', bearer_token='kbc_at_test'
     )
     return mocker.patch.object(AsyncStorageClient, 'post', autospec=True, return_value={'id': '1'})
 

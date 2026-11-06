@@ -60,22 +60,17 @@ def _request(headers: dict[str, str] | None = None, *, anonymous: bool) -> Reque
 
 
 class TestWhatCountsAsACredential:
-    """`carries_a_credential` asks `Config` which headers are credentials rather than listing them
-    itself -- these are the spellings that must keep being caught when it does."""
+    """`Authorization` is the only header that carries a credential; the old `X-Storage-Api-Token` spellings
+    map to nothing any more."""
 
     @pytest.mark.parametrize(
         'headers',
         [
             {'Authorization': 'Bearer kbc_at_whatever'},
             {'Authorization': 'Bearer something-else-entirely'},
-            {'X-Storage-Api-Token': 'legacy-token'},
-            {'X-Storage-Token': 'legacy-token'},
-            {'Storage-Api-Token': 'legacy-token'},
-            {'KBC-Storage-Token': 'legacy-token'},
-            {'X-Bearer-Token': 'oauth-bearer'},
         ],
     )
-    def test_a_credential_in_any_of_its_spellings_is_recognised(self, headers: dict[str, str]) -> None:
+    def test_an_authorization_header_is_recognised(self, headers: dict[str, str]) -> None:
         assert carries_a_credential(Headers(headers))
 
     @pytest.mark.parametrize(
@@ -87,6 +82,9 @@ class TestWhatCountsAsACredential:
             {'X-Storage-Api-Url': STACK, 'X-Branch-Id': '123'},
             # An empty Authorization is the client sending nothing, not sending a credential.
             {'Authorization': ''},
+            # The old credential spellings are ignored, not credentials.
+            {'X-Storage-Api-Token': 'legacy-token'},
+            {'X-Bearer-Token': 'oauth-bearer'},
         ],
     )
     def test_an_ordinary_request_is_not_mistaken_for_one(self, headers: dict[str, str]) -> None:
@@ -98,15 +96,14 @@ class TestTheEndpointLendsNothing:
     door -- but everything the *server* would otherwise hand a session that asked for nothing."""
 
     def test_the_servers_own_token_does_not_become_the_anonymous_callers(self) -> None:
-        # A KBC_STORAGE_TOKEN in the pod's environment is the operator's credential. Serving it to
+        # A token the server itself holds (a local login) is the operator's credential. Serving it to
         # an unauthenticated caller would hand a stranger the operator's projects.
-        server_config = Config(storage_api_url=STACK, storage_token='the-operators-own-token')
+        server_config = Config(storage_api_url=STACK, bearer_token='the-operators-own-token')
 
         config = SessionStateMiddleware.apply_request_config(
             _request(anonymous=True), server_config, own_stack_storage_api_url=STACK
         )
 
-        assert config.storage_token is None
         assert config.bearer_token is None
         # ...while the stack URL, which is not a credential and which `create_project` needs, stays.
         assert config.storage_api_url == STACK
@@ -114,13 +111,13 @@ class TestTheEndpointLendsNothing:
     def test_the_same_request_on_the_authenticated_endpoint_keeps_it(self) -> None:
         # The stripping must be a property of the endpoint, not of having no headers: /mcp with a
         # server-configured token is an ordinary single-tenant deployment and keeps working.
-        server_config = Config(storage_api_url=STACK, storage_token='the-operators-own-token')
+        server_config = Config(storage_api_url=STACK, bearer_token='the-operators-own-token')
 
         config = SessionStateMiddleware.apply_request_config(
             _request(anonymous=False), server_config, own_stack_storage_api_url=STACK
         )
 
-        assert config.storage_token == 'the-operators-own-token'
+        assert config.bearer_token == 'the-operators-own-token'
 
     def test_a_project_pin_goes_too(self) -> None:
         # `project_id` picks which project a credential is narrowed to; with no credential it can
@@ -187,26 +184,26 @@ class TestTheCredentialInvariant:
     place an anonymous request is allowed to acquire a token."""
 
     def test_the_provisioned_credential_is_the_one_it_may_hold(self) -> None:
-        config = Config(storage_api_url=STACK, storage_token='kbc_at_provisioned')
+        config = Config(storage_api_url=STACK, bearer_token='kbc_at_provisioned')
         assert only_provisioned_credential(config, 'sess-1') == 'kbc_at_provisioned'
 
     def test_no_credential_at_all_is_fine(self) -> None:
         assert only_provisioned_credential(Config(storage_api_url=STACK), None) is None
 
     def test_a_credential_without_a_handle_fails_the_request(self) -> None:
-        config = Config(storage_api_url=STACK, storage_token='somebody-elses-token')
+        config = Config(storage_api_url=STACK, bearer_token='somebody-elses-token')
         with pytest.raises(AnonymousCredentialLeak, match='without holding a provisioned'):
             only_provisioned_credential(config, None)
 
     def test_swapping_the_credential_afterwards_fails_the_request(self) -> None:
         # What `_resolve_local_tokens` used to do on a non-deployed server: read the provisioned
         # `kbc_at_` token as an ordinary local session and refresh it from the host's own login.
-        config = Config(storage_api_url=STACK, storage_token='the-operators-own-token')
+        config = Config(storage_api_url=STACK, bearer_token='the-operators-own-token')
         with pytest.raises(AnonymousCredentialLeak, match='replaced after'):
             credential_unchanged(config, 'kbc_at_provisioned')
 
     def test_keeping_it_passes(self) -> None:
-        credential_unchanged(Config(storage_api_url=STACK, storage_token='kbc_at_p'), 'kbc_at_p')
+        credential_unchanged(Config(storage_api_url=STACK, bearer_token='kbc_at_p'), 'kbc_at_p')
 
 
 class TestTheLocalLoginIsNeverBorrowed:
@@ -219,12 +216,12 @@ class TestTheLocalLoginIsNeverBorrowed:
     async def test_an_anonymous_session_does_not_reach_the_login_store(self, monkeypatch) -> None:
         get_access_token = AsyncMock(return_value='the-operators-own-token')
         monkeypatch.setattr('keboola_mcp_server.mcp.get_access_token', get_access_token)
-        config = Config(storage_api_url=STACK, storage_token='kbc_at_provisioned')
+        config = Config(storage_api_url=STACK, bearer_token='kbc_at_provisioned')
         scope = SessionScope(project_ids=[4321], confirmed=True, provisioned_session_id='sess-1')
 
         resolved, _ = await SessionStateMiddleware._resolve_local_tokens(config, scope, anonymous=True)
 
-        assert resolved.storage_token == 'kbc_at_provisioned'
+        assert resolved.bearer_token == 'kbc_at_provisioned'
         get_access_token.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -233,11 +230,11 @@ class TestTheLocalLoginIsNeverBorrowed:
         # with the same kind of token still gets its login refreshed.
         get_access_token = AsyncMock(return_value='kbc_at_refreshed')
         monkeypatch.setattr('keboola_mcp_server.mcp.get_access_token', get_access_token)
-        config = Config(storage_api_url=STACK, storage_token='kbc_at_local')
+        config = Config(storage_api_url=STACK, bearer_token='kbc_at_local')
 
         resolved, _ = await SessionStateMiddleware._resolve_local_tokens(config, None)
 
-        assert resolved.storage_token == 'kbc_at_refreshed'
+        assert resolved.bearer_token == 'kbc_at_refreshed'
         get_access_token.assert_awaited_once()
 
 
@@ -468,7 +465,7 @@ class TestANewcomerWithNoAccount:
 
         # The session the project was created in had no credential of its own...
         assert captured
-        assert all(c.storage_token is None for c in captured)
+        assert all(c.bearer_token is None for c in captured)
         # ...and the credentials it produced went to the store, not to the caller.
         [session] = store.sessions.values()
         assert session.kbc_access_token == 'kbc_at_provisioned_secret'
@@ -493,11 +490,11 @@ class TestANewcomerWithNoAccount:
             with contextlib.suppress(Exception):
                 await client.call_tool('get_project_info', {'scope_token': scope_token})
 
-        signed_in = [c for c in captured if c.storage_token]
+        signed_in = [c for c in captured if c.bearer_token]
         assert signed_in, 'the handle did not resolve into the provisioned credential'
-        assert signed_in[0].storage_token == 'kbc_at_provisioned_secret'
+        assert signed_in[0].bearer_token == 'kbc_at_provisioned_secret'
         assert signed_in[0].project_id == str(self.PROJECT_ID)
-        assert all(c.storage_token != 'the-operators-own-token' for c in captured)
+        assert all(c.bearer_token != 'the-operators-own-token' for c in captured)
 
     @pytest.mark.asyncio
     async def test_a_claimed_project_says_so_instead_of_internal_server_error(

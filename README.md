@@ -240,9 +240,9 @@ switch to `/mcp` and sign in with the account that now owns it.
 
 #### Authenticating without a browser
 
-For containers or CI where a browser login isn't possible, provide a Keboola programmatic token (`kbc_at_…` access token or `kbc_pat_…` [personal access token](https://help.keboola.com/management/project/tokens/)) directly — set `KBC_STORAGE_TOKEN` (env var) or send the `X-StorageAPI-Token` header — together with `KBC_PROJECT_ID` (or the `X-KBC-ProjectId` header) to select the project. On HTTP transports these can be supplied per request as headers, so each request carries its own credentials.
+The server takes a credential from exactly three places: the session saved by `login`, an OAuth login (remote server), or, over HTTP, an `Authorization: Bearer <token>` header on each request, where `<token>` is a Keboola programmatic token (`kbc_at_…` access token or `kbc_pat_…` [personal access token](https://help.keboola.com/management/project/tokens/)). Send `X-KBC-ProjectId` (or set `KBC_PROJECT_ID`) to select the project. There is no environment variable, command-line argument or `X-StorageAPI-Token` header for a token, and a bare per-project Storage API token is **not accepted**.
 
-A bare per-project Storage API token is **no longer accepted** and is refused when the session is built. Create a personal access token with `keboola-mcp-server login --api-url <stack-url> --pat`, or sign in with `keboola-mcp-server login`. A service user with a password and TOTP can sign in without a browser with `POST /v1/auth/login` followed by `POST /v1/auth/mfa` (see `integtests/service_login.py` for a worked example).
+For containers or CI where a browser login isn't possible, run the server over HTTP and send the headers with each request, or create a personal access token with `keboola-mcp-server login --api-url <stack-url> --pat`. A service user with a password and TOTP can sign in without a browser with `POST /v1/auth/login` followed by `POST /v1/auth/mfa` (see `integtests/service_login.py` for a worked example).
 
 ### KBC_WORKSPACE_ID
 
@@ -440,7 +440,7 @@ uvx keboola_mcp_server --transport streamable-http
 
 ### Option D: Using Docker
 
-A container can't open a browser, so authenticate with a token (see [Authenticating without a browser](#authenticating-without-a-browser)): set `KBC_STORAGE_TOKEN` to a Keboola programmatic (`kbc_at_`/`kbc_pat_`) token and `KBC_PROJECT_ID` to the target project. (Over HTTP you can instead pass `X-StorageAPI-Token` / `X-KBC-ProjectId` headers per request and omit these.)
+A container can't open a browser, so it starts without a credential and each HTTP request brings its own: send `Authorization: Bearer <kbc_at_/kbc_pat_ token>` and `X-KBC-ProjectId: <project id>` (see [Authenticating without a browser](#authenticating-without-a-browser)).
 
 ```shell
 docker pull keboola/mcp-server:latest
@@ -451,8 +451,6 @@ docker run \
   -it \
   -p 127.0.0.1:8000:8000 \
   -e KBC_STORAGE_API_URL="https://connection.YOUR_REGION.keboola.com" \
-  -e KBC_STORAGE_TOKEN="YOUR_KEBOOLA_TOKEN" \
-  -e KBC_PROJECT_ID="YOUR_PROJECT_ID" \
   -e KBC_BRANCH_ID="YOUR_BRANCH_ID_OPTIONAL" \
   keboola/mcp-server:latest \
   --transport streamable-http \

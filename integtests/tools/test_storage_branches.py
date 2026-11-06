@@ -365,7 +365,6 @@ async def _build_context(
     """Build an MCP context bound to a specific branch (or the default branch when None)."""
     keboola_client = KeboolaClient(
         storage_api_url=branch_project.storage_api_url,
-        legacy_storage_token=branch_project.storage_api_token,
         bearer_token=branch_project.bearer_token,
         # Programmatic tokens need the project they are meant for (a Storage token starts with its project id).
         headers={
@@ -379,7 +378,7 @@ async def _build_context(
 
     mcp_config = Config(
         storage_api_url=branch_project.storage_api_url,
-        storage_token=branch_project.bearer_token,
+        bearer_token=branch_project.bearer_token,
     )
     ctx = mocker.MagicMock(Context)
     ctx.session = mocker.MagicMock(ServerSession)

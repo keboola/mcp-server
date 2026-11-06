@@ -2,9 +2,9 @@
 
 Linear: [AI-3774](https://linear.app/keboola/issue/AI-3774/deprecate-legacy-non-programmatic-storage-api-token-as-an-accepted-mcp)
 
-> Revision 2. Revision 1 proposed only a log-only deprecation warning and listed rejection as out of scope.
-> The login flows have since become the supported way to authenticate, so this revision makes rejection the
-> goal, with the rollout conditions below.
+> Revision 3. Revision 1 proposed only a log-only deprecation warning; revision 2 made rejection the goal but kept
+> the inbound `storage_token` names and the per-project token exchange. This revision removes both: the server holds
+> one programmatic token per session and sends it as a Bearer to every Keboola service.
 
 ## Problem
 
@@ -21,17 +21,19 @@ revocation model, no user identity, no multi-project support, and the multi-proj
 (`bearer_token is None`, "legacy header", `is_programmatic_token(...)` checks), and the integration tests and CI
 keep long-lived per-project tokens in repository secrets.
 
-**Not in scope, and must not be lost:** the legacy Storage token *format* does not go away.
-`StorageTokenResolver` (`clients/auth_bridge.py`) exchanges a programmatic token *into* a per-project Storage
-token for downstream services (jobs queue, AI service, sync actions) that only understand that format, and
-`KeboolaClient.__init__` still takes it as `legacy_storage_token`. The change is about what an **external caller**
-may present to this server.
+Downstream services (jobs queue, AI service, sync actions) used to receive a per-project Storage token that
+`StorageTokenResolver` exchanged the programmatic token into, because they re-sent the credential to Storage as
+`X-StorageApi-Token`. They accept the programmatic token as a Bearer together with `X-KBC-ProjectId`, so the exchange,
+`legacy_storage_token` and the second header format are gone. If a service still refuses the Bearer, that is a defect
+of that service to fix there, not a reason to keep a second token in this server.
 
 ## Required Behavior
 
 | Scenario | Required behavior |
 | --- | --- |
-| A session is built from a token that is not `kbc_at_`/`kbc_pat_` (any path: CLI arg, env var, `X-StorageAPI-Token`, `Authorization`) | Refused with an error naming the supported alternatives. The message never contains token material. |
+| `KeboolaClient.create` is given a token that is not `kbc_at_`/`kbc_pat_` | Refused with an error naming the supported alternatives. The message never contains token material. |
+| A request carries a non-programmatic `Authorization: Bearer` value | Not used as the session token (only a `kbc_at_`/`kbc_pat_` Bearer is). The session starts without a credential, where tools say how to get one (`login`, `create_project`). |
+| A token is passed as `--storage-token`, `KBC_STORAGE_TOKEN`, `X-StorageAPI-Token` (or any other `X-*` header, alias or environment spelling) | Not read at all. The session token comes only from `Authorization: Bearer`, the local `login` store or an OAuth login (`Config.bearer_token` is `internal`). |
 | A session is built from a programmatic token, an OAuth-exchanged session, a local `login` session, or a provisioned session | Unchanged. |
 | Multi-project fan-out (`client_for_project`) | Unchanged; it already builds clients from scoped programmatic tokens through the same factory. |
 | Integration tests and the release smoke test | Authenticate as a service user through the login flow, with no legacy token ever handed to the server under test. |
@@ -59,8 +61,13 @@ also why the version bump is major.
    raises `ValueError(LEGACY_TOKEN_REJECTED_MESSAGE)` when `is_programmatic_token(storage_token)` is false. The
    `bearer_token` parameter of `create` is deleted: it was only meaningful next to a legacy token and was
    overwritten for a programmatic one. A `Bearer ` prefix is still tolerated, a leading space is not.
-2. **`mcp.py`:** the `project_id if is_programmatic_token(...) else None` conditional in `create_session_state` is
-   gone (always programmatic past the factory).
+2. **One token slot.** `Config.storage_token` and the unused `Config.bearer_token` are one field, `bearer_token`,
+   marked `internal` so `Config._read_options` never fills it from the environment, CLI arguments or headers. The
+   `--storage-token` argument is removed. `KeboolaClient.create(bearer_token=...)` and `KeboolaClient(bearer_token=...)`
+   take the same value, and every service client sends it as `Authorization: Bearer` (`RawKeboolaClient` has no
+   `X-StorageAPI-Token` branch). `StorageTokenResolver`, `StorageTokenExchangeError`, `ServerState.storage_token_resolver`,
+   the `token_resolver` and `project_id` parameters of `create` / `create_session_state`, `legacy_storage_token` and
+   the `queue_family_token` choice are deleted. `OAuthSessionExchanger` stays.
 3. **Tests that used fake legacy tokens** (`test-token`, `SAPI_1234`, ...) switch to `kbc_at_...` values. Tests of the
    legacy branch become rejection tests: parametrized over bare, `Bearer`-prefixed, numeric-format and
    wrong-prefix tokens, asserting the message does not echo the token and the resolver is never called.
@@ -73,22 +80,23 @@ also why the version bump is major.
    the same way and hands the container the token through the environment, never as an argument.
 5. **Docs:** `README.md` and `integtests/README.md`.
 
-### What stays on legacy tokens (deliberately, this PR)
+### What still uses a per-project token (test fixtures only)
 
-The integration-test **fixtures' own direct Storage API calls** (project lock, cleanup, test data via `kbcstorage`,
-and tests that build `KeboolaClient(legacy_storage_token=...)` directly) keep the per-project pool tokens. They are
-not an MCP credential and never reach `create`. Moving them to login-minted tokens depends on whether Storage
-accepts a programmatic token on those calls and is to be verified on the canary stack first (follow-up).
+The integration-test **fixtures' own direct Storage API calls** (the project lock, cleanup and test data through
+`kbcstorage`, built from the pool `INTEGTEST_STORAGE_TOKENS`) still use per-project Storage tokens with
+`X-StorageApi-Token`. They are not an MCP credential and never reach the server under test. Moving them to
+login-minted programmatic tokens needs `kbcstorage` replaced by a client that sends `Authorization: Bearer`, new pool
+secrets and a project-ID pool in place of the token pool; it is a separate change.
 
-### Inventory: what each legacy-token reference is
+### Inventory: what each legacy-token reference was
 
 | Bucket | Examples | Action |
 | --- | --- | --- |
-| Transport field | `Config.storage_token`, `--storage-token`, `KBC_STORAGE_TOKEN`, `X-StorageAPI-Token` header: they also carry `kbc_at_`/`kbc_pat_` | Keep |
-| Legacy-acceptance branch / test | `create()` legacy pass-through and "separate OAuth bearer" cases, `test_local_legacy_token_keeps_legacy_header`, the `sapi` mode in `test_pat_multiproject.py`, `INTEGTEST_STORAGE_PAT`, the `bearer_token` argument of `create` | Deleted |
-| Internal legacy format | `StorageTokenResolver`, `KeboolaClient.legacy_storage_token`, the legacy header to jobs queue / AI service / sync actions | Keep |
+| Inbound transport | `Config.storage_token`, `--storage-token`, `KBC_STORAGE_TOKEN`, `X-StorageAPI-Token` and its aliases | Deleted; one internal `Config.bearer_token` |
+| Legacy-acceptance branch / test | `create()` legacy pass-through and "separate OAuth bearer" cases, `test_local_legacy_token_keeps_legacy_header`, the `sapi` mode in `test_pat_multiproject.py`, `INTEGTEST_STORAGE_PAT` | Deleted |
+| Internal legacy format | `StorageTokenResolver`, `KeboolaClient.legacy_storage_token`, the legacy header to jobs queue / AI service / sync actions, the `X-StorageAPI-Token` branch of `RawKeboolaClient` | Deleted |
 | Data App runtime | `resources/data_app/*_query_data_code.py` (they call Storage/Query, not this server) | Keep |
-| Dead once only programmatic tokens are accepted | `bearer_token` is now a required `KeboolaClient` argument (the "no bearer" branches in `KeboolaClient.__init__` and `workspace.py` are gone); the `is_programmatic_token(client.bearer_token)` guards in `mcp.py` / `tools/project.py`; `_is_oauth_authenticated` and the `is_oauth` argument of `authorize_tool_call`; the role-dependent `update_flow`/`modify_flow` choice and the admin/share-only merge-request writes (the Storage API enforces the role itself); the legacy-token sentence in the server instructions | Deleted, in a separate commit |
+| Dead once only programmatic tokens are accepted | `bearer_token` is a required `KeboolaClient` argument; the `is_programmatic_token(client.bearer_token)` guards; `_is_oauth_authenticated` and the `is_oauth` argument of `authorize_tool_call`; the role-dependent `update_flow`/`modify_flow` choice and the admin/share-only merge-request writes; the legacy-token sentence in the server instructions | Deleted |
 
 ### Consequence worth a decision
 
@@ -120,14 +128,12 @@ removing it is a separate change.
 
 ## Scope
 
-In scope: factory rejection, `bearer_token` parameter removal, test conversion and deletion, the service-user login
+In scope: factory rejection, removal of the resolver, `legacy_storage_token` and the inbound token names, test conversion and deletion, the service-user login
 helper, CI/release workflow changes, README/integtests README, major version bump + `uv lock`.
 
-Out of scope: removing `StorageTokenResolver` or `legacy_storage_token`; removing the `update_flow` tool and its
-preview-route entry (a follow-up that needs the UI and Kai); renaming the inbound `storage_token` names, which stay
-as the transport for programmatic tokens; migrating the integtest fixtures' direct Storage calls to
-login-minted tokens; the Kai UI/agent and desktop-assistant migrations (owned by their repos); KaiBench's static
-token, which goes through Kai and is covered by the Kai migration.
+Out of scope: removing the `update_flow` tool and its preview-route entry (a follow-up that needs the UI and Kai);
+migrating the integtest fixtures' direct Storage calls to login-minted tokens; the Kai UI/agent and desktop-assistant
+migrations (owned by their repos); KaiBench's static token, which goes through Kai and is covered by the Kai migration.
 
 ## Testing / Verification
 
@@ -139,5 +145,7 @@ token, which goes through Kai and is covered by the Kai migration.
    the real service user (confirms `/v1/auth/login` + `/v1/auth/mfa` work for it); run `tox -e integtests`; run the
    release smoke test locally with the produced token (`tests/docker/ci.sh`), which also confirms a project-scoped
    token plus `KBC_PROJECT_ID` is enough for a container session. None of these has been run yet.
-4. Manual: `KBC_STORAGE_TOKEN=<bare token>` is refused with the documented message; `kbc_at_` / `kbc_pat_` and a
-   stored `login` session still work.
+4. Manual: `KBC_STORAGE_TOKEN=<any token>` and `--storage-token` have no effect (the session starts without a
+   credential); `Authorization: Bearer kbc_at_…` with `X-KBC-ProjectId`, and a stored `login` session, work for every
+   tool including `run_job`, `docs_query` and sync actions (the jobs queue, AI service and sync actions now get the
+   Bearer).

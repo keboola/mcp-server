@@ -32,8 +32,8 @@ from urllib.parse import urlparse
 
 import httpx
 
-from keboola_mcp_server.clients.auth_bridge import strip_bearer
 from keboola_mcp_server.clients.base import normalize_storage_api_url
+from keboola_mcp_server.config import strip_bearer
 
 try:
     import fcntl

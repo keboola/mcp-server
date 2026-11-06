@@ -83,10 +83,7 @@ class RawKeboolaClient:
             'Accept-Encoding': 'gzip',
         }
         if api_token:
-            if api_token.startswith('Bearer '):
-                self.headers['Authorization'] = api_token
-            else:
-                self.headers['X-StorageAPI-Token'] = api_token
+            self.headers['Authorization'] = api_token
         self.timeout = timeout or httpx.Timeout(connect=5.0, read=60.0, write=10.0, pool=5.0)
         # Store retry config, not the transport - transports cannot be shared across concurrent AsyncClient instances
         self._retry = Retry(

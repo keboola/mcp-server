@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import os
 import random
@@ -7,7 +8,9 @@ import subprocess
 import time
 from collections.abc import AsyncGenerator, Iterable
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any, Literal, cast
+from urllib.parse import urlparse
 
 import pytest
 from fastmcp import Client
@@ -17,7 +20,6 @@ from mcp.types import TextContent
 from integtests.conftest import (
     DEV_PROJECT_ID_ENV_VAR,
     DEV_STORAGE_API_URL_ENV_VAR,
-    DEV_STORAGE_TOKEN_ENV_VAR,
     DEV_WORKSPACE_SCHEMA_ENV_VAR,
     ConfigDef,
 )
@@ -35,6 +37,15 @@ LOG = logging.getLogger(__name__)
 HttpTransportStr = Literal['streamable-http', 'http-compat']
 
 
+def _login_home(home: Path, storage_api_url: str, token: str) -> Path:
+    """A throwaway HOME whose `login` store holds `token`: the only way to hand a token to a stdio server."""
+    store = home / '.keboola' / 'mcp' / 'credentials.json'
+    store.parent.mkdir(parents=True)
+    entry = {'access_token': token, 'refresh_token': 'unused', 'expires_at': time.time() + 3600}
+    store.write_text(json.dumps({f'{urlparse(storage_api_url).hostname}::default': entry}))
+    return home
+
+
 @pytest.mark.asyncio
 async def test_stdio_setup(
     configs: list[ConfigDef],
@@ -42,6 +53,7 @@ async def test_stdio_setup(
     project_lock: AcquiredProject,
     workspace_schema: str,
     storage_api_url: str,
+    tmp_path: Path,
 ):
     assert mcp_token is not None
     assert workspace_schema is not None
@@ -54,14 +66,13 @@ async def test_stdio_setup(
             'keboola_mcp_server',
             '--api-url',
             storage_api_url,
-            '--storage-token',
-            mcp_token,
             '--workspace-schema',
             workspace_schema,
         ],
         env={
-            'KBC_PROJECT_ID': project_lock.endpoint.project_id
-        },  # make sure no env vars are passed from the test environment
+            'KBC_PROJECT_ID': project_lock.endpoint.project_id,
+            'HOME': str(_login_home(tmp_path, storage_api_url, mcp_token)),
+        },  # make sure no other env vars are passed from the test environment
     )
     component_config = configs[0]
     async with Client(transport) as client:
@@ -87,7 +98,7 @@ async def test_remote_setup(
     for url in _run_server_remote(storage_api_url, transport):
         # test both cases: with headers and without headers using query params
         headers = {
-            'storage_token': mcp_token,
+            'Authorization': f'Bearer {mcp_token}',
             'project_id': project_lock.endpoint.project_id,
             'workspace_schema': workspace_schema,
         }
@@ -108,7 +119,7 @@ async def test_http_multiple_clients(
     component_config = configs[0]
     for url in _run_server_remote(storage_api_url, transport):
         headers = {
-            'storage_token': mcp_token,
+            'Authorization': f'Bearer {mcp_token}',
             'project_id': project_lock.endpoint.project_id,
             'workspace_schema': workspace_schema,
             'storage_api_url': storage_api_url,
@@ -149,11 +160,14 @@ async def test_http_multiple_clients_with_different_headers(
     project_id_1 = storage_api_token.split(sep='-')[0]
     project_id_2 = storage_api_token_2.split(sep='-')[0]
     headers = {
-        'client_1': {'storage_token': mcp_token, 'project_id': project_id_1, 'workspace_schema': workspace_schema},
+        'client_1': {
+            'Authorization': f'Bearer {mcp_token}',
+            'project_id': project_id_1,
+            'workspace_schema': workspace_schema,
+        },
         'client_2': {
-            'storage_token': await asyncio.to_thread(
-                project_token, storage_api_url, service_session_token, project_id_2
-            ),
+            'Authorization': 'Bearer '
+            + await asyncio.to_thread(project_token, storage_api_url, service_session_token, project_id_2),
             'project_id': project_id_2,
             'workspace_schema': workspace_schema_2,
         },
@@ -341,7 +355,6 @@ def _run_server_remote(storage_api_url: str, transport: HttpTransportStr) -> Ite
             if name
             not in [
                 DEV_STORAGE_API_URL_ENV_VAR,
-                DEV_STORAGE_TOKEN_ENV_VAR,
                 DEV_PROJECT_ID_ENV_VAR,
                 DEV_WORKSPACE_SCHEMA_ENV_VAR,
                 LOGIN_EMAIL_ENV_VAR,

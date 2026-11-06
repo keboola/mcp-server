@@ -22,7 +22,6 @@ from starlette.requests import Request
 
 from keboola_mcp_server import auth_login
 from keboola_mcp_server.auth_login import TokenSet, save_tokens
-from keboola_mcp_server.clients.auth_bridge import StorageTokenResolver
 from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import DATA_APP_COMPONENT_ID, BranchNotFoundError, KeboolaClient
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
@@ -500,12 +499,8 @@ class TestToolsFilteringMiddleware:
     @pytest.mark.asyncio
     async def test_list_tools_project_scoped_verify_failure_lists_all_tools(self, mcp_context_client) -> None:
         # A verify_token failure at list time must never fail tools/list (#605 disconnect regression).
-        # The guard checks client.bearer_token, not client.legacy_storage_token (PSGO-280): on a deployed
-        # session the latter is already the exchanged per-project legacy token, which would route this
-        # session to the non-programmatic path where a verify failure propagates.
         client = KeboolaClient.from_state(mcp_context_client.session.state)
         client.bearer_token = 'kbc_at_abc'
-        client.legacy_storage_token = 'legacy-storage-token-for-active-project'
         client.project_id = '558'
         client.storage_client.verify_token = AsyncMock(side_effect=RuntimeError('401 Unauthorized'))
         client.metastore_client.list_objects = AsyncMock(return_value=[MagicMock()])
@@ -863,10 +858,12 @@ class TestToolsFilteringMiddleware:
             ),
         ],
     )
+    @pytest.mark.parametrize('role', ['admin', 'developer'])
     async def test_list_tools_filters_merge_request_tools(
         self,
         mcp_context_client,
         keboola_client,
+        role: str,
         features: list[str],
         branch_id: str | None,
         hidden_tools: set[str],
@@ -876,7 +873,7 @@ class TestToolsFilteringMiddleware:
         keboola_client.project_id = '558'
         keboola_client.branch_id = branch_id
         keboola_client.storage_client.verify_token = AsyncMock(
-            return_value={'owner': {'features': features}, 'admin': {'role': 'admin'}}
+            return_value={'owner': {'features': features}, 'admin': {'role': role}}
         )
         tools = [
             _tool('get_merge_requests', read_only=True),
@@ -960,47 +957,6 @@ class TestToolsFilteringMiddleware:
             assert await ToolsFilteringMiddleware().on_call_tool(context, call_next) == 'result'
 
 
-class TestServerStateStorageTokenResolver:
-    """`ServerState.storage_token_resolver` -- PSGO-280 (P1): a fanned-out multi-project call, and
-    every request after it, must reuse one pooled resolver/connection per stack URL rather than
-    handshaking TLS on every single resolve."""
-
-    def test_returns_none_when_not_deployed(self, monkeypatch) -> None:
-        monkeypatch.delenv('KBC_KUBERNETES_TOKEN_PATH', raising=False)
-        server_state = ServerState(config=Config(), runtime_info=ServerRuntimeInfo(transport='stdio'))
-
-        assert server_state.storage_token_resolver('https://connection.keboola.com') is None
-
-    def test_returns_none_without_a_storage_api_url(self, monkeypatch) -> None:
-        monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/secrets/token')
-        server_state = ServerState(config=Config(), runtime_info=ServerRuntimeInfo(transport='http'))
-
-        assert server_state.storage_token_resolver(None) is None
-
-    def test_memoizes_one_resolver_per_stack_url(self, monkeypatch) -> None:
-        monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/secrets/token')
-        server_state = ServerState(config=Config(), runtime_info=ServerRuntimeInfo(transport='http'))
-
-        a1 = server_state.storage_token_resolver('https://connection.keboola.com')
-        a2 = server_state.storage_token_resolver('https://connection.keboola.com')
-        b = server_state.storage_token_resolver('https://connection.other.keboola.com')
-
-        assert a1 is a2
-        assert a1 is not b
-
-    @pytest.mark.asyncio
-    async def test_aclose_closes_every_held_resolver(self, monkeypatch, mocker) -> None:
-        monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/secrets/token')
-        server_state = ServerState(config=Config(), runtime_info=ServerRuntimeInfo(transport='http'))
-        resolver = server_state.storage_token_resolver('https://connection.keboola.com')
-        mocker.patch.object(resolver, 'aclose', mocker.AsyncMock())
-
-        await server_state.aclose()
-
-        resolver.aclose.assert_awaited_once()
-        assert server_state.storage_token_resolver('https://connection.keboola.com') is not resolver
-
-
 class TestSessionStateMiddleware:
     def test_apply_request_config_never_logs_header_values(self, mocker) -> None:
         # Authorization (a live programmatic bearer token) and X-Storage-Api-Token must never
@@ -1034,7 +990,7 @@ class TestSessionStateMiddleware:
     ):
         config = Config(
             storage_api_url='https://connection.test.keboola.com',
-            storage_token='test-token',
+            bearer_token='test-token',
             branch_id='999',
         )
         runtime_info = ServerRuntimeInfo(transport='stdio')
@@ -1058,9 +1014,7 @@ class TestSessionStateMiddleware:
         captured_configs: list[Config] = []
         captured_own_stack_urls: list[str | None] = []
 
-        async def fake_create_session_state(
-            cfg, _runtime_info, readonly=None, *, own_stack_storage_api_url, token_resolver=None
-        ):
+        async def fake_create_session_state(cfg, _runtime_info, readonly=None, *, own_stack_storage_api_url):
             captured_configs.append(cfg)
             captured_own_stack_urls.append(own_stack_storage_api_url)
             return {'fake': 'state'}
@@ -1083,60 +1037,6 @@ class TestSessionStateMiddleware:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ('method', 'expect_resolver'),
-        [
-            ('tools/list', False),
-            ('resources/list', False),
-            ('prompts/list', False),
-            ('tools/call', True),
-        ],
-        ids=['tools_list', 'resources_list', 'prompts_list', 'tools_call'],
-    )
-    async def test_on_request_gates_token_resolver_by_is_list(
-        self, monkeypatch, method: str, expect_resolver: bool
-    ) -> None:
-        # PSGO-280 (P1): capability-discovery requests (/list) must add no Connection auth
-        # round-trips (see the is_list comment in on_request) -- no resolver means no auth-bridge
-        # exchange when KeboolaClient.create later builds the client.
-        monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/secrets/token')
-        config = Config(storage_api_url='https://connection.test.keboola.com', storage_token='kbc_at_abc')
-        runtime_info = ServerRuntimeInfo(transport='stdio')
-        server_state = ServerState(config=config, runtime_info=runtime_info)
-
-        session = SimpleNamespace(state={})
-        ctx = MagicMock(spec=Context)
-        ctx.session = session
-        ctx.request_context.lifespan_context = server_state
-
-        context = SimpleNamespace(message=SimpleNamespace(), method=method, fastmcp_context=ctx)
-
-        async def call_next(_):
-            return object()
-
-        captured_resolvers: list[StorageTokenResolver | None] = []
-
-        async def fake_create_session_state(
-            cfg, _runtime_info, readonly=None, *, own_stack_storage_api_url, token_resolver=None
-        ):
-            captured_resolvers.append(token_resolver)
-            return {'fake': 'state'}
-
-        middleware = SessionStateMiddleware()
-
-        with (
-            patch.object(middleware, 'create_session_state', side_effect=fake_create_session_state),
-            patch('keboola_mcp_server.mcp.get_http_request_or_none', return_value=None),
-        ):
-            await middleware.on_request(context, call_next)
-
-        assert len(captured_resolvers) == 1
-        if expect_resolver:
-            assert isinstance(captured_resolvers[0], StorageTokenResolver)
-        else:
-            assert captured_resolvers[0] is None
-
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize(
         ('scope', 'expected_readonly'),
         [
             (None, None),
@@ -1148,7 +1048,7 @@ class TestSessionStateMiddleware:
     async def test_on_request_threads_scope_read_only_into_session_state(self, scope, expected_readonly) -> None:
         # Security hardening RFC increment: a read-only confirmed scope must be enforced on the
         # base session client too, not just relied on via the (possibly-absent) scoped_token.
-        config = Config(storage_api_url='https://connection.test.keboola.com', storage_token='kbc_at_x')
+        config = Config(storage_api_url='https://connection.test.keboola.com', bearer_token='kbc_at_x')
         server_state = ServerState(config=config, runtime_info=ServerRuntimeInfo(transport='stdio'))
         session = SimpleNamespace(state={})
         ctx = MagicMock(spec=Context)
@@ -1162,9 +1062,7 @@ class TestSessionStateMiddleware:
 
         captured_readonly = []
 
-        async def fake_create_session_state(
-            cfg, _runtime_info, readonly=None, *, own_stack_storage_api_url, token_resolver=None
-        ):
+        async def fake_create_session_state(cfg, _runtime_info, readonly=None, *, own_stack_storage_api_url):
             captured_readonly.append(readonly)
             return {}
 
@@ -1186,7 +1084,7 @@ class TestSessionStateMiddleware:
             # No Storage API URL in the headers: the server's own stack is used.
             (
                 'https://connection.keboola.com',
-                {'X-Storage-Api-Token': 'header-token'},
+                {'X-Conversation-Id': '1234'},
                 'https://connection.keboola.com',
             ),
             # The expected case: the caller asks for the very stack this server runs on.
@@ -1249,7 +1147,7 @@ class TestSessionStateMiddleware:
         expected_storage_api_url: str,
     ):
         """A request may not steer the server to a Keboola stack other than its own."""
-        config = Config(storage_api_url=server_storage_api_url, storage_token='server-token')
+        config = Config(storage_api_url=server_storage_api_url, bearer_token='server-token')
         http_rq = MagicMock(spec=Request)
         http_rq.headers = headers
         http_rq.scope = {}
@@ -1260,20 +1158,20 @@ class TestSessionStateMiddleware:
 
         assert applied.storage_api_url == expected_storage_api_url
         # Only the Storage API URL is pinned; the other per-request headers keep working.
-        assert applied.storage_token == headers.get('X-Storage-Api-Token', 'server-token')
+        assert applied.bearer_token == 'server-token'
         assert applied.branch_id == headers.get('X-Branch-Id')
 
     @pytest.mark.parametrize(
         ('headers', 'expected_storage_token'),
         [
-            # A programmatic bearer token arrives only via Authorization -- no Storage-token
-            # header/alias reaches it, so apply_request_config must read it directly.
+            # A programmatic bearer token arrives only via Authorization -- no header/alias maps to the
+            # token, so apply_request_config must read it directly.
             ({'Authorization': 'Bearer kbc_at_abc'}, 'kbc_at_abc'),
             ({'Authorization': 'Bearer kbc_pat_abc'}, 'kbc_pat_abc'),
             # Case-insensitive "bearer" scheme, matching is_programmatic_token/strip_bearer.
             ({'Authorization': 'bearer kbc_at_abc'}, 'kbc_at_abc'),
-            # An explicit Storage-token header always wins; Authorization is never consulted.
-            ({'Authorization': 'Bearer kbc_at_abc', 'X-Storage-Api-Token': 'legacy-token'}, 'legacy-token'),
+            # The old Storage-token header maps to nothing: it neither wins nor is forwarded.
+            ({'Authorization': 'Bearer kbc_at_abc', 'X-Storage-Api-Token': 'legacy-token'}, 'kbc_at_abc'),
             # A non-programmatic Authorization value must never be forwarded as a Storage token.
             ({'Authorization': 'Bearer some-other-oauth-token'}, None),
             ({}, None),
@@ -1282,7 +1180,7 @@ class TestSessionStateMiddleware:
             'bearer_access_token',
             'bearer_pat',
             'lowercase_bearer_scheme',
-            'explicit_storage_token_wins',
+            'old_storage_token_header_ignored',
             'non_programmatic_bearer_ignored',
             'no_authorization_header',
         ],
@@ -1297,7 +1195,7 @@ class TestSessionStateMiddleware:
 
         applied = SessionStateMiddleware.apply_request_config(http_rq, config, own_stack_storage_api_url=None)
 
-        assert applied.storage_token == expected_storage_token
+        assert applied.bearer_token == expected_storage_token
 
     @pytest.mark.parametrize(
         ('server_kwargs', 'headers', 'expected_workspace_id', 'expected_workspace_schema', 'expect_warning'),
@@ -1346,7 +1244,7 @@ class TestSessionStateMiddleware:
         and `workspace_schema` are checked/restored together, not per-field: the same
         silent-override risk applies to either kind of server pin (AI-3669 review, mcp.py:320
         thread)."""
-        config = Config(storage_token='server-token', **server_kwargs)
+        config = Config(bearer_token='server-token', **server_kwargs)
         http_rq = MagicMock(spec=Request)
         http_rq.headers = headers
         http_rq.scope = {}
@@ -1363,7 +1261,7 @@ class TestSessionStateMiddleware:
         from mcp.server.auth.middleware.bearer_auth import AuthenticatedUser
         from starlette.requests import Request
 
-        from keboola_mcp_server.clients.auth_bridge import is_programmatic_token
+        from keboola_mcp_server.config import is_programmatic_token
         from keboola_mcp_server.oauth import ProxyAccessToken
 
         access_token = ProxyAccessToken(
@@ -1379,8 +1277,8 @@ class TestSessionStateMiddleware:
 
         out_config = SessionStateMiddleware.apply_request_config(http_rq, config, own_stack_storage_api_url=None)
 
-        assert out_config.storage_token == 'kbc_at_exchanged'
-        assert is_programmatic_token(out_config.storage_token)
+        assert out_config.bearer_token == 'kbc_at_exchanged'
+        assert is_programmatic_token(out_config.bearer_token)
 
     @pytest.mark.asyncio
     async def test_on_request_persists_remint_of_expiring_oauth_scoped_token(self, monkeypatch) -> None:
@@ -1457,7 +1355,7 @@ class TestSessionStateMiddleware:
 
         kai_scope_store = AsyncMock()
         kai_scope_store.get.return_value = KaiScope(project_ids=[18], read_only=False, confirmed=True)
-        config = Config(storage_api_url='https://connection.test.keboola.com', storage_token='kbc_at_kai')
+        config = Config(storage_api_url='https://connection.test.keboola.com', bearer_token='kbc_at_kai')
         server_state = ServerState(
             config=config,
             runtime_info=ServerRuntimeInfo(transport='http-compat/streamable-http'),
@@ -1471,9 +1369,7 @@ class TestSessionStateMiddleware:
 
         captured_scopes = []
 
-        async def fake_create_session_state(
-            cfg, _runtime_info, readonly=None, *, own_stack_storage_api_url, token_resolver=None
-        ):
+        async def fake_create_session_state(cfg, _runtime_info, readonly=None, *, own_stack_storage_api_url):
             return {}
 
         async def call_next(_):
@@ -1518,7 +1414,7 @@ class TestReadPersistedKaiScope:
     async def test_returns_stored_scope_when_still_reachable(self) -> None:
         from keboola_mcp_server.session_store.kai_scope import KaiScope
 
-        config = Config(storage_api_url='https://connection.test.keboola.com', storage_token='kbc_at_x')
+        config = Config(storage_api_url='https://connection.test.keboola.com', bearer_token='kbc_at_x')
         config = dataclasses.replace(config, conversation_id='conv-1')
         store = AsyncMock()
         store.get.return_value = KaiScope(project_ids=[18], read_only=False, confirmed=True)
@@ -1542,7 +1438,7 @@ class TestReadPersistedKaiScope:
         # gap where only the introspect_token call was wrapped, not the store calls.
         from keboola_mcp_server.session_store import DatabaseUnavailableError
 
-        config = Config(storage_api_url='https://connection.test.keboola.com', storage_token='kbc_at_x')
+        config = Config(storage_api_url='https://connection.test.keboola.com', bearer_token='kbc_at_x')
         config = dataclasses.replace(config, conversation_id='conv-1')
         store = AsyncMock()
         store.get.side_effect = DatabaseUnavailableError('Postgres is unavailable (OSError).')
@@ -1559,7 +1455,7 @@ class TestReadPersistedKaiScope:
     async def test_drops_scope_when_a_project_is_no_longer_reachable(self) -> None:
         from keboola_mcp_server.session_store.kai_scope import KaiScope
 
-        config = Config(storage_api_url='https://connection.test.keboola.com', storage_token='kbc_at_x')
+        config = Config(storage_api_url='https://connection.test.keboola.com', bearer_token='kbc_at_x')
         config = dataclasses.replace(config, conversation_id='conv-1')
         store = AsyncMock()
         store.get.return_value = KaiScope(project_ids=[18, 83], read_only=False, confirmed=True)
@@ -1577,7 +1473,7 @@ class TestReadPersistedKaiScope:
     async def test_added_projects_do_not_invalidate_the_stored_scope(self) -> None:
         from keboola_mcp_server.session_store.kai_scope import KaiScope
 
-        config = Config(storage_api_url='https://connection.test.keboola.com', storage_token='kbc_at_x')
+        config = Config(storage_api_url='https://connection.test.keboola.com', bearer_token='kbc_at_x')
         config = dataclasses.replace(config, conversation_id='conv-1')
         store = AsyncMock()
         store.get.return_value = KaiScope(project_ids=[18], read_only=False, confirmed=True)
@@ -1594,7 +1490,7 @@ class TestReadPersistedKaiScope:
 
     @pytest.mark.asyncio
     async def test_no_stored_row_returns_none(self) -> None:
-        config = Config(storage_api_url='https://connection.test.keboola.com', storage_token='kbc_at_x')
+        config = Config(storage_api_url='https://connection.test.keboola.com', bearer_token='kbc_at_x')
         config = dataclasses.replace(config, conversation_id='conv-1')
         store = AsyncMock()
         store.get.return_value = None
@@ -1609,7 +1505,7 @@ class TestReadPersistedKaiScope:
 
     @pytest.mark.asyncio
     async def test_unresolvable_user_id_returns_none_without_lookup(self) -> None:
-        config = Config(storage_api_url='https://connection.test.keboola.com', storage_token='kbc_at_x')
+        config = Config(storage_api_url='https://connection.test.keboola.com', bearer_token='kbc_at_x')
         config = dataclasses.replace(config, conversation_id='conv-1')
         store = AsyncMock()
 
@@ -1624,7 +1520,7 @@ class TestReadPersistedKaiScope:
 
     @pytest.mark.asyncio
     async def test_introspection_failure_returns_none(self) -> None:
-        config = Config(storage_api_url='https://connection.test.keboola.com', storage_token='kbc_at_x')
+        config = Config(storage_api_url='https://connection.test.keboola.com', bearer_token='kbc_at_x')
         config = dataclasses.replace(config, conversation_id='conv-1')
         store = AsyncMock()
 
@@ -1638,38 +1534,30 @@ class TestReadPersistedKaiScope:
         store.get.assert_not_awaited()
 
 
-class TestCreateSessionStateTokenResolutionWiring:
-    """`create_session_state` no longer performs credential classification or the auth-bridge
-    exchange itself (PSGO-280 follow-up) -- that all moved into `KeboolaClient.create`, which has
-    its own exhaustive coverage in `tests/clients/test_client.py::TestKeboolaClientCreate`. What's
-    left to test here is the wiring: which `project_id`/headers `create_session_state` computes
-    from `config`, and that it forwards whatever `token_resolver` it is given through unchanged.
-    """
+class TestCreateSessionStateWiring:
+    """`create_session_state` hands the credential to `KeboolaClient.create`, which validates it (see
+    `tests/clients/test_client.py::TestKeboolaClientCreate`); what is tested here is the wiring from `config`."""
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize('project_id', [None, '42'], ids=['no_project_id', 'with_project_id'])
-    async def test_project_id_and_header_only_set_for_a_programmatic_token(self, project_id: str | None) -> None:
+    async def test_project_id_header_follows_the_config(self, project_id: str | None) -> None:
         config = Config(
-            storage_api_url='https://connection.keboola.com', storage_token='kbc_at_abc', project_id=project_id
+            storage_api_url='https://connection.keboola.com', bearer_token='kbc_at_abc', project_id=project_id
         )
         runtime_info = ServerRuntimeInfo(transport='http')
 
-        with (
-            patch.object(WorkspaceManager, 'create', AsyncMock(return_value='wsm')),
-            patch('keboola_mcp_server.mcp.KeboolaClient.create', AsyncMock(wraps=KeboolaClient.create)) as create,
-        ):
+        with patch.object(WorkspaceManager, 'create', AsyncMock(return_value='wsm')):
             state = await SessionStateMiddleware.create_session_state(
                 config, runtime_info, own_stack_storage_api_url=None
             )
 
-        assert create.await_args.kwargs['project_id'] == project_id
         client = state[KeboolaClient.STATE_KEY]
         assert client.headers.get('X-KBC-ProjectId') == project_id
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize('token', ['sapi_token_456', 'Bearer sapi_token_456', '123-456-abcdef'])
     async def test_a_legacy_token_is_rejected_without_echoing_it(self, token: str) -> None:
-        config = Config(storage_api_url='https://connection.keboola.com', storage_token=token, project_id='42')
+        config = Config(storage_api_url='https://connection.keboola.com', bearer_token=token, project_id='42')
         runtime_info = ServerRuntimeInfo(transport='http')
 
         with pytest.raises(ValueError, match='no longer accepted') as exc_info:
@@ -1679,52 +1567,15 @@ class TestCreateSessionStateTokenResolutionWiring:
         assert '123-456-abcdef' not in str(exc_info.value)
 
     @pytest.mark.asyncio
-    async def test_forwards_the_given_token_resolver_unchanged(self) -> None:
-        config = Config(storage_api_url='https://connection.keboola.com', storage_token='kbc_at_abc', project_id='42')
-        runtime_info = ServerRuntimeInfo(transport='http')
-        resolver = AsyncMock(spec=StorageTokenResolver)
-        resolver.resolve = AsyncMock(return_value='legacy-storage-token-789')
-
-        with (
-            patch.object(WorkspaceManager, 'create', AsyncMock(return_value='wsm')),
-            patch('keboola_mcp_server.mcp.KeboolaClient.create', AsyncMock(wraps=KeboolaClient.create)) as create,
-        ):
-            await SessionStateMiddleware.create_session_state(
-                config, runtime_info, own_stack_storage_api_url=None, token_resolver=resolver
-            )
-
-        assert create.await_args.kwargs['token_resolver'] is resolver
-
-    @pytest.mark.asyncio
-    async def test_end_to_end_resolves_legacy_token_when_a_resolver_is_given(self) -> None:
-        # One true integration-style test (no mocking KeboolaClient.create itself) confirming the
-        # wiring and the factory actually compose end to end.
-        config = Config(storage_api_url='https://connection.keboola.com', storage_token='kbc_at_abc', project_id='42')
-        runtime_info = ServerRuntimeInfo(transport='http')
-        resolver = AsyncMock(spec=StorageTokenResolver)
-        resolver.resolve = AsyncMock(return_value='legacy-storage-token-789')
-
-        with patch.object(WorkspaceManager, 'create', AsyncMock(return_value='wsm')):
-            state = await SessionStateMiddleware.create_session_state(
-                config, runtime_info, own_stack_storage_api_url=None, token_resolver=resolver
-            )
-
-        client = state[KeboolaClient.STATE_KEY]
-        assert client.bearer_token == 'kbc_at_abc'
-        assert client.legacy_storage_token == 'legacy-storage-token-789'
-        resolver.resolve.assert_awaited_once_with(subject_token='kbc_at_abc', project_id=42)
-
-    @pytest.mark.asyncio
     @pytest.mark.parametrize('has_production_client', [True, False], ids=['falls_back_to_production', 'reraised'])
     async def test_deleted_branch_falls_back_to_the_production_client(self, has_production_client: bool) -> None:
         """A Kai chat keeps sending the branch it was opened on after that branch was merged and deleted: the
         session is served from production and marked, instead of every request failing at the protocol level."""
         config = Config(
-            storage_api_url='https://connection.keboola.com', storage_token='sapi_token_456', branch_id='273'
+            storage_api_url='https://connection.keboola.com', bearer_token='sapi_token_456', branch_id='273'
         )
         production = KeboolaClient(
             storage_api_url='https://connection.keboola.com',
-            legacy_storage_token='sapi_token_456',
             bearer_token='kbc_at_test',
         )
         request = httpx.Request('GET', 'https://connection.keboola.com/v2/storage/dev-branches/273')
@@ -1764,12 +1615,12 @@ class TestMaybeUseStoredSession:
         config = Config(storage_api_url='https://connection.keboola.com')  # no token
         with patch('keboola_mcp_server.mcp.get_access_token', AsyncMock(return_value='kbc_at_stored')):
             out = await SessionStateMiddleware._maybe_use_stored_session(config)
-        assert out.storage_token == 'kbc_at_stored'
+        assert out.bearer_token == 'kbc_at_stored'
 
     @pytest.mark.asyncio
     async def test_existing_token_is_noop(self, monkeypatch) -> None:
         monkeypatch.delenv('KBC_KUBERNETES_TOKEN_PATH', raising=False)
-        config = Config(storage_api_url='https://connection.keboola.com', storage_token='kbc_at_hdr')
+        config = Config(storage_api_url='https://connection.keboola.com', bearer_token='kbc_at_hdr')
         with patch('keboola_mcp_server.mcp.get_access_token', AsyncMock(side_effect=AssertionError('must not read'))):
             out = await SessionStateMiddleware._maybe_use_stored_session(config)
         assert out is config
@@ -1787,7 +1638,7 @@ class TestMaybeUseStoredSession:
             ),
         ):
             out = await SessionStateMiddleware._maybe_use_stored_session(config, refresh=False)
-        assert out.storage_token == 'kbc_at_file'
+        assert out.bearer_token == 'kbc_at_file'
 
     @pytest.mark.asyncio
     async def test_list_request_refreshes_only_an_expired_stored_token(self, monkeypatch) -> None:
@@ -1803,7 +1654,7 @@ class TestMaybeUseStoredSession:
         ):
             out = await SessionStateMiddleware._maybe_use_stored_session(config, refresh=False)
         gat.assert_awaited_once()
-        assert out.storage_token == 'kbc_at_fresh'
+        assert out.bearer_token == 'kbc_at_fresh'
 
     @pytest.mark.asyncio
     async def test_deployed_is_noop(self, monkeypatch) -> None:
@@ -1818,7 +1669,7 @@ class TestMaybeUseStoredSession:
         config = Config(storage_api_url='https://connection.keboola.com')
         with patch('keboola_mcp_server.mcp.get_access_token', AsyncMock(side_effect=RuntimeError('no creds'))):
             out = await SessionStateMiddleware._maybe_use_stored_session(config)
-        assert out.storage_token is None
+        assert out.bearer_token is None
 
 
 class TestReadPersistedLoginScope:
@@ -1828,7 +1679,7 @@ class TestReadPersistedLoginScope:
     @pytest.mark.asyncio
     async def test_returns_confirmed_scope_from_stored_credential(self, monkeypatch) -> None:
         monkeypatch.delenv('KBC_KUBERNETES_TOKEN_PATH', raising=False)
-        config = Config(storage_api_url='https://connection.keboola.com', storage_token='kbc_at_x')
+        config = Config(storage_api_url='https://connection.keboola.com', bearer_token='kbc_at_x')
         stored = SimpleNamespace(project_ids=[18, 83], read_only=True)
         with patch('keboola_mcp_server.mcp.load_tokens', return_value=stored):
             scope = await SessionStateMiddleware._read_persisted_login_scope(config)
@@ -1838,7 +1689,7 @@ class TestReadPersistedLoginScope:
     @pytest.mark.asyncio
     async def test_none_when_credential_predates_the_scoping_choice(self, monkeypatch) -> None:
         monkeypatch.delenv('KBC_KUBERNETES_TOKEN_PATH', raising=False)
-        config = Config(storage_api_url='https://connection.keboola.com', storage_token='kbc_at_x')
+        config = Config(storage_api_url='https://connection.keboola.com', bearer_token='kbc_at_x')
         stored = SimpleNamespace(project_ids=None, read_only=False)
         with patch('keboola_mcp_server.mcp.load_tokens', return_value=stored):
             scope = await SessionStateMiddleware._read_persisted_login_scope(config)
@@ -1848,7 +1699,7 @@ class TestReadPersistedLoginScope:
     @pytest.mark.asyncio
     async def test_none_when_not_local_programmatic(self, monkeypatch) -> None:
         monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/secrets/token')
-        config = Config(storage_api_url='https://connection.keboola.com', storage_token='kbc_at_x')
+        config = Config(storage_api_url='https://connection.keboola.com', bearer_token='kbc_at_x')
         with patch('keboola_mcp_server.mcp.load_tokens', side_effect=AssertionError('must not be called')):
             scope = await SessionStateMiddleware._read_persisted_login_scope(config)
 
@@ -1861,25 +1712,24 @@ class TestResolveLocalTokens:
     @pytest.mark.asyncio
     async def test_deployed_is_noop(self, monkeypatch) -> None:
         monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/secrets/token')
-        config = Config(storage_api_url='https://connection.keboola.com', storage_token='kbc_at_x')
+        config = Config(storage_api_url='https://connection.keboola.com', bearer_token='kbc_at_x')
         out_config, out_scope = await SessionStateMiddleware._resolve_local_tokens(config, None)
         assert out_config is config
         assert out_scope is None
 
     @pytest.mark.asyncio
     async def test_deployed_with_confirmed_scope_applies_active_project_id(self, monkeypatch) -> None:
-        # Deployed sessions skip token refresh/re-minting (the resolver-exchange path in
-        # create_session_state handles that once project_id is known) -- but a confirmed scope's
+        # Deployed sessions skip token refresh/re-minting -- but a confirmed scope's
         # active project id must still be threaded through, or every call after set_project_scope
         # keeps building the active client from the unscoped whole-stack token (PSGO-261 regression:
         # get_accessible_projects worked, every subsequent scoped call 401'd).
         monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/secrets/token')
-        config = Config(storage_api_url='https://connection.keboola.com', storage_token='kbc_at_x')
+        config = Config(storage_api_url='https://connection.keboola.com', bearer_token='kbc_at_x')
         scope = SessionScope(project_ids=[18], scoped_token='kbc_at_scoped', confirmed=True)
         with patch('keboola_mcp_server.mcp.get_access_token', AsyncMock(side_effect=AssertionError('no PKCE store'))):
             out_config, out_scope = await SessionStateMiddleware._resolve_local_tokens(config, scope)
         assert out_config.project_id == '18'
-        assert out_config.storage_token == 'kbc_at_x'  # untouched; resolver-exchange narrows it
+        assert out_config.bearer_token == 'kbc_at_x'  # untouched; X-KBC-ProjectId narrows it
         assert out_scope is scope  # untouched
 
     @pytest.mark.asyncio
@@ -1889,7 +1739,7 @@ class TestResolveLocalTokens:
         # always win -- otherwise a session scoped to project 18 could be silently redirected to
         # whatever project a request header names, via the base (un-swapped) client.
         monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/secrets/token')
-        config = Config(storage_api_url='https://connection.keboola.com', storage_token='kbc_at_x', project_id='7')
+        config = Config(storage_api_url='https://connection.keboola.com', bearer_token='kbc_at_x', project_id='7')
         scope = SessionScope(project_ids=[18], confirmed=True)
         out_config, out_scope = await SessionStateMiddleware._resolve_local_tokens(config, scope)
         assert out_config.project_id == '18'
@@ -1901,7 +1751,7 @@ class TestResolveLocalTokens:
         # set_project_scope, so it silently started 401ing every fanned-out call once it expired,
         # for the rest of the conversation, with no error pointing at the real cause.
         monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/secrets/token')
-        config = Config(storage_api_url='https://connection.keboola.com', storage_token='kbc_at_fresh_oauth')
+        config = Config(storage_api_url='https://connection.keboola.com', bearer_token='kbc_at_fresh_oauth')
         scope = SessionScope(
             project_ids=[18, 83], scoped_token='kbc_at_stale', scoped_expires_at=time.time() - 1, confirmed=True
         )
@@ -1918,7 +1768,7 @@ class TestResolveLocalTokens:
     @pytest.mark.asyncio
     async def test_deployed_scoped_token_not_near_expiry_is_untouched(self, monkeypatch) -> None:
         monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/secrets/token')
-        config = Config(storage_api_url='https://connection.keboola.com', storage_token='kbc_at_fresh_oauth')
+        config = Config(storage_api_url='https://connection.keboola.com', bearer_token='kbc_at_fresh_oauth')
         scope = SessionScope(
             project_ids=[18, 83], scoped_token='kbc_at_live', scoped_expires_at=time.time() + 3600, confirmed=True
         )
@@ -1932,7 +1782,7 @@ class TestResolveLocalTokens:
         # Same failure mode as before this fix (the caller keeps using the stale token and 401s
         # downstream) rather than crashing the request outright.
         monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/secrets/token')
-        config = Config(storage_api_url='https://connection.keboola.com', storage_token='kbc_at_fresh_oauth')
+        config = Config(storage_api_url='https://connection.keboola.com', bearer_token='kbc_at_fresh_oauth')
         scope = SessionScope(
             project_ids=[18], scoped_token='kbc_at_stale', scoped_expires_at=time.time() - 1, confirmed=True
         )
@@ -1944,9 +1794,9 @@ class TestResolveLocalTokens:
         assert out_scope.scoped_token == 'kbc_at_stale'
 
     @pytest.mark.asyncio
-    async def test_legacy_token_is_noop(self, monkeypatch) -> None:
+    async def test_non_programmatic_token_is_left_alone(self, monkeypatch) -> None:
         monkeypatch.delenv('KBC_KUBERNETES_TOKEN_PATH', raising=False)
-        config = Config(storage_api_url='https://connection.keboola.com', storage_token='legacy-sapi-token')
+        config = Config(storage_api_url='https://connection.keboola.com', bearer_token='not-a-programmatic-token')
         out_config, out_scope = await SessionStateMiddleware._resolve_local_tokens(config, None)
         assert out_config is config
         assert out_scope is None
@@ -1954,10 +1804,10 @@ class TestResolveLocalTokens:
     @pytest.mark.asyncio
     async def test_programmatic_no_scope_refreshes_parent(self, monkeypatch) -> None:
         monkeypatch.delenv('KBC_KUBERNETES_TOKEN_PATH', raising=False)
-        config = Config(storage_api_url='https://connection.keboola.com', storage_token='kbc_at_old')
+        config = Config(storage_api_url='https://connection.keboola.com', bearer_token='kbc_at_old')
         with patch('keboola_mcp_server.mcp.get_access_token', AsyncMock(return_value='kbc_at_fresh')):
             out_config, out_scope = await SessionStateMiddleware._resolve_local_tokens(config, None)
-        assert out_config.storage_token == 'kbc_at_fresh'
+        assert out_config.bearer_token == 'kbc_at_fresh'
         assert out_scope is None
 
     @pytest.mark.asyncio
@@ -1965,7 +1815,7 @@ class TestResolveLocalTokens:
         # The default (auto-leased) multi-project scope carries no minted token: it uses the parent
         # token and just sets the active project — no exchange call.
         monkeypatch.delenv('KBC_KUBERNETES_TOKEN_PATH', raising=False)
-        config = Config(storage_api_url='https://connection.keboola.com', storage_token='kbc_at_old')
+        config = Config(storage_api_url='https://connection.keboola.com', bearer_token='kbc_at_old')
         scope = SessionScope(project_ids=[11, 22], read_only=False)
         with (
             patch('keboola_mcp_server.mcp.get_access_token', AsyncMock(return_value='kbc_at_parent')),
@@ -1973,14 +1823,14 @@ class TestResolveLocalTokens:
         ):
             out_config, out_scope = await SessionStateMiddleware._resolve_local_tokens(config, scope)
         exch.assert_not_awaited()
-        assert out_config.storage_token == 'kbc_at_parent'
+        assert out_config.bearer_token == 'kbc_at_parent'
         assert out_config.project_id == '11'  # active project = first in scope
         assert out_scope.scoped_token is None
 
     @pytest.mark.asyncio
     async def test_fresh_scoped_token_is_not_reminted(self, monkeypatch) -> None:
         monkeypatch.delenv('KBC_KUBERNETES_TOKEN_PATH', raising=False)
-        config = Config(storage_api_url='https://connection.keboola.com', storage_token='kbc_at_old')
+        config = Config(storage_api_url='https://connection.keboola.com', bearer_token='kbc_at_old')
         scope = SessionScope(project_ids=[11], scoped_token='kbc_at_live', scoped_expires_at=time.time() + 3600)
         with (
             patch('keboola_mcp_server.mcp.get_access_token', AsyncMock(return_value='kbc_at_parent')),
@@ -1988,12 +1838,12 @@ class TestResolveLocalTokens:
         ):
             out_config, _out_scope = await SessionStateMiddleware._resolve_local_tokens(config, scope)
         exch.assert_not_awaited()
-        assert out_config.storage_token == 'kbc_at_live'
+        assert out_config.bearer_token == 'kbc_at_live'
 
     @pytest.mark.asyncio
     async def test_near_expiry_scoped_token_is_reminted(self, monkeypatch) -> None:
         monkeypatch.delenv('KBC_KUBERNETES_TOKEN_PATH', raising=False)
-        config = Config(storage_api_url='https://connection.keboola.com', storage_token='kbc_at_old')
+        config = Config(storage_api_url='https://connection.keboola.com', bearer_token='kbc_at_old')
         scope = SessionScope(project_ids=[11, 22], scoped_token='kbc_at_stale', scoped_expires_at=time.time() - 1)
         minted = SimpleNamespace(access_token='kbc_at_fresh_scoped', expires_at=time.time() + 900)
         with (
@@ -2003,7 +1853,7 @@ class TestResolveLocalTokens:
             out_config, out_scope = await SessionStateMiddleware._resolve_local_tokens(config, scope)
         exch.assert_awaited_once()
         assert out_scope.scoped_token == 'kbc_at_fresh_scoped'
-        assert out_config.storage_token == 'kbc_at_fresh_scoped'
+        assert out_config.bearer_token == 'kbc_at_fresh_scoped'
 
     @pytest.mark.asyncio
     async def test_bearer_prefixed_token_is_stripped_before_exchange(self, monkeypatch) -> None:
@@ -2011,7 +1861,7 @@ class TestResolveLocalTokens:
         # normalized to bare form; the exchange/introspect helpers add the scheme themselves, so a
         # pre-prefixed value would otherwise become `Authorization: Bearer Bearer …` (PSGO-261).
         monkeypatch.delenv('KBC_KUBERNETES_TOKEN_PATH', raising=False)
-        config = Config(storage_api_url='https://connection.keboola.com', storage_token='Bearer kbc_pat_x')
+        config = Config(storage_api_url='https://connection.keboola.com', bearer_token='Bearer kbc_pat_x')
         scope = SessionScope(project_ids=[11], scoped_token='kbc_at_stale', scoped_expires_at=time.time() - 1)
         minted = SimpleNamespace(access_token='kbc_at_fresh_scoped', expires_at=time.time() + 900)
         exch = AsyncMock(return_value=minted)
@@ -2027,7 +1877,7 @@ class TestResolveLocalTokens:
     @pytest.mark.asyncio
     async def test_autolease_scopes_all_accessible_projects(self, monkeypatch) -> None:
         monkeypatch.delenv('KBC_KUBERNETES_TOKEN_PATH', raising=False)
-        config = Config(storage_api_url='https://connection.keboola.com', storage_token='kbc_at_x')
+        config = Config(storage_api_url='https://connection.keboola.com', bearer_token='kbc_at_x')
         introspection = SimpleNamespace(
             projects=[SimpleNamespace(id=11), SimpleNamespace(id=22), SimpleNamespace(id=33)]
         )
@@ -2042,7 +1892,7 @@ class TestResolveLocalTokens:
     @pytest.mark.asyncio
     async def test_autolease_noop_when_deployed(self, monkeypatch) -> None:
         monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/secrets/token')
-        config = Config(storage_api_url='https://connection.keboola.com', storage_token='kbc_at_x')
+        config = Config(storage_api_url='https://connection.keboola.com', bearer_token='kbc_at_x')
         assert await SessionStateMiddleware._autolease_default_scope(config) is None
 
 
@@ -2190,12 +2040,12 @@ class TestScopeToken:
         # access -- B holds neither of the keys it could have been sealed under.
         monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/secrets/token')
         key = _b64_key(b'\x06')
-        config_a = Config(session_encryption_key=key, storage_token='kbc_at_caller_a')
+        config_a = Config(session_encryption_key=key, bearer_token='kbc_at_caller_a')
         scope = SessionScope(project_ids=[11], scoped_token='kbc_at_victim_scoped', confirmed=True)
-        token = scope.to_token(base64.b64decode(key), aad=resolve_scope_binding_aad(config_a.storage_token))
+        token = scope.to_token(base64.b64decode(key), aad=resolve_scope_binding_aad(config_a.bearer_token))
 
         context = self._call_tool_context({'scope_token': token})
-        config_b = Config(session_encryption_key=key, storage_token='kbc_at_caller_b')
+        config_b = Config(session_encryption_key=key, bearer_token='kbc_at_caller_b')
         with pytest.raises(ScopeTokenUnreadable):
             SessionStateMiddleware._read_scope_from_request(context, config_b, 'oauth-session-b')
 
@@ -2216,7 +2066,7 @@ class TestScopeToken:
 
         # An hour later: same OAuth session, a rotated Keboola access token underneath it.
         context = self._call_tool_context({'scope_token': token})
-        config = Config(session_encryption_key=key, storage_token='kbc_at_rotated')
+        config = Config(session_encryption_key=key, bearer_token='kbc_at_rotated')
         assert SessionStateMiddleware._read_scope_from_request(context, config, 'oauth-session-1') == scope
 
     def test_a_provisioned_handle_is_still_bound_to_its_own_oauth_session(self, monkeypatch) -> None:
@@ -2228,7 +2078,7 @@ class TestScopeToken:
         token = scope.to_token(base64.b64decode(key), aad=resolve_provisioned_binding_aad('oauth-session-1'))
 
         context = self._call_tool_context({'scope_token': token})
-        config = Config(session_encryption_key=key, storage_token='kbc_at_other')
+        config = Config(session_encryption_key=key, bearer_token='kbc_at_other')
         with pytest.raises(ScopeTokenUnreadable):
             SessionStateMiddleware._read_scope_from_request(context, config, 'oauth-session-2')
 
@@ -2411,7 +2261,7 @@ class TestBootstrapSessionState:
     async def test_a_token_without_a_stack_url_is_still_an_error(self) -> None:
         with pytest.raises(ValueError, match='Storage API URL is not provided'):
             await SessionStateMiddleware.create_session_state(
-                Config(storage_token='kbc_at_abc'),
+                Config(bearer_token='kbc_at_abc'),
                 ServerRuntimeInfo(transport='stdio'),
                 own_stack_storage_api_url=None,
             )
@@ -2843,7 +2693,7 @@ class TestUnauthorizedDropsARevokedSession:
     a scope-related 401) is not.
     """
 
-    CONFIG = Config(storage_api_url='https://connection.keboola.com', storage_token='kbc_at_revoked')
+    CONFIG = Config(storage_api_url='https://connection.keboola.com', bearer_token='kbc_at_revoked')
 
     @staticmethod
     def _tokens(access_token: str = 'kbc_at_revoked') -> TokenSet:
@@ -3001,7 +2851,7 @@ class TestProvisionedSessionIsPickedUpByTheNextRequest:
             await middleware.on_request(context, AsyncMock(return_value=object()))
 
         # Signed in: the stored session's access token, with no header and no env to supply one.
-        assert captured[0].storage_token == 'kbc_at_sess-9_secret'
+        assert captured[0].bearer_token == 'kbc_at_sess-9_secret'
         # Pinned to the provisioned project, and confirmed -- so the ask-first scope gate in
         # MultiProjectMiddleware lets data tools straight through.
         assert captured[0].project_id == '4321'

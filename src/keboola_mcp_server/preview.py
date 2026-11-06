@@ -308,7 +308,6 @@ async def preview_config_diff(rq: Request) -> Response:
         server_state.runtime_info,
         readonly=True,
         own_stack_storage_api_url=own_stack_storage_api_url,
-        token_resolver=server_state.storage_token_resolver(config.storage_api_url),
     )
     client = KeboolaClient.from_state(state)
     workspace_manager = WorkspaceManager.from_state(state)

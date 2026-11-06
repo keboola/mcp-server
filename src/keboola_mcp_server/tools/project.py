@@ -19,7 +19,6 @@ from keboola_mcp_server.auth_login import (
     sanitize_client_id,
     save_tokens,
 )
-from keboola_mcp_server.clients.auth_bridge import strip_bearer
 from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import MetadataField, deployed_sa_token_path
@@ -126,11 +125,11 @@ async def _parent_subject_token(client: KeboolaClient) -> str:
     directly-supplied PAT, an HTTP bearer, or an OAuth-exchanged session token).
     """
     if deployed_sa_token_path():
-        return strip_bearer(client.bearer_token)
+        return client.bearer_token
     try:
         return await get_access_token(client.storage_api_url)
     except RuntimeError:
-        return strip_bearer(client.bearer_token)
+        return client.bearer_token
 
 
 async def _resolve_branch_context(client: KeboolaClient) -> tuple[str | int, str, bool]:

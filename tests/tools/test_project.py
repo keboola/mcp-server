@@ -328,7 +328,7 @@ async def test_parent_subject_token_ignores_local_store_when_deployed(mocker: Mo
         new=mocker.AsyncMock(return_value='kbc_at_wrong_tenant'),
     )
     client = mocker.Mock()
-    client.bearer_token = 'Bearer kbc_at_this_request'
+    client.bearer_token = 'kbc_at_this_request'
 
     token = await _parent_subject_token(client)
 
@@ -517,8 +517,7 @@ async def test_set_project_scope_binds_scope_token_to_caller_on_deployed_server(
 ) -> None:
     # The replay fix: on a deployed server, the returned scope_token must only decrypt alongside
     # the same caller's own bearer token (client.bearer_token, the un-narrowed whole-stack subject
-    # token -- see PSGO-280: it must NOT be client.legacy_storage_token, which on a project-scoped
-    # session can be a server-minted, per-project token) it was minted for -- see
+    # token) it was minted for -- see
     # resolve_scope_binding_aad. A different caller's token must fail, even with the right key.
     monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/secrets/token')
     mcp_context_client.request_context.lifespan_context = ServerState(
@@ -544,20 +543,14 @@ async def test_set_project_scope_token_round_trips_through_read_scope_from_reque
     """Regression (PSGO-280): the scope_token minted by set_project_scope must actually decrypt
     on the very next request via `SessionStateMiddleware._read_scope_from_request` -- not just
     against a hand-picked AAD in isolation (see the test above). That method seals with
-    `config.storage_token` -- the caller's raw presented credential -- which on a deployed,
-    project-scoped programmatic session is NOT the same string as `client.legacy_storage_token`
-    (the server-minted, per-project legacy Storage token). Sealing with the wrong one here would
-    silently evaporate every confirmed scope on the next call.
+    `config.bearer_token` -- the caller's raw presented credential -- which must be the same one the
+    seal side uses (`client.bearer_token`), or every confirmed scope would silently evaporate on the next call.
     """
     monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/secrets/token')
     mcp_context_client.request_context.lifespan_context = ServerState(
         Config(), ServerRuntimeInfo(transport='http-compat/streamable-http', stateless_http=True)
     )
-    client = _prep_client(mcp_context_client, mocker)
-    # Simulate a resolved session: the caller presented 'kbc_at_parent', but the active project's
-    # legacy_storage_token has already been swapped for a server-minted per-project token by
-    # KeboolaClient.create -- a different string from the caller's own credential.
-    client.legacy_storage_token = 'legacy-storage-token-for-active-project'
+    _prep_client(mcp_context_client, mocker)
     minted = SimpleNamespace(access_token='kbc_at_scoped', expires_at=time.time() + 3600, read_only=False)
     mocker.patch('keboola_mcp_server.tools.project.exchange_scoped_token', new=mocker.AsyncMock(return_value=minted))
 
@@ -565,7 +558,7 @@ async def test_set_project_scope_token_round_trips_through_read_scope_from_reque
     scope = mcp_context_client.session.state[SCOPE_KEY]
 
     # The next request presents the same raw credential the caller always had.
-    config = Config(storage_token='kbc_at_parent')
+    config = Config(bearer_token='kbc_at_parent')
     context = SimpleNamespace(
         message=SimpleNamespace(name='get_tables', arguments={SCOPE_TOKEN_ARG: result.scope_token}),
         method='tools/call',
@@ -740,22 +733,6 @@ async def test_set_project_scope_read_only_success_omits_local_only_note(
 
     assert result.read_only is True
     assert 'enforced by this server only' not in result.llm_instruction
-
-
-@pytest.mark.asyncio
-async def test_scope_strips_the_bearer_scheme(mcp_context_client: Context, mocker: MockerFixture) -> None:
-    _prep_client(mcp_context_client, mocker, bearer='Bearer kbc_at_prefixed')
-    mocker.patch('keboola_mcp_server.tools.project.get_access_token', new=mocker.AsyncMock(side_effect=RuntimeError))
-    introspection = SimpleNamespace(user_email='m@k.com', projects=[])
-    introspect = mocker.patch(
-        'keboola_mcp_server.tools.project.introspect_token', new=mocker.AsyncMock(return_value=introspection)
-    )
-    mocker.patch('keboola_mcp_server.tools.project.ServerState.from_context', return_value=mocker.Mock())
-
-    await get_accessible_projects(mcp_context_client)
-
-    # The inbound bearer's `Bearer ` scheme must be stripped before use as a subject token.
-    introspect.assert_awaited_once_with(STACK, subject_token='kbc_at_prefixed')
 
 
 @pytest.mark.asyncio

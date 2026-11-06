@@ -100,7 +100,6 @@ server always reflecting your latest code changes:
       "args": ["-m", "keboola_mcp_server"],
       "env": {
         "KBC_STORAGE_API_URL": "https://connection.<stack>.keboola.com",
-        "KBC_STORAGE_TOKEN": "<your-token>",
         "KBC_BRANCH_ID": "<optional-branch-id>"
       }
     }
@@ -113,6 +112,7 @@ server always reflecting your latest code changes:
 - After making code changes, the MCP server must be **reloaded** to pick them up.
 - If the editable install is stale (e.g. after `git pull` with dependency changes), run
   `uv sync --active --extra dev --extra tests` to update it.
+- Sign in once with `<absolute-path-to-project>/.venv/bin/python -m keboola_mcp_server login --api-url https://connection.<stack>.keboola.com`; the server picks up the stored session. There is no environment variable or argument for a token.
 - Do not commit tokens.
 
 ## Versioning

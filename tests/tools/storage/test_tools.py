@@ -1785,12 +1785,7 @@ async def test_update_descriptions_empty_updates(mcp_context_client) -> None:
         # The test_server.TestServer.test_tools_have_serializer() test verifies that the same serializer is used
         # for all tools.
         # Therefore, all tools should produce compact JSON in their unstructured output.
-        cfg_dict = {
-            'storage_token': '123-test-storage-token',
-            'storage_api_url': 'https://connection.keboola.com',
-            'transport': 'stdio',
-        }
-        config = Config.from_dict(cfg_dict)
+        config = Config(bearer_token='kbc_at_123-test-token', storage_api_url='https://connection.keboola.com')
 
         mocker.patch(
             'keboola_mcp_server.clients.base.KeboolaServiceClient.get',

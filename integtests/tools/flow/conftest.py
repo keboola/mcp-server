@@ -38,7 +38,7 @@ def mcp_server(
 
     config = Config(
         storage_api_url=storage_api_url,
-        storage_token=mcp_token,
+        bearer_token=mcp_token,
         project_id=project_lock.endpoint.project_id,
         workspace_schema=workspace_schema,
     )

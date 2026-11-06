@@ -29,13 +29,10 @@ class TestFailingCallsThroughFastMcp:
             return_value={'owner': {'id': '123'}},
         )
         mocker.patch('keboola_mcp_server.clients.base.KeboolaServiceClient.post', return_value={'id': '1'})
-        config = Config.from_dict(
-            {
-                'storage_token': 'kbc_at_123-test-storage-token',
-                'project_id': '123',
-                'storage_api_url': 'https://connection.keboola.com',
-                'transport': 'stdio',
-            }
+        config = Config(
+            bearer_token='kbc_at_123-test-storage-token',
+            project_id='123',
+            storage_api_url='https://connection.keboola.com',
         )
         server = create_server(config, runtime_info=ServerRuntimeInfo(transport='stdio'))
         assert isinstance(server, FastMCP)
