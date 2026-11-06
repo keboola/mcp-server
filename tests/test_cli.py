@@ -536,7 +536,8 @@ class TestLegacySsePath:
     def test_oauth_metadata_names_one_issuer(self, prefix: str) -> None:
         """RFC 9207 (DMD-2468): ChatGPT compares the `iss` of an authorization response with the issuer it discovered,
         by exact string, so the authorization-server metadata and the PRM must name the very same one. RFC 9728
-        (AI-4080): the PRM `resource` must be the MCP endpoint's URL."""
+        (AI-4080, AI-4039): the PRM `resource` must be the MCP endpoint's URL, at the root, path-suffixed and mounted
+        metadata URL alike."""
         config = Config(
             storage_api_url=STACK,
             oauth_client_id='client-id',
@@ -548,8 +549,6 @@ class TestLegacySsePath:
         )
         with _http_client(config) as client:
             metadata = client.get(f'{prefix}/.well-known/oauth-authorization-server').json()
-            # AI-4039/AI-4080: RFC 9728 §3.3 -- the `resource` must be the URL the client connected to (`/mcp`), under
-            # the root, the path-suffixed and the mount-relative metadata URL alike (GitHub Copilot checks it).
             prms = [
                 client.get(path).json()
                 for path in (
@@ -572,7 +571,7 @@ class TestLegacySsePath:
         ('session_resource', 'foreign'),
         [
             ('https://mcp.keboola.com/mcp', False),
-            # normalized: scheme and host case, default port, trailing slash, the origin (what the PRM named before AI-4080) and /mcp
+            # normalized: scheme and host case, default port, trailing slash, the origin (the pre-AI-4080 PRM `resource`) and /mcp
             ('https://MCP.keboola.com:443/', False),
             ('HTTPS://Mcp.Keboola.com/mcp/', False),
             # minted for some other resource: logged in the `log` mode (the default), not replayed in `enforce`

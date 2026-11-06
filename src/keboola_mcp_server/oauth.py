@@ -989,8 +989,9 @@ class AuthorizeRateLimitMiddleware:
 
 _METADATA_PATH_PREFIXES = ('/.well-known/oauth-authorization-server', '/.well-known/openid-configuration')
 # Where the MCP endpoint is served (`cli.build_http_app` mounts the streamable-HTTP app there) and the RFC 9728 document
-# that describes it. FastMCP derives the PRM `resource` from the path it is given, and `http_app(path='/')` hands it
-# `/`, which would name the host rather than the endpoint.
+# that describes it. The PRM `resource` must be the URL the client connected to (RFC 9728 §3.3; GitHub Copilot checks
+# it), but FastMCP derives it from the path it is given and `http_app(path='/')` hands it `/`, i.e. the host. The same
+# document is also served at the root PRM path, which older clients and the `WWW-Authenticate` challenge still use.
 _MCP_PATH = '/mcp'
 _PRM_PATH = '/.well-known/oauth-protected-resource'
 
@@ -1252,7 +1253,7 @@ class SimpleOAuthProvider(OAuthProvider):
         # `resource` before AI-4080) and the MCP endpoint a client was configured with (`/mcp`, or the legacy `/sse`
         # that forwards to it).
         own_path = urlparse(mcp_server_url).path.rstrip('/')
-        self._own_resources = [urljoin(mcp_server_url, own_path + path) for path in ('', '/mcp', '/sse')]
+        self._own_resources = [urljoin(mcp_server_url, own_path + path) for path in ('', _MCP_PATH, '/sse')]
         self._own_resource_keys = frozenset(key for url in self._own_resources if (key := _resource_key(url)))
         if resource_binding not in ('log', 'enforce'):
             raise ValueError(
@@ -1295,10 +1296,8 @@ class SimpleOAuthProvider(OAuthProvider):
         token and authorization endpoints wrapped by `_CaptureParameter` (`resource` and `via`), and `_revoke` as the
         revocation endpoint.
 
-        The protected-resource metadata always names the MCP endpoint (`/mcp`) as the `resource`, whatever `mcp_path`
-        the caller passes (RFC 9728 §3.3: it must equal the URL the client connected to, and GitHub Copilot checks it).
-        The SDK serves that document at `/.well-known/oauth-protected-resource/mcp`; the same document is also served at
-        the root path, which older clients and the `WWW-Authenticate` challenge still use."""
+        `mcp_path` is ignored: the protected-resource metadata always names `/mcp` as the `resource` and is also served
+        at the root PRM path (see `_MCP_PATH`)."""
         routes: list[Route] = []
         for route in super().get_routes(_MCP_PATH):
             if isinstance(route, Route) and route.path.startswith(_METADATA_PATH_PREFIXES):
