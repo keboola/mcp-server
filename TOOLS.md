@@ -55,13 +55,13 @@ current production version with the chosen content.
 - [create_oauth_url](#create_oauth_url): Generates an OAuth authorization URL for a Keboola component configuration.
 
 ### Other Tools
+- [create_python_js_data_app_draft](#create_python_js_data_app_draft): Creates a draft of a python-js data app: its own workload on its own host, serving `git_branch`.
 - [create_python_js_data_app_git_credential](#create_python_js_data_app_git_credential): Mints a one-time HTTPS token on a python-js **prod** data app so the caller can clone, pull,
 and push to the app's managed git repo over HTTPS.
-- [delete_python_js_data_app_draft](#delete_python_js_data_app_draft): Deletes a python-js DRAFT data app — both the data-app instance (DSAPI) and its Storage
-configuration.
+- [delete_python_js_data_app_draft](#delete_python_js_data_app_draft): Deletes a draft of a python-js data app.
 - [deploy_data_app](#deploy_data_app): Deploys/redeploys a data app or stops a running data app in the Keboola environment asynchronously, given the
 action and the configuration ID.
-- [get_data_app_preview_link](#get_data_app_preview_link): Creates a short-lived link that opens a dev-mode data app in your browser without the app's login.
+- [get_data_app_preview_link](#get_data_app_preview_link): Creates a short-lived link that opens a python-js draft in your browser without the app's login.
 - [get_data_apps](#get_data_apps): Lists summaries of data apps in the project given the limit and offset or gets details of a data apps by
 providing their configuration IDs.
 - [modify_python_js_data_app](#modify_python_js_data_app): Creates or updates a python-js data app.
@@ -2174,6 +2174,66 @@ Example 4 - Update storage mappings:
 ---
 
 # Other Tools
+<a name="create_python_js_data_app_draft"></a>
+## create_python_js_data_app_draft
+**Annotations**: 
+
+**Tags**: `data-apps`
+
+**Description**:
+
+Creates a draft of a python-js data app: its own workload on its own host, serving `git_branch`.
+
+- A push to `git_branch` reaches the running draft within seconds; it needs no deploy.
+- The draft runs in dev mode with a copy of the prod app's configuration from this moment. It never takes
+  production traffic.
+- It suspends itself after 15 minutes without requests and wakes on the next one.
+- It outlives a prod deployment. Delete it with `delete_python_js_data_app_draft` when the work is done.
+- The tool waits until the draft has a `url`. `run_state` reaches `running` 1–2 minutes later; check it with
+  `get_data_apps`.
+- Not idempotent: every call starts another draft. When a call fails or times out, look for the draft in
+  `get_data_apps` before calling again.
+
+Errors:
+- branch "does not exist": push the branch first, then call again.
+- "not available on this Keboola stack": tell the user.
+
+
+**Input JSON Schema**:
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "configuration_id": {
+      "description": "Storage configuration ID of the python-js prod app the draft belongs to.",
+      "type": "string"
+    },
+    "git_branch": {
+      "description": "Branch of the app's git repository the draft serves. It must already exist on the remote.",
+      "type": "string"
+    },
+    "project_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Target Keboola project id for this write. Required when the session is scoped to 2+ projects; optional (defaults to the single scoped project) otherwise."
+    }
+  },
+  "required": [
+    "configuration_id",
+    "git_branch"
+  ],
+  "type": "object"
+}
+```
+
+---
 <a name="create_python_js_data_app_git_credential"></a>
 ## create_python_js_data_app_git_credential
 **Annotations**: 
@@ -2260,28 +2320,12 @@ additional token without invalidating any tokens already held by other clients.
 
 **Description**:
 
-Deletes a python-js DRAFT data app — both the data-app instance (DSAPI) and its Storage
-configuration.
+Deletes a draft of a python-js data app. It never touches the prod app or the git repository.
 
-**MCP never runs git on your behalf.** Deleting the feature branch on the remote is your job;
-this tool only tears down the draft config and its data-app instance.
-
-WHEN TO CALL: at the end of a promote-to-prod sequence, after you have merged the draft's
-branch into `main`, pushed, deleted the feature branch from the remote, and redeployed the
-prod app. The Keboola UI lists drafts under their parent prod app; once you call this tool,
-the draft disappears from that list.
-
-WHAT THIS TOOL REFUSES:
-  - prod apps (no `isDraft` flag) — protects against accidental prod deletion;
-  - Streamlit apps — they have no draft concept.
-
-WHAT THIS TOOL DOES NOT DO:
-  - Run git. Deleting the feature branch on the remote is your job.
-  - Revoke the prod-side git credential minted when the draft was created. Credential
-    rotation is the user's job via the Keboola UI.
-
-After a successful call, pivot back to the parent prod app (its configuration_id is returned
-in the response) or to `get_data_apps` for further work.
+- With `draft_id`: stops and removes that draft. Its branch stays.
+- Without `draft_id`: deletes the legacy draft `configuration_id` (its data app and its configuration).
+  Refuses prod apps and Streamlit apps.
+- It runs no git: deleting the branch on the remote is up to you.
 
 
 **Input JSON Schema**:
@@ -2290,8 +2334,20 @@ in the response) or to `get_data_apps` for further work.
   "additionalProperties": false,
   "properties": {
     "configuration_id": {
-      "description": "Storage configuration ID of the python-js draft data app to delete.",
+      "description": "With `draft_id`: Storage configuration ID of the prod app the draft belongs to. Without it: Storage configuration ID of the legacy draft to delete.",
       "type": "string"
+    },
+    "draft_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "ID of the draft to delete (`drafts[].draft_id` in `get_data_apps`). None for a legacy draft."
     },
     "project_id": {
       "anyOf": [
@@ -2329,15 +2385,11 @@ action and the configuration ID.
 branch-delete — is yours. This tool only triggers deploys against existing git state.
 
 ## Mode (python-js apps)
-- `mode='dev'` deploys the target as a **dev version of the data app** — the runtime uses a
-  development `setup.sh` (hot reload) and the data-app proxy enables an auto-auth path so an
-  iframe preview can render without a manual login. Only meaningful on **draft** configs
-  (python-js apps with `isDraft=true`).
-- To open a dev-mode draft in your own browser, call `get_data_app_preview_link` once the deploy is running.
 - For prod redeploys (including after merging a draft's branch into `main`), use no `mode` —
   the prod app picks up the current `main`.
-- The branch a draft deploys from is pinned in `parameters.dataApp.git.branch` at create time;
-  there is no deploy-time override.
+- A draft from `create_python_js_data_app_draft` needs no deploy: it serves its branch live.
+- `mode='dev'` deploys a **legacy draft** (`isDraft=true`) as a dev version with hot reload, on the
+  branch pinned in its `parameters.dataApp.git.branch`.
 - An app on a customer GitHub repository (`git_auth_type='organization'`) deploys in production
   mode only: `mode='dev'` is rejected before anything is deployed, and a deploy without `mode`
   switches an app left in dev mode back to production.
@@ -2397,7 +2449,7 @@ Streamlit apps have no managed git repo, so `mode` has no effect on the deployed
         }
       ],
       "default": null,
-      "description": "Deployment mode. Set to \"dev\" to deploy a python-js draft as a **dev version of the data app** \u2014 the runtime uses a development `setup.sh` (hot reload), and the data-app proxy enables an auto-auth path so an iframe preview can render without a manual login. Only meaningful on **draft** configs (python-js apps with `isDraft=true`). Leave None (default) for prod redeploys and for Streamlit apps."
+      "description": "Deployment mode. \"dev\" deploys a python-js **legacy draft** (`isDraft=true`) as a dev version with hot reload and preview links. Leave None (default) for prod redeploys and Streamlit apps.\nA draft from `create_python_js_data_app_draft` runs in dev mode by itself and needs no deploy."
     },
     "project_id": {
       "anyOf": [
@@ -2429,12 +2481,11 @@ Streamlit apps have no managed git repo, so `mode` has no effect on the deployed
 
 **Description**:
 
-Creates a short-lived link that opens a dev-mode data app in your browser without the app's login.
+Creates a short-lived link that opens a python-js draft in your browser without the app's login.
 
-Use it to see or test a python-js **draft** deployed with `deploy_data_app(action='deploy', mode='dev')`.
-- Only a python-js draft reaches dev mode: a Streamlit app has no managed git repo and its image has no
-  dev mode.
-- An app that is not in dev mode has no preview link.
+- With `draft_id`: the link opens that draft on its own host.
+- Without it: the link opens a legacy draft deployed with `deploy_data_app(action='deploy', mode='dev')`.
+  An app that is not in dev mode has no preview link.
 
 ## How to use the link
 - Open `url` in a real browser before `link_expires_at` (about 60 seconds after this call): a browser tool,
@@ -2453,7 +2504,8 @@ Use it to see or test a python-js **draft** deployed with `deploy_data_app(actio
   into the app.
 
 ## Errors
-- "not running in dev mode": deploy the draft with `deploy_data_app` (mode='dev') first.
+- "has no URL yet" on a draft: it is still starting; call again in a few seconds.
+- "not running in dev mode": deploy the legacy draft with `deploy_data_app` (mode='dev') first.
 - "is a production app": preview a draft of it instead; never switch a production app to dev mode.
 - "is not in dev mode" on another app type (e.g. Streamlit): it has no dev mode; tell the user and do not
   change its deploy mode.
@@ -2466,8 +2518,20 @@ Use it to see or test a python-js **draft** deployed with `deploy_data_app(actio
   "additionalProperties": false,
   "properties": {
     "configuration_id": {
-      "description": "Storage configuration ID of a python-js draft deployed with `deploy_data_app` (mode=\"dev\"). Only a python-js draft can run in dev mode.",
+      "description": "With `draft_id`: Storage configuration ID of the prod app the draft belongs to. Without it: Storage configuration ID of a legacy draft deployed with `deploy_data_app` (mode=\"dev\").",
       "type": "string"
+    },
+    "draft_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "ID of the draft to open (`drafts[].draft_id` in `get_data_apps`). None for a legacy draft."
     },
     "project_id": {
       "anyOf": [
@@ -2519,12 +2583,8 @@ data app logs to investigate in-app errors. The logs may be updated after openin
   (when `configuration_ids` is provided). The inventory list always returns `repo_url=None`,
   even for python-js apps with a managed repo — to retrieve the URL, call this tool again
   with the target `configuration_ids`.
-- When called with `configuration_ids=[<prod-cfg>]` for a python-js **prod** app, the response
-  includes a `drafts: [...]` array of every draft (configs with `isDraft=true` and
-  `parentConfigurationId == <prod-cfg>`) currently in the project. Drafts in trash are not
-  included. Use this to discover existing drafts when continuing a previously abandoned
-  iteration. The array is empty for drafts themselves and for Streamlit apps.
-  Resuming such an iteration is Scenario C in `modify_python_js_data_app`.
+- For a python-js **prod** app the detail also lists its `drafts` (with `draft_id`, `git_branch`, `url`,
+  `run_state`) and its `legacy_drafts` (separate draft configurations).
 
 
 **Input JSON Schema**:
@@ -2570,92 +2630,12 @@ Python-js is the default type for new data apps when you can run git: this tool 
 configuration and the repository, and you deliver the source code by `git push`. Use
 `modify_streamlit_data_app` instead when you cannot run git or when the user asks for Streamlit explicitly.
 
-Two-app project model. Every python-js project has a persistent **prod app** that owns the
-only managed git repository for the project, and zero or more **drafts** parented to that
-prod app. A draft is a Storage configuration with `parameters.dataApp.isDraft=true` and
-`parameters.dataApp.parentConfigurationId=<prod cfg id>`; it's an *external-git* app that
-clones the parent prod's repo at a pinned branch on every deploy. Drafts are surfaced in the
-Keboola UI under their parent prod app. Use `deploy_data_app(mode='dev')` to deploy a draft
-as a dev version of the data app (hot reload + auto-auth for iframe preview); use
-`delete_python_js_data_app_draft` to tear a draft down after its branch has been promoted.
-
-**MCP never runs git on your behalf.** All git work — clone, branch, commit, push, merge,
-branch-delete — is yours. MCP gives you authenticated clone URLs and manages configs/deploys;
-it never invokes git.
-
-**The draft flow below is mandatory — never edit prod source directly.** Every source-code
-change goes through a draft branch that the user previews and explicitly approves first. NEVER
-push directly to `main`: `main` only ever advances by merging an approved draft branch, and
-only after the user has approved that draft's preview.
-
-Three scenarios the agent has to distinguish:
-
-## Scenario A — Create a brand-new data app
-
-1. `modify_python_js_data_app(slug='demo')` → `(configuration_id=PROD, repo_url=R)`.
-   PROD owns the only managed repo for this app.
-2. `modify_python_js_data_app(slug='demo-draft', parent_configuration_id=PROD)`
-   → `(configuration_id=DRAFT, repo_url=R, git_clone_url=U, branch='draft-<hex>')`.
-   The default branch is generated fresh per draft (`draft-<hex>`) so it can never collide
-   with a branch left behind by an earlier draft. Override with `branch=<name>` for a
-   descriptive name — if you do, YOU own uniqueness (see step 3).
-3. YOU: `git clone U`. A new prod app's repo already has `main` with one initial commit, so
-   branch from it: `git checkout -b <branch>`; write source; `git push origin <branch>`.
-   Only when the clone has no `main` (an older app whose repo is still empty), push an empty
-   `main` first — the first branch pushed becomes the repo's default, and a draft branch that
-   is the default can never be deleted: `git checkout -b main && git commit --allow-empty
-   -m "init main" && git push origin main`, then branch as above. The empty `main` carries no
-   app code, so it breaks no rule about pushing to `main`.
-4. `deploy_data_app(action='deploy', configuration_id=DRAFT, mode='dev')`
-   → preview URL serving the draft's pinned branch as a dev version. Iterate with the user.
-5. Once approved — YOU: `git checkout main && git merge <branch> && git push origin main`;
-   `git push origin --delete <branch>` (branch deletes ARE permitted on managed repos).
-6. `deploy_data_app(action='deploy', configuration_id=PROD)`
-   → prod URL now serves the merged `main`.
-7. `delete_python_js_data_app_draft(configuration_id=DRAFT)`
-   → tears down the draft's config + data-app instance. Always run this once promoted.
-
-## Scenario B — Edit an existing data app
-
-You already have PROD's `configuration_id` (from `get_data_apps` or earlier conversation).
-
-1. `create_python_js_data_app_git_credential(configuration_id=PROD)`
-   → fresh `git_clone_url U` with an embedded one-time token.
-2. `modify_python_js_data_app(
-        slug='demo-draft-<short suffix>',
-        parent_configuration_id=PROD,
-        branch='<describes-the-change>',   # e.g. 'add-revenue-filter'
-   )` → `(DRAFT, R, U2, branch)`. Use U2 (it has its own fresh token).
-3. YOU: `git clone U2`; `git fetch origin && git checkout -B <branch> --no-track origin/main` —
-   state the base explicitly, and `--no-track` so `origin/main` does not become the branch's
-   upstream (otherwise a bare `git push` on the draft branch would target `main`). NEVER a bare
-   `git checkout <branch>`: when that branch already exists on the remote (a descriptive name
-   reused from an earlier session), git silently checks out its stale tip instead of branching
-   from `main`, and the preview then serves outdated code with no error. Edit source;
-   `git push origin <branch>`. If that push is rejected as non-fast-forward, the remote branch
-   still holds unmerged commits from an abandoned earlier draft — either
-   `git push --force-with-lease origin <branch>` or `git push origin --delete <branch>` first.
-   Never resolve a rejected push with a bare `git checkout`.
-4–7. Same as Scenario A steps 4–7.
-
-## Scenario C — Continue an unfinished draft
-
-The previous sandbox is gone. You have PROD's `configuration_id` but no working clone and no
-draft handle.
-
-1. `get_data_apps(configuration_ids=[PROD])` → returns PROD's detail including `drafts: [...]`.
-   Pick the draft the user means (ask if multiple and unclear). Each entry carries its
-   `configuration_id` and `git_branch`.
-2. `create_python_js_data_app_git_credential(configuration_id=PROD)`
-   → fresh `git_clone_url U` (the previous one was minted in a wiped sandbox and is lost).
-   Drafts have no managed repo of their own — always mint against PROD.
-3. YOU: `git clone U`; `git checkout <draft's git_branch>`. Here you DO want the existing
-   branch — but confirm it is current before you build on it:
-   `git rev-list --count <branch>..origin/main` must print 0, otherwise `git merge origin/main`
-   first. Resume work; `git push`.
-4. `deploy_data_app(action='deploy', configuration_id=<DRAFT>, mode='dev')` → preview URL.
-   The draft's branch is already pinned in its config.
-5–7. Same promote/cleanup sequence as Scenario A steps 5–7.
+- A python-js app owns a managed git repository; `git_clone_url` comes from
+  `create_python_js_data_app_git_credential`. MCP never runs git: clone, branch, push and merge are yours.
+- Source changes are previewed in a draft (`create_python_js_data_app_draft`) on a branch of that repository.
+  `main` advances only by merging an approved branch; then `deploy_data_app` serves it from the prod app.
+- A legacy draft (`parameters.dataApp.isDraft=true`) is a separate configuration; this tool can still update it,
+  but no longer creates one.
 
 ## Scenario D — Deploy a prod app from a customer's GitHub repository
 
@@ -2680,31 +2660,23 @@ https://help.keboola.com/management/organization/#connect-github (not a menu pat
 
 ## Argument rules
 
-- `parent_configuration_id` is **create-only**. Rejected on update.
-- `branch` on **create** is only valid when `parent_configuration_id` is set (pins the new
-  draft's branch). Defaults to a generated, collision-free `'draft-<hex>'`. Must not be
-  `'main'`. Rejected on prod create unless `git_repository` is set (then it defaults to `'main'`).
-  A branch you supply yourself may already exist on the
-  repo — branch it off `origin/main` explicitly (see Scenario B step 3).
-  On **update** `branch` repoints an existing **external-git** app's pinned branch (see below).
-- `git_repository` and `git_auth` go together (Scenario D). Rejected with `parent_configuration_id`.
-- `slug` is optional on create (auto-derived from `name` when omitted; drafts get a unique
-  suffix). See "Slug on update" below.
+- `branch` on **create** is only valid with `git_repository` (defaults to `'main'`). On **update** it
+  repoints an existing **external-git** app's pinned branch.
+- `git_repository` and `git_auth` go together (Scenario D).
+- `slug` is optional on create (auto-derived from `name` when omitted). See "Slug on update" below.
 - The **update path** (passing `configuration_id`) is for changing `name`, `description`,
-  `authentication_type`, `auto_suspend_after_seconds`, `storage`, `image_version` on either a prod app or
-  a draft, for changing a prod app's `slug` (see "Slug on update"), and for repointing an
-  **external-git** app's `branch` (a draft, or an app bound to an external repository — an
-  app on a Keboola-managed git repo is rejected, its branch is owned by the platform). Source code changes go through the git flow above, not this
-  tool. After a `branch` repoint, call `deploy_data_app` to serve the new branch.
+  `authentication_type`, `auto_suspend_after_seconds`, `storage`, `image_version`, a prod app's `slug`
+  (see "Slug on update"), and an **external-git** app's `branch`. Source code changes go through git, not
+  this tool. After a `branch` repoint, call `deploy_data_app` to serve the new branch.
 
 ## Authentication
 
 New apps default to HTTP basic authentication for safety. Pass `authentication_type='no-auth'`
 to expose publicly -- only when the user explicitly asks for a public app. `'no-auth'` is
-rejected on drafts: a draft inherits the prod app's data access, so disabling its
+rejected on legacy drafts: a draft inherits the prod app's data access, so disabling its
 authentication would expose Storage-reading and Storage-writing endpoints publicly. Never
-disable authentication to make the preview work -- the in-platform preview
-(`deploy_data_app(mode='dev')`) authenticates on top of the configured auth. On update,
+disable authentication to make the preview work -- the preview link authenticates on top of the
+configured auth. On update,
 `authentication_type='default'` preserves the existing `authorization` block (including OIDC
 setups configured outside the MCP); `'basic-auth'` / `'no-auth'` overwrite it.
 
@@ -2727,8 +2699,7 @@ the stored `logout_url` / `allowed_roles`; `''` or `[]` removes them. The slug s
 
 Must be DNS-label-safe (lowercase letters, digits, hyphens). Optional on create: when omitted it
 is auto-derived from `name` and capped at 50 characters (the data-app URL-prefix limit enforced
-by the UI; drafts additionally get a short unique `-draft-<suffix>`, still within 50, to keep
-slugs unique across the prod app and its drafts). Pass an explicit slug to override; an explicit
+by the UI). Pass an explicit slug to override; an explicit
 slug must be at most 63 characters (the DNS-label max), and note the UI's own URL-prefix limit is
 50, so an explicit slug of 51-63 characters may still be rejected at deploy time.
 
@@ -2739,7 +2710,7 @@ The slug is the app URL (`https://<slug>-<app id>.hub.<stack>`), so changing it 
    `new-app` for "New App") to the new name automatically — nobody has the URL yet.
 2. Once the app has been deployed, a rename keeps the slug. Change it only with an explicit
    `slug`, and only after the user approved the new URL.
-3. Drafts never change their slug.
+3. Legacy drafts never change their slug.
 After an explicit `slug` the new URL applies on the next `deploy_data_app` and the old URL stops
 working; tell the user both.
 
@@ -2824,19 +2795,7 @@ working; tell the user both.
         }
       ],
       "default": null,
-      "description": "URL-safe slug for the data app (used as a subdomain). Optional on create \u2014 when omitted it is auto-derived from `name` (drafts get a unique suffix). An explicit slug must be at most 63 characters (DNS-label max; the UI URL-prefix limit is 50). On update it moves a prod app to a new URL \u2014 pass it only after the user approved that URL (see \"Slug on update\")."
-    },
-    "parent_configuration_id": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "Storage configuration ID of the prod python-js data app this draft will iterate against. When set on create, the new app is created as a **draft**: no managed repo is provisioned for it; instead its `parameters.dataApp.git` block is populated to point at the prod app's managed repo, with a freshly-minted prod-app HTTPS token and the chosen draft branch. Leave None on create to make a **prod app** (which gets its own managed repo). Rejected on update."
+      "description": "URL-safe slug for the data app (used as a subdomain). Optional on create \u2014 when omitted it is auto-derived from `name`. An explicit slug must be at most 63 characters (DNS-label max; the UI URL-prefix limit is 50). On update it moves a prod app to a new URL \u2014 pass it only after the user approved that URL (see \"Slug on update\")."
     },
     "branch": {
       "anyOf": [
@@ -2848,7 +2807,7 @@ working; tell the user both.
         }
       ],
       "default": null,
-      "description": "Git branch of the data app, written to `parameters.dataApp.git.branch`. Three uses:\n- **On draft create** (with `parent_configuration_id`): the branch to pin the new draft to. Defaults to a generated `draft-<hex>` when unset \u2014 unique per draft, so it can never collide with a branch an earlier draft left behind. Pass a descriptive name like 'add-revenue-filter' when it helps the user; a name you supply may already exist on the repo, so branch it off `origin/main` explicitly (`git checkout -B <branch> --no-track origin/main`; on a brand-new prod app whose repo is still empty, push an empty `main` first \u2014 see Scenario A step 3) rather than with a bare `git checkout`. Must not be `main` (reserved for the prod app) unless `allow_main_branch=True` (platform view-draft only). Rejected on prod create without `git_repository`.\n- **On update** (with `configuration_id`): repoints an existing **external-git** app to a different branch (e.g. flip a repo-backed app from `main` to a feature branch for testing, then back). Only valid for external-git apps \u2014 a draft, or an app bound to an external repository. Rejected for apps on a Keboola-managed git repo, whose branch is owned by the platform. On update `main` is allowed. Redeploy the app afterwards to serve the new branch.\n- **With `git_repository`** (create or update of a prod app): the branch of that repository the app deploys. Defaults to `main`."
+      "description": "Git branch of the data app, written to `parameters.dataApp.git.branch`. Two uses:\n- **On update** (with `configuration_id`): repoints an existing **external-git** app to a different branch (e.g. flip a repo-backed app from `main` to a feature branch for testing, then back). Only valid for external-git apps \u2014 a legacy draft, or an app bound to an external repository. Rejected for apps on a Keboola-managed git repo, whose branch is owned by the platform. On update `main` is allowed. Redeploy the app afterwards to serve the new branch.\n- **With `git_repository`** (create or update of a prod app): the branch of that repository the app deploys. Defaults to `main`."
     },
     "git_repository": {
       "anyOf": [
@@ -2860,7 +2819,7 @@ working; tell the user both.
         }
       ],
       "default": null,
-      "description": "HTTPS URL of a customer's GitHub repository (`https://github.com/<owner>/<repo>`, or a `*.ghe.com` host) to deploy a **prod** app from instead of a Keboola-managed repo. Requires `git_auth`. On create, the app gets no managed repo; on update, an app already bound to an external repository is rebound to this one. Rejected with `parent_configuration_id` (no drafts on such repos) and for apps on a Keboola-managed repo. No credential is stored."
+      "description": "HTTPS URL of a customer's GitHub repository (`https://github.com/<owner>/<repo>`, or a `*.ghe.com` host) to deploy a **prod** app from instead of a Keboola-managed repo. Requires `git_auth`. On create, the app gets no managed repo; on update, an app already bound to an external repository is rebound to this one. Rejected for apps on a Keboola-managed repo. No credential is stored."
     },
     "git_auth": {
       "anyOf": [
@@ -2874,11 +2833,6 @@ working; tell the user both.
       ],
       "default": null,
       "description": "How the platform authenticates to `git_repository`; required together with it. Only \"organization\" is supported: a short-lived read-only token is minted through the Keboola organization's GitHub App connection, so no credential is stored in the configuration."
-    },
-    "allow_main_branch": {
-      "default": false,
-      "description": "Internal escape hatch for the platform to create a read-only **view draft** pinned directly to the prod app's `main` branch (used by the AI workspace in-platform preview, which needs a deployable draft that tracks the published app). Only affects the draft create path. Agents building or iterating on data apps must **not** set this \u2014 iteration drafts always live on their own feature branch, never `main`.",
-      "type": "boolean"
     },
     "authentication_type": {
       "default": "default",

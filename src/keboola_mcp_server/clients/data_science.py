@@ -518,6 +518,23 @@ class AppPreviewLinkResponse(BaseModel):
     )
 
 
+class DraftResponse(BaseModel):
+    """A draft of a data app (`/v2/apps/{appId}/drafts`): its own workload on its own host, syncing a git branch."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: str = Field(description='The draft ID.')
+    url: str | None = Field(default=None, description='The draft host URL; `null` until the platform assigns it.')
+    git_branch: str = Field(
+        validation_alias=AliasChoices('gitBranch', 'git_branch'), description='The git branch the draft syncs.'
+    )
+    run_state: str = Field(
+        validation_alias=AliasChoices('runState', 'run_state'),
+        description='neverRun, pending, starting, running, stopping, stopped or failed.',
+    )
+    created_at: str = Field(validation_alias=AliasChoices('createdAt', 'created_at'), description='Creation time.')
+
+
 class RuntimeResponse(BaseModel):
     """One entry of the data-science runtimes catalog (`GET /runtimes`)."""
 
@@ -647,6 +664,36 @@ class DataScienceClient(KeboolaServiceClient):
                 for err in e.errors(include_input=False, include_url=False)
             )
         raise ValueError(f'Unexpected response from the data-science API preview-link endpoint: {problems}')
+
+    async def create_draft(self, data_app_id: str, git_branch: str) -> DraftResponse:
+        """
+        Create a draft of a data app on an existing git branch.
+
+        - Not idempotent: every call starts another draft workload, so never retry it blindly.
+        - The response always has `url=None`; read the URL from `get_draft`.
+        """
+        response = await self.post(endpoint=f'v2/apps/{data_app_id}/drafts', data={'gitBranch': git_branch})
+        return DraftResponse.model_validate(response)
+
+    async def list_drafts(self, data_app_id: str) -> list[DraftResponse]:
+        """The app's live drafts, newest first."""
+        response = await self.get(endpoint=f'v2/apps/{data_app_id}/drafts')
+        assert isinstance(response, list)
+        return [DraftResponse.model_validate(draft) for draft in response]
+
+    async def get_draft(self, data_app_id: str, draft_id: str) -> DraftResponse:
+        """One draft; 404 when it is gone or belongs to another app."""
+        response = await self.get(endpoint=f'v2/apps/{data_app_id}/drafts/{draft_id}')
+        return DraftResponse.model_validate(response)
+
+    async def delete_draft(self, data_app_id: str, draft_id: str) -> None:
+        """Stop and remove a draft; its git branch stays."""
+        await self.delete(endpoint=f'v2/apps/{data_app_id}/drafts/{draft_id}')
+
+    async def create_draft_preview_link(self, data_app_id: str, draft_id: str) -> AppPreviewLinkResponse:
+        """Mint a 60-second link that opens the draft without the app's login; 400 until the draft has a URL."""
+        response = await self.post(endpoint=f'v2/apps/{data_app_id}/drafts/{draft_id}/preview-link')
+        return AppPreviewLinkResponse.model_validate(response)
 
     async def create_data_app(
         self,
