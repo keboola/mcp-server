@@ -10,7 +10,7 @@ from keboola_mcp_server.cli import parse_args
 from keboola_mcp_server.reported_client_name import reported_name
 from keboola_mcp_server.router import app as router_app
 from keboola_mcp_server.router import rate_limit
-from keboola_mcp_server.router.picker import render_picker
+from keboola_mcp_server.router.picker import ACCOUNT_NOTE, render_picker
 from keboola_mcp_server.router.settings import RouterSettings
 from keboola_mcp_server.router.stacks import DEFAULT_STACKS, parse_stacks, router_issuer, router_resource
 from tests.router.helpers import ROUTER_URL, Upstream, router_client
@@ -225,6 +225,13 @@ class TestAuthorize:
             ('redirect_uri', 'x&stack=com-keboola-gcp-us-east4'),
             ('via', 'router'),
         ]
+
+    def test_the_picker_says_where_to_switch_the_account(self) -> None:
+        with router_client() as client:
+            page = client.get('/authorize')
+
+        assert f'<p class="note">{ACCOUNT_NOTE}</p>' in page.text
+        assert '<form' not in page.text
 
     def test_the_picker_stylesheet_is_served_by_the_router_itself(self) -> None:
         with router_client() as client:
