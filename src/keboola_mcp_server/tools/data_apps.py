@@ -3255,10 +3255,14 @@ async def _fetch_latest_run(client: KeboolaClient, data_app: DataApp) -> AppRunI
     """The most recent run of the app's latest deployment, or None when there is none.
 
     - Runs of the app's drafts are listed under the app too; filtering on the deployment leaves them out.
-    - An app with no `/v2` deployment (never deployed, or a legacy draft) reads its newest run of any kind.
+    - A prod app with no `/v2` deployment has no run of its own: None.
+    - A legacy draft reads its newest run, which is always its own.
     - Diagnostics must not break the detail fetch: any error is logged and reported as "no run info".
     """
-    deployment_id = None if _is_draft_config(data_app.configuration) else data_app.desired_deployment_id
+    is_legacy_draft = _is_draft_config(data_app.configuration)
+    if not is_legacy_draft and not data_app.desired_deployment_id:
+        return None
+    deployment_id = None if is_legacy_draft else data_app.desired_deployment_id
     try:
         runs = await client.data_science_client.list_app_runs(
             data_app.data_app_id, limit=1, deployment_id=deployment_id
