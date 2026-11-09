@@ -4114,8 +4114,8 @@ def test_app_run_info_truncates_long_logs_and_message() -> None:
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ('app_kind', 'desired_deployment_id', 'expected_filter'),
-    [('prod', 'dep-2', 'dep-2'), ('prod', None, None), ('draft', 'dep-9', None)],
-    ids=['prod_latest_deployment', 'prod_never_deployed', 'legacy_draft_any_run'],
+    [('prod', 'dep-2', 'dep-2'), ('draft', 'dep-9', None)],
+    ids=['prod_latest_deployment', 'legacy_draft_any_run'],
 )
 async def test_fetch_latest_run_reads_the_latest_deployment(
     mocker,
@@ -4136,6 +4136,17 @@ async def test_fetch_latest_run_reads_the_latest_deployment(
     )
     assert info is not None
     assert info.failure_reason == 'ConfigDecryptionFailed'
+
+
+@pytest.mark.asyncio
+async def test_fetch_latest_run_of_a_never_deployed_prod_app_is_none(mocker, mcp_context_client: Context) -> None:
+    """With no deployment of its own, a prod app's newest run is a draft's: it reports none."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.data_science_client.list_app_runs = mocker.AsyncMock(return_value=[_make_failed_app_run()])
+    data_app = _preview_app('prod').model_copy(update={'desired_deployment_id': None})
+
+    assert await _fetch_latest_run(keboola_client, data_app) is None
+    keboola_client.data_science_client.list_app_runs.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -4161,7 +4172,9 @@ async def test_get_data_apps_detail_includes_last_run_failure(mocker, mcp_contex
     setup-phase failures (e.g. invalid secrets) produce no container logs at all."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     prod_cfg_id = 'cfg-prod-1'
-    prod = _make_python_js_prod_data_app(configuration_id=prod_cfg_id, state='stopped')
+    prod = _make_python_js_prod_data_app(configuration_id=prod_cfg_id, state='stopped').model_copy(
+        update={'desired_deployment_id': 'dep-1'}
+    )
     keboola_client.storage_client.configuration_list = mocker.AsyncMock(return_value=[])
     keboola_client.data_science_client.list_app_runs = mocker.AsyncMock(return_value=[_make_failed_app_run()])
     keboola_client.data_science_client.list_runtimes = mocker.AsyncMock(return_value=_RUNTIMES)
