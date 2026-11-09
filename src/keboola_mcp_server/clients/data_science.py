@@ -672,7 +672,9 @@ class DataScienceClient(KeboolaServiceClient):
         - Not idempotent: every call starts another draft workload, so never retry it blindly.
         - The response always has `url=None`; read the URL from `get_draft`.
         """
-        response = await self.post(endpoint=f'v2/apps/{data_app_id}/drafts', data={'gitBranch': git_branch})
+        response = await self.post(
+            endpoint=f'v2/apps/{data_app_id}/drafts', data={'gitBranch': git_branch}, retry=False
+        )
         return DraftResponse.model_validate(response)
 
     async def list_drafts(self, data_app_id: str) -> list[DraftResponse]:

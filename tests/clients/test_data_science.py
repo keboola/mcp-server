@@ -572,7 +572,7 @@ async def test_draft_endpoints() -> None:
     listed = await client.list_drafts('app-1')
     await client.delete_draft('app-1', 'd-1')
 
-    client.post.assert_awaited_once_with(endpoint='v2/apps/app-1/drafts', data={'gitBranch': 'feat'})
+    client.post.assert_awaited_once_with(endpoint='v2/apps/app-1/drafts', data={'gitBranch': 'feat'}, retry=False)
     client.get.assert_awaited_once_with(endpoint='v2/apps/app-1/drafts')
     client.delete.assert_awaited_once_with(endpoint='v2/apps/app-1/drafts/d-1')
     assert (created.git_branch, created.run_state, created.url) == ('feat', 'neverRun', None)

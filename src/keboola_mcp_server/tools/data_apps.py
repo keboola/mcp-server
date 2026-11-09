@@ -2,6 +2,7 @@ import asyncio
 import copy
 import logging
 import re
+import uuid
 from collections.abc import Mapping, Sequence
 from http import HTTPStatus
 from importlib import resources
@@ -2403,6 +2404,11 @@ async def create_python_js_data_app_draft(
             f'Configuration "{configuration_id}" is a legacy draft, not a prod app. Pass the prod app\'s '
             f'configuration_id ("{parent}").'
         )
+    if _uses_organization_git_auth(data_app.configuration):
+        raise ValueError(
+            f'Data app "{configuration_id}" deploys from a customer GitHub repository, and drafts of such an app are '
+            'not supported yet. Change the prod app itself and deploy it in production mode.'
+        )
     branch = _normalize_branch_name(git_branch)
     try:
         draft = await client.data_science_client.create_draft(data_app.data_app_id, branch)
@@ -2483,6 +2489,8 @@ async def delete_python_js_data_app_draft(
       Refuses prod apps and Streamlit apps.
     - It runs no git: deleting the branch on the remote is up to you.
     """
+    if draft_id is not None:
+        _validate_draft_id(draft_id)
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
 
@@ -2596,6 +2604,8 @@ async def get_data_app_preview_link(
       change its deploy mode.
     - "not configured on this Keboola stack": preview links are not available here; tell the user.
     """
+    if draft_id is not None:
+        _validate_draft_id(draft_id)
     client = KeboolaClient.from_state(ctx.session.state)
     try:
         data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
@@ -2679,6 +2689,18 @@ def _preview_link_error(exc: httpx.HTTPStatusError, data_app: DataApp) -> ValueE
             "preview link. Tell the user. Do not try the app's password login instead."
         )
     return None
+
+
+def _validate_draft_id(draft_id: str) -> None:
+    """A draft id is a UUID: anything else would turn the draft path into another endpoint."""
+    try:
+        valid = str(uuid.UUID(draft_id)) == draft_id.lower()
+    except ValueError:
+        valid = False
+    if not valid:
+        raise ValueError(
+            f'"{draft_id}" is not a draft id. Pass the `draft_id` of an entry in `drafts` from `get_data_apps`.'
+        )
 
 
 _DRAFTS_NOT_AVAILABLE_MESSAGE = (
