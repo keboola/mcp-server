@@ -57,6 +57,14 @@ def read_service_account_jwt(path: str) -> str:
     return jwt
 
 
+# Transport errors raised before a request left: retrying a non-idempotent call after one starts nothing twice.
+NEVER_SENT_ERRORS: tuple[type[httpx.TransportError], ...] = (
+    httpx.ConnectError,
+    httpx.ConnectTimeout,
+    httpx.PoolTimeout,
+)
+
+
 class InvalidArgumentError(ValueError):
     """An argument was rejected locally, before any request was made."""
 

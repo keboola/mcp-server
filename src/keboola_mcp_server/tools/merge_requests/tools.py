@@ -26,7 +26,7 @@ from mcp.types import ToolAnnotations
 from pydantic import Field, ValidationError
 
 from keboola_mcp_server.authorization import ToolAuthorizationMiddleware
-from keboola_mcp_server.clients.base import JsonDict
+from keboola_mcp_server.clients.base import NEVER_SENT_ERRORS, JsonDict
 from keboola_mcp_server.clients.client import BranchNotFoundError, KeboolaClient
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
@@ -913,7 +913,7 @@ async def merge_merge_request(
     async with _mapped_write_errors():
         try:
             job = await c.client.storage_client.merge_request_merge(mr_id)
-        except (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout):
+        except NEVER_SENT_ERRORS:
             raise  # the request was never sent: nothing started
         except httpx.TransportError as exc:
             unconfirmed = exc
