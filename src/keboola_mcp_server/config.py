@@ -13,6 +13,11 @@ from urllib.parse import urlparse, urlunparse
 LOG = logging.getLogger(__name__)
 _NO_VALUE_MARKER = '__NO_VALUE_MARKER__'
 Transport = Literal['stdio', 'streamable-http', 'http-compat/streamable-http']
+WORKSPACE_SCOPE_STRICT = 'strict'
+
+
+class WorkspaceScopeError(ValueError):
+    """The workspace scope of a session cannot be honoured (see `Config.workspace_scope`)."""
 
 
 def deployed_sa_token_path() -> str | None:
@@ -50,6 +55,11 @@ class Config:
     intentionally does NOT apply to `workspace_schema` (an empty `X-Workspace-Schema` header must
     keep clearing it back to the MCP-managed workspace, same as `branch_id` below) nor to most
     other fields -- it is opt-in per field precisely to avoid that kind of regression."""
+    workspace_scope: str | None = field(default=None, metadata={'empty_means_absent': True, 'require_prefix': True})
+    """`strict` limits the session to the pinned `workspace_id` (e.g. Kai in a Data App with direct-grant input
+    mapping): only the tools in `STRICT_WORKSPACE_SCOPE_TOOLS` are available and no other workspace is ever looked
+    up or created. Supplied per request via the 'X-Workspace-Scope' header; `strict` is the only accepted value, so
+    a header can only tighten a session, never loosen a server-side `strict`."""
     oauth_client_id: str | None = None
     """OAuth client ID registered in the Keboola OAuth Server."""
     oauth_client_secret: str | None = None
@@ -136,7 +146,7 @@ class Config:
     # accepts) e.g. `Jwt-Secret` would let a caller choose the HMAC key that verifies their own
     # `scope_token`, forging arbitrary `project_ids` -- see the "Security hardening" RFC increment.
     # `workspace_id` is included since `X-Workspace-Id` is a legitimate per-request pin (see its
-    # field docstring above).
+    # field docstring above), and so is `workspace_scope`, which can only narrow a session.
     _HEADER_ELIGIBLE_FIELDS: ClassVar[frozenset[str]] = frozenset(
         {
             'storage_api_url',
@@ -144,6 +154,7 @@ class Config:
             'branch_id',
             'workspace_schema',
             'workspace_id',
+            'workspace_scope',
             'bearer_token',
             'conversation_id',
             'project_id',
@@ -175,6 +186,33 @@ class Config:
 
         if self.workspace_id is not None and not self.workspace_id.isdigit():
             raise ValueError(f'Invalid workspace_id: {self.workspace_id!r}')
+
+        if self.workspace_scope is not None:
+            if self.workspace_scope.strip().lower() != WORKSPACE_SCOPE_STRICT:
+                raise WorkspaceScopeError(f'Invalid workspace_scope: {self.workspace_scope!r}')
+            object.__setattr__(self, 'workspace_scope', WORKSPACE_SCOPE_STRICT)
+
+    @property
+    def is_strict_workspace_scope(self) -> bool:
+        return self.workspace_scope == WORKSPACE_SCOPE_STRICT
+
+    def check_workspace_scope(self) -> None:
+        """Raises `WorkspaceScopeError` for a strict scope without a workspace pin: such a session would fall back to
+        the MCP-managed workspace, which can read the whole project -- exactly what the strict scope prevents."""
+        if self.is_strict_workspace_scope and self.workspace_id is None:
+            raise WorkspaceScopeError(
+                'A strict workspace scope (X-Workspace-Scope) requires a workspace pin (X-Workspace-Id).'
+            )
+
+    @classmethod
+    def count_header_values(cls, headers: Mapping[str, str], field_name: str) -> int:
+        """How many of the headers would set `field_name`, under any accepted spelling, repeated headers included
+        (a Starlette `Headers.items()` lists each of them)."""
+        f = next(f for f in dataclasses.fields(cls) if f.name == field_name)
+        names = [f.name] + f.metadata.get('aliases', [])
+        prefixes = ('KBC_', 'X-') if f.metadata.get('require_prefix', False) else ('', 'KBC_', 'X-')
+        spellings = {cls._normalize(f'{prefix}{name}') for name in names for prefix in prefixes}
+        return sum(1 for key, _ in headers.items() if cls._normalize(key) in spellings)
 
     @staticmethod
     def _normalize(name: str) -> str:
