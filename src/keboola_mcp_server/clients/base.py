@@ -241,6 +241,7 @@ class RawKeboolaClient:
         params: dict[str, Any] | None = None,
         headers: dict[str, Any] | None = None,
         timeout: httpx.Timeout | None = None,
+        retry: bool = True,
     ) -> JsonStruct:
         """
         Makes a POST request to the service API.
@@ -250,13 +251,15 @@ class RawKeboolaClient:
         :param params: Query parameters for the request
         :param headers: Additional headers for the request
         :param timeout: Optional per-call timeout override; falls back to the client default when None
+        :param retry: Whether to apply the retry policy; False for calls that start a non-idempotent operation
         :return: API response as dictionary
         """
         if self.readonly:
             raise RuntimeError(f'Forbidden POST operation on a readonly client: {self.base_api_url}')
 
         headers = self.headers | (headers or {})
-        async with httpx.AsyncClient(timeout=timeout or self.timeout, transport=self._create_transport()) as client:
+        transport = self._create_transport(retry=retry)
+        async with httpx.AsyncClient(timeout=timeout or self.timeout, transport=transport) as client:
             response = await client.post(
                 f'{self.base_api_url}/{endpoint}',
                 params=params,
@@ -410,6 +413,7 @@ class KeboolaServiceClient:
         data: dict[str, Any] | None = None,
         params: dict[str, Any] | None = None,
         timeout: httpx.Timeout | None = None,
+        retry: bool = True,
     ) -> JsonStruct:
         """
         Makes a POST request to the service API.
@@ -418,9 +422,12 @@ class KeboolaServiceClient:
         :param data: Request payload
         :param params: Query parameters for the request
         :param timeout: Optional per-call timeout override; falls back to the client default when None
+        :param retry: Whether to apply the retry policy; False for calls that start a non-idempotent operation
         :return: API response as dictionary
         """
-        return await self.raw_client.post(endpoint=endpoint, data=data, params=params, timeout=timeout)
+        # Forwarded only when opting out, so the default call to the raw client stays the plain one.
+        extra: dict[str, Any] = {} if retry else {'retry': False}
+        return await self.raw_client.post(endpoint=endpoint, data=data, params=params, timeout=timeout, **extra)
 
     async def put(
         self,

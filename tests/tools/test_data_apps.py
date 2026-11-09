@@ -3908,7 +3908,9 @@ async def test_get_data_apps_detail_for_draft_returns_empty_drafts(
     detail = result.data_apps[0]
     assert isinstance(detail, DataApp)
     assert detail.legacy_drafts == []
+    assert detail.drafts == []
     keboola_client.storage_client.configuration_list.assert_not_called()
+    keboola_client.data_science_client.list_drafts.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -3931,7 +3933,9 @@ async def test_get_data_apps_detail_for_streamlit_returns_empty_drafts(
     detail = result.data_apps[0]
     assert isinstance(detail, DataApp)
     assert detail.legacy_drafts == []
+    assert detail.drafts == []
     keboola_client.storage_client.configuration_list.assert_not_called()
+    keboola_client.data_science_client.list_drafts.assert_not_called()
 
 
 # ===== Tests for delete_python_js_data_app_draft =====
@@ -5101,6 +5105,21 @@ async def test_create_python_js_data_app_draft_returns_a_draft_without_url(
     assert result.draft.url is None
     assert result.change_summary is not None
     assert 'do not create another draft' in result.change_summary
+    # A failed read ends the wait at once; the deadline case never reads.
+    assert keboola_client.data_science_client.get_draft.await_count == (1 if wait_seconds else 0)
+
+
+@pytest.mark.asyncio
+async def test_create_python_js_data_app_draft_reraises_an_unsent_request(mocker, mcp_context_client: Context) -> None:
+    """A request that never left starts no draft, so the connection error goes up as it is."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    mocker.patch(
+        'keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=_preview_app('prod'))
+    )
+    keboola_client.data_science_client.create_draft = mocker.AsyncMock(side_effect=httpx.ConnectError('refused'))
+
+    with pytest.raises(httpx.ConnectError):
+        await create_python_js_data_app_draft(ctx=mcp_context_client, configuration_id='cfg-prod-1', git_branch='x')
 
 
 @pytest.mark.asyncio
@@ -5109,6 +5128,7 @@ async def test_create_python_js_data_app_draft_returns_a_draft_without_url(
     [
         ('draft', None, 'is a legacy draft, not a prod app'),
         ('streamlit', None, 'only python-js apps have drafts'),
+        ('organization', None, 'customer GitHub repository.*not supported yet'),
         ('prod', httpx.ReadTimeout('timed out'), 'may exist already.*get_data_apps'),
         (
             'prod',
@@ -5121,7 +5141,7 @@ async def test_create_python_js_data_app_draft_returns_a_draft_without_url(
             'not available on this Keboola stack',
         ),
     ],
-    ids=['legacy_draft', 'streamlit', 'missing_branch', 'no_route', 'unanswered'],
+    ids=['legacy_draft', 'streamlit', 'organization', 'missing_branch', 'no_route', 'unanswered'],
 )
 async def test_create_python_js_data_app_draft_errors(
     mocker, mcp_context_client: Context, app_kind: str, error: httpx.HTTPError | None, match: str
@@ -5148,18 +5168,20 @@ async def test_delete_python_js_data_app_draft_by_draft_id(mocker, mcp_context_c
     keboola_client.data_science_client.delete_data_app = mocker.AsyncMock()
 
     result = await delete_python_js_data_app_draft(
-        ctx=mcp_context_client, configuration_id='cfg-prod-1', draft_id='d-1'
+        ctx=mcp_context_client, configuration_id='cfg-prod-1', draft_id='01a1c00c-07e3-7c46-99ec-6a814a0baa19'
     )
 
-    keboola_client.data_science_client.delete_draft.assert_awaited_once_with('app-prod-1', 'd-1')
+    keboola_client.data_science_client.delete_draft.assert_awaited_once_with(
+        'app-prod-1', '01a1c00c-07e3-7c46-99ec-6a814a0baa19'
+    )
     keboola_client.data_science_client.delete_data_app.assert_not_called()
-    assert (result.response, result.draft_id) == ('deleted', 'd-1')
+    assert (result.response, result.draft_id) == ('deleted', '01a1c00c-07e3-7c46-99ec-6a814a0baa19')
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ('status', 'expected', 'match'),
-    [(404, ValueError, 'has no draft "d-1"'), (500, httpx.HTTPStatusError, None)],
+    [(404, ValueError, 'has no draft "01a1c00c-07e3-7c46-99ec-6a814a0baa19"'), (500, httpx.HTTPStatusError, None)],
     ids=['gone_is_reported', 'server_error_is_raised'],
 )
 async def test_delete_python_js_data_app_draft_errors(
@@ -5170,20 +5192,32 @@ async def test_delete_python_js_data_app_draft_errors(
     prod = _make_python_js_prod_data_app(configuration_id='cfg-prod-1', data_app_id='app-prod-1')
     mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=prod))
     keboola_client.data_science_client.delete_draft = mocker.AsyncMock(
-        side_effect=_http_error(status, _sandboxes_error(status, 'Draft "d-1" not found.'))
+        side_effect=_http_error(
+            status, _sandboxes_error(status, 'Draft "01a1c00c-07e3-7c46-99ec-6a814a0baa19" not found.')
+        )
     )
 
     with pytest.raises(expected, match=match):
-        await delete_python_js_data_app_draft(ctx=mcp_context_client, configuration_id='cfg-prod-1', draft_id='d-1')
+        await delete_python_js_data_app_draft(
+            ctx=mcp_context_client, configuration_id='cfg-prod-1', draft_id='01a1c00c-07e3-7c46-99ec-6a814a0baa19'
+        )
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ('status', 'message', 'match'),
     [
-        (400, 'Draft "d-1" has no URL yet.', 'has no URL yet: it is still starting'),
-        (404, 'Draft "d-1" not found.', 'has no draft "d-1"'),
-        (404, 'No route found for "POST /v2/apps/app-prod-1/drafts/d-1/preview-link"', 'not available on this'),
+        (400, 'Draft "01a1c00c-07e3-7c46-99ec-6a814a0baa19" has no URL yet.', 'has no URL yet: it is still starting'),
+        (
+            404,
+            'Draft "01a1c00c-07e3-7c46-99ec-6a814a0baa19" not found.',
+            'has no draft "01a1c00c-07e3-7c46-99ec-6a814a0baa19"',
+        ),
+        (
+            404,
+            'No route found for "POST /v2/apps/app-prod-1/drafts/01a1c00c-07e3-7c46-99ec-6a814a0baa19/preview-link"',
+            'not available on this',
+        ),
         (403, 'Access denied.', 'cannot manage data app "cfg-prod-1"'),
     ],
     ids=['no_url', 'not_found', 'no_route', 'forbidden'],
@@ -5199,8 +5233,12 @@ async def test_get_data_app_preview_link_for_draft(
     )
 
     with pytest.raises(ValueError, match=match):
-        await get_data_app_preview_link(ctx=mcp_context_client, configuration_id='cfg-prod-1', draft_id='d-1')
-    keboola_client.data_science_client.create_draft_preview_link.assert_awaited_once_with('app-prod-1', 'd-1')
+        await get_data_app_preview_link(
+            ctx=mcp_context_client, configuration_id='cfg-prod-1', draft_id='01a1c00c-07e3-7c46-99ec-6a814a0baa19'
+        )
+    keboola_client.data_science_client.create_draft_preview_link.assert_awaited_once_with(
+        'app-prod-1', '01a1c00c-07e3-7c46-99ec-6a814a0baa19'
+    )
 
 
 @pytest.mark.asyncio
@@ -5213,7 +5251,30 @@ async def test_get_data_app_preview_link_for_draft_returns_the_link(mocker, mcp_
     )
     keboola_client.data_science_client.create_draft_preview_link = mocker.AsyncMock(return_value=link)
 
-    result = await get_data_app_preview_link(ctx=mcp_context_client, configuration_id='cfg-prod-1', draft_id='d-1')
+    result = await get_data_app_preview_link(
+        ctx=mcp_context_client, configuration_id='cfg-prod-1', draft_id='01a1c00c-07e3-7c46-99ec-6a814a0baa19'
+    )
 
-    keboola_client.data_science_client.create_draft_preview_link.assert_awaited_once_with('app-prod-1', 'd-1')
+    keboola_client.data_science_client.create_draft_preview_link.assert_awaited_once_with(
+        'app-prod-1', '01a1c00c-07e3-7c46-99ec-6a814a0baa19'
+    )
     assert (result.url, result.link_expires_at) == (link.url, link.link_expires_at)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('draft_id', ['..', '../..', 'a/b', ''], ids=['dot_dot', 'two_up', 'slash', 'empty'])
+@pytest.mark.parametrize('tool', ['delete', 'preview'])
+async def test_draft_tools_refuse_a_draft_id_that_is_not_one(
+    mocker, mcp_context_client: Context, tool: str, draft_id: str
+) -> None:
+    """A draft id lands in the request path: `..` would reach the prod app itself, so only a UUID passes."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.data_science_client = mocker.AsyncMock()
+    fetch = mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock())
+    call = delete_python_js_data_app_draft if tool == 'delete' else get_data_app_preview_link
+
+    with pytest.raises(ValueError, match='is not a draft id'):
+        await call(ctx=mcp_context_client, configuration_id='cfg-prod-1', draft_id=draft_id)
+    fetch.assert_not_called()
+    keboola_client.data_science_client.delete_draft.assert_not_called()
+    keboola_client.data_science_client.create_draft_preview_link.assert_not_called()

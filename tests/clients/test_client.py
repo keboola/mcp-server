@@ -102,6 +102,19 @@ class TestRawKeboolaClient:
 
         assert type(transport) is expected_type
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize('retry', [True, False], ids=['default_retries', 'opt_out'])
+    async def test_post_passes_the_retry_choice_to_its_transport(
+        self, raw_client: RawKeboolaClient, mocker, retry: bool
+    ) -> None:
+        """A POST that starts a non-idempotent operation (a draft workload) is sent once, never retried."""
+        transport = httpx.MockTransport(lambda request: httpx.Response(201, json={}))
+        create_transport = mocker.patch.object(raw_client, '_create_transport', return_value=transport)
+
+        await raw_client.post('drafts', data={}, retry=retry)
+
+        create_transport.assert_called_once_with(retry=retry)
+
     def test_raise_for_status_500_with_exception_id(
         self, raw_client: RawKeboolaClient, mock_http_response_500: httpx.Response
     ):
