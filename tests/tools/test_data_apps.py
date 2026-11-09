@@ -5055,6 +5055,28 @@ async def test_create_python_js_data_app_draft_waits_for_url(mocker, mcp_context
 
 
 @pytest.mark.asyncio
+async def test_create_python_js_data_app_draft_survives_a_failed_poll(mocker, mcp_context_client: Context) -> None:
+    """The POST created the draft: a failing read while waiting for its URL still returns it, never an error."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    prod = _make_python_js_prod_data_app(configuration_id='cfg-prod-1', data_app_id='app-prod-1')
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=prod))
+    mocker.patch('keboola_mcp_server.tools.data_apps.asyncio.sleep', mocker.AsyncMock())
+    keboola_client.data_science_client.create_draft = mocker.AsyncMock(return_value=_draft(None))
+    keboola_client.data_science_client.get_draft = mocker.AsyncMock(
+        side_effect=_http_error(500, _sandboxes_error(500, 'Internal Server Error occurred.'))
+    )
+
+    result = await create_python_js_data_app_draft(
+        ctx=mcp_context_client, configuration_id='cfg-prod-1', git_branch='feat'
+    )
+
+    assert result.draft.draft_id == 'd-1'
+    assert result.draft.url is None
+    assert result.change_summary is not None
+    assert 'do not create another draft' in result.change_summary
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ('app_kind', 'error', 'match'),
     [
