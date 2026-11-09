@@ -2418,7 +2418,14 @@ async def create_python_js_data_app_draft(
     deadline = loop.time() + _DRAFT_URL_WAIT_SECONDS
     while draft.url is None and loop.time() < deadline:
         await asyncio.sleep(_DRAFT_URL_POLL_SECONDS)
-        draft = await client.data_science_client.get_draft(data_app.data_app_id, draft.id)
+        try:
+            draft = await client.data_science_client.get_draft(data_app.data_app_id, draft.id)
+        except Exception:
+            # The draft exists already: a failed read must not make the caller create another one.
+            LOG.exception(
+                f'Failed to read draft {draft.id} of data app {data_app.data_app_id} while waiting for its URL'
+            )
+            break
 
     change_summary = (
         None
