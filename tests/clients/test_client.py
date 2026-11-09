@@ -12,7 +12,7 @@ from pytest_mock import MockerFixture
 
 from keboola_mcp_server.clients import client as client_module
 from keboola_mcp_server.clients.auth_bridge import StorageTokenExchangeError, StorageTokenResolver
-from keboola_mcp_server.clients.base import RawKeboolaClient
+from keboola_mcp_server.clients.base import KeboolaServiceClient, RawKeboolaClient
 from keboola_mcp_server.clients.client import BranchNotFoundError, KeboolaClient, get_metadata_property
 from keboola_mcp_server.clients.storage import AsyncStorageClient
 from keboola_mcp_server.config import ServerRuntimeInfo
@@ -114,6 +114,16 @@ class TestRawKeboolaClient:
         await raw_client.post('drafts', data={}, retry=retry)
 
         create_transport.assert_called_once_with(retry=retry)
+
+    @pytest.mark.asyncio
+    async def test_service_client_post_forwards_the_retry_opt_out(self) -> None:
+        """A service client's non-idempotent POST reaches the raw client still opted out of retries."""
+        raw_client = Mock(spec=RawKeboolaClient)
+        raw_client.post = AsyncMock(return_value={})
+
+        await KeboolaServiceClient(raw_client).post('drafts', data={}, retry=False)
+
+        raw_client.post.assert_awaited_once_with(endpoint='drafts', data={}, params=None, timeout=None, retry=False)
 
     def test_raise_for_status_500_with_exception_id(
         self, raw_client: RawKeboolaClient, mock_http_response_500: httpx.Response

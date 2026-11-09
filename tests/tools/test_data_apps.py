@@ -5126,25 +5126,35 @@ async def test_create_python_js_data_app_draft_reraises_an_unsent_request(mocker
 @pytest.mark.parametrize(
     ('app_kind', 'error', 'match'),
     [
-        ('draft', None, 'is a legacy draft, not a prod app'),
-        ('streamlit', None, 'only python-js apps have drafts'),
-        ('organization', None, 'customer GitHub repository.*not supported yet'),
-        ('prod', httpx.ReadTimeout('timed out'), 'may exist already.*get_data_apps'),
-        (
+        pytest.param('draft', None, 'is a legacy draft, not a prod app', id='legacy_draft'),
+        pytest.param('streamlit', None, 'only python-js apps have drafts', id='streamlit'),
+        pytest.param('organization', None, 'customer GitHub repository.*not supported yet', id='organization'),
+        pytest.param('prod', httpx.ReadTimeout('timed out'), 'may exist already.*get_data_apps', id='unanswered'),
+        pytest.param(
+            'prod', _http_error(502, {'error': 'Bad Gateway'}), 'may exist already.*get_data_apps', id='server_error'
+        ),
+        pytest.param(
+            'prod',
+            ValueError('1 validation error for DraftResponse'),
+            'may exist already.*get_data_apps',
+            id='unreadable_answer',
+        ),
+        pytest.param(
             'prod',
             _http_error(400, _sandboxes_error(400, 'Branch "x" does not exist in the app\'s Git repository.')),
             'does not exist.*Push the branch first',
+            id='missing_branch',
         ),
-        (
+        pytest.param(
             'prod',
             _http_error(404, _sandboxes_error(404, 'No route found for "POST /v2/apps/a/drafts"')),
             'not available on this Keboola stack',
+            id='no_route',
         ),
     ],
-    ids=['legacy_draft', 'streamlit', 'organization', 'missing_branch', 'no_route', 'unanswered'],
 )
 async def test_create_python_js_data_app_draft_errors(
-    mocker, mcp_context_client: Context, app_kind: str, error: httpx.HTTPError | None, match: str
+    mocker, mcp_context_client: Context, app_kind: str, error: Exception | None, match: str
 ) -> None:
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     mocker.patch(

@@ -157,17 +157,6 @@ _DEFAULT_PACKAGES = ['pandas', 'httpx']
 # for `git clone` to accept the URL without prompting.
 _MANAGED_GIT_REPO_USERNAME = 'kai'
 
-# Prefix of the auto-generated default draft branch, used when the agent doesn't supply a
-# descriptive branch via `branch=`. The generated name carries a random suffix, mirroring the
-# unique `-draft-<hex>` slug suffix produced by `_derive_slug_from_name`.
-#
-# This used to be a fixed literal, which meant every default-branch draft on a given prod app
-# landed on the SAME branch name. `git checkout <branch>` in a fresh clone where `origin/<branch>`
-# already exists silently checks out that stale remote tip instead of branching off `main`, so the
-# draft previewed — and could promote — outdated code with no error raised anywhere. A unique name
-# per draft makes that collision impossible.
-_DEFAULT_DRAFT_BRANCH_PREFIX = 'draft'
-
 # How much of an AppRun's diagnostics is surfaced in tool output. `failure_message` can embed the
 # entire startup log (StartupProbeFailed duplicates it verbatim), so both are trimmed to keep the
 # tool output bounded while preserving the error tail, which is where the actionable line lives.
@@ -222,6 +211,15 @@ _NO_AUTH_ON_DRAFT_MESSAGE = (
     "'basic-auth' or 'default'; if the user explicitly wants the published app to be public, set "
     "'no-auth' on the prod app."
 )
+
+
+def _draft_may_exist(configuration_id: str, branch: str) -> ValueError:
+    """The error for a draft request that was sent but has no usable answer."""
+    return ValueError(
+        f'The draft request got no usable answer, so the draft may exist already. Check '
+        f'get_data_apps(configuration_ids=["{configuration_id}"]) for a draft on "{branch}" before calling '
+        'this tool again.'
+    )
 
 
 def _reject_no_auth_on_draft(authentication_type: str) -> None:
@@ -2414,20 +2412,18 @@ async def create_python_js_data_app_draft(
         draft = await client.data_science_client.create_draft(data_app.data_app_id, branch)
     except NEVER_SENT_ERRORS:
         raise  # never sent: no draft exists
-    except httpx.TransportError as e:
-        # Sent but unanswered: the draft may exist, and another call would start a second one.
-        raise ValueError(
-            f'The draft request got no answer, so the draft may exist already. Check '
-            f'get_data_apps(configuration_ids=["{configuration_id}"]) for a draft on "{branch}" before calling '
-            'this tool again.'
-        ) from e
     except httpx.HTTPStatusError as e:
         api_error = _api_error_text(e.response)
         if e.response.status_code == HTTPStatus.BAD_REQUEST and _DRAFT_BRANCH_MISSING in api_error:
             raise ValueError(f'{api_error} Push the branch first, then call this tool again.') from e
         if e.response.status_code == HTTPStatus.NOT_FOUND and _PREVIEW_LINK_NO_ROUTE in api_error:
             raise ValueError(_DRAFTS_NOT_AVAILABLE_MESSAGE) from e
-        raise
+        if e.response.status_code < HTTPStatus.INTERNAL_SERVER_ERROR:
+            raise
+        raise _draft_may_exist(configuration_id, branch) from e
+    except (httpx.TransportError, ValueError) as e:
+        # Unanswered, or answered with a body that does not read as a draft.
+        raise _draft_may_exist(configuration_id, branch) from e
 
     loop = asyncio.get_running_loop()
     deadline = loop.time() + _DRAFT_URL_WAIT_SECONDS
