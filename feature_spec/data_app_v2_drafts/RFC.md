@@ -14,8 +14,8 @@ app's configuration. The MCP tools do not use them.
 
 | Tool | Behaviour |
 | --- | --- |
-| `create_python_js_data_app_draft(configuration_id, git_branch)` (new) | Creates a draft of the prod app on an existing branch, waits up to 30 s for its URL, returns `draft_id`, `git_branch`, `url`, `run_state`. Never retries the POST (not idempotent); a failed URL read still returns the draft. |
-| `get_data_apps` (prod detail) | `drafts`: the v2 drafts, or `null` when they could not be listed. `legacy_drafts`: the old draft configurations. `last_run` skips the drafts' runs (`mode="dev"`). |
+| `create_python_js_data_app_draft(configuration_id, git_branch)` (new) | Creates a draft of the prod app on an existing branch, waits up to 30 s in total for its URL, returns `draft_id`, `git_branch`, `url`, `run_state`. Never retries the POST (not idempotent); a failed URL read still returns the draft. |
+| `get_data_apps` (prod detail) | `drafts`: the v2 drafts; `drafts_unavailable: true` when they could not be listed. `legacy_drafts`: the old draft configurations. `last_run` is the latest run of the prod app's `desired_deployment_id` (the `deploymentId` filter), so the drafts' runs are left out. |
 | `get_data_app_preview_link(configuration_id, draft_id?)` | With `draft_id`: a 60 s link to that draft. Without: unchanged, for a legacy draft. |
 | `delete_python_js_data_app_draft(configuration_id, draft_id?)` | With `draft_id`: deletes that draft of the prod app. Without: deletes a legacy draft configuration. |
 | `modify_python_js_data_app` | No longer creates drafts: `parent_configuration_id` and `allow_main_branch` are removed. |

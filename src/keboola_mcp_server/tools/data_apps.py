@@ -560,11 +560,15 @@ class DataApp(BaseModel):
         description='Deployment info of the data app including a url of the app and logs to diagnose in-app errors.',
         default=None,
     )
-    drafts: list[DraftInfo] | None = Field(
+    drafts: list[DraftInfo] = Field(
         default_factory=list,
+        description='Live drafts of this python-js prod app, newest first. Empty for legacy drafts and Streamlit apps.',
+    )
+    drafts_unavailable: bool = Field(
+        default=False,
         description=(
-            'Live drafts of this python-js prod app, newest first. Empty for legacy drafts and Streamlit apps. '
-            '`null` when the drafts could not be listed on this call: retry before concluding there are none.'
+            'True when the drafts could not be listed on this call: `drafts` is incomplete; retry before concluding '
+            'there are none.'
         ),
     )
     legacy_drafts: list[DataAppSummary] = Field(
@@ -2241,8 +2245,7 @@ async def deploy_data_app(
       deploy was triggered -- deploy again to publish it.
 
     ## Streamlit apps
-    Streamlit apps have no managed git repo, so `mode` has no effect on the deployed app.
-    `mode=None` is the expected call shape.
+    Streamlit apps have no managed git repo; deploy them without `mode`.
 
     ## General considerations
     - Redeploying a data app takes some time; the app reports `state="starting"` until the new deployment serves
@@ -2323,14 +2326,12 @@ async def deploy_data_app(
 
 
 async def _trigger_deploy(
-    client: KeboolaClient, data_app: DataApp, config_version: str, mode: Literal['dev', 'production'] | None
+    client: KeboolaClient, data_app: DataApp, config_version: str, mode: Literal['production'] | None
 ) -> None:
     """Ask the data-science API to deploy `config_version`, mapping known refusals to actionable errors."""
     try:
         if mode is not None:
-            await client.data_science_client.deploy_data_app_in_mode(
-                data_app.data_app_id, config_version, 'dev' if mode == 'dev' else 'prod'
-            )
+            await client.data_science_client.deploy_data_app_in_mode(data_app.data_app_id, config_version, 'prod')
         else:
             await client.data_science_client.deploy_data_app(data_app.data_app_id, config_version)
     except httpx.HTTPStatusError as e:
@@ -2425,18 +2426,17 @@ async def create_python_js_data_app_draft(
         # Unanswered, or answered with a body that does not read as a draft.
         raise _draft_may_exist(configuration_id, branch) from e
 
-    loop = asyncio.get_running_loop()
-    deadline = loop.time() + _DRAFT_URL_WAIT_SECONDS
-    while draft.url is None and loop.time() < deadline:
-        await asyncio.sleep(_DRAFT_URL_POLL_SECONDS)
-        try:
-            draft = await client.data_science_client.get_draft(data_app.data_app_id, draft.id)
-        except Exception:
-            # The draft exists already: a failed read must not make the caller create another one.
-            LOG.exception(
-                f'Failed to read draft {draft.id} of data app {data_app.data_app_id} while waiting for its URL'
-            )
-            break
+    try:
+        # One budget for the whole wait, so a stalled read (timeouts, retries) cannot outlast it.
+        async with asyncio.timeout(_DRAFT_URL_WAIT_SECONDS):
+            while draft.url is None:
+                await asyncio.sleep(_DRAFT_URL_POLL_SECONDS)
+                draft = await client.data_science_client.get_draft(data_app.data_app_id, draft.id)
+    except TimeoutError:
+        LOG.info(f'Draft {draft.id} of data app {data_app.data_app_id} has no URL after {_DRAFT_URL_WAIT_SECONDS} s')
+    except Exception:
+        # The draft exists already: a failed read must not make the caller create another one.
+        LOG.exception(f'Failed to read draft {draft.id} of data app {data_app.data_app_id} while waiting for its URL')
 
     change_summary = (
         None
@@ -3041,10 +3041,12 @@ async def _fetch_data_app_details_task(
         data_app = data_app.with_links(links).with_deployment_info(logs, last_run=last_run)
         # Legacy drafts and Streamlit apps have no drafts of their own.
         if data_app.type == 'python-js' and not _is_draft_config(data_app.configuration):
-            (data_app.legacy_drafts, data_app.legacy_drafts_unavailable), data_app.drafts = await asyncio.gather(
+            (data_app.legacy_drafts, data_app.legacy_drafts_unavailable), drafts = await asyncio.gather(
                 _fetch_prod_drafts(client, prod_configuration_id=data_app.configuration_id),
                 _list_drafts_or_none(client, data_app.data_app_id),
             )
+            data_app.drafts = drafts or []
+            data_app.drafts_unavailable = drafts is None
         return data_app
     except Exception:
         LOG.exception(f'Failed to fetch data app by configuration ID: {configuration_id}')

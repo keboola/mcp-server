@@ -1,14 +1,15 @@
+import asyncio
 import copy
 import re
 import sys
 from types import ModuleType
-from typing import Literal, cast
+from typing import Any, Literal, cast
 from unittest.mock import MagicMock
 
 import pytest
 from fastmcp import Context
 
-from keboola_mcp_server.clients.base import JsonDict
+from keboola_mcp_server.clients.base import NEVER_SENT_ERRORS, JsonDict
 from keboola_mcp_server.clients.client import DATA_APP_COMPONENT_ID, KeboolaClient
 from keboola_mcp_server.clients.data_science import (
     AppProductionResponse,
@@ -21,6 +22,7 @@ from keboola_mcp_server.clients.data_science import (
 from keboola_mcp_server.clients.storage import ConfigurationAPIResponse
 from keboola_mcp_server.errors import is_caller_error
 from keboola_mcp_server.links import Link
+from keboola_mcp_server.mcp import toon_serializer_compact
 from keboola_mcp_server.tools.data_apps import (
     _APP_RUN_LOG_LINES,
     _APP_RUN_MESSAGE_LIMIT,
@@ -3260,7 +3262,7 @@ async def test_deploy_data_app_publishes_latest_config_version_and_reports_publi
     result = await deploy_data_app(ctx=mcp_context_client, action='deploy', configuration_id='cfg-1', mode=mode)
 
     keboola_client.storage_client.configuration_version_latest.assert_awaited_once_with(DATA_APP_COMPONENT_ID, 'cfg-1')
-    # A mode deploy (a draft in dev mode) goes through /v1, which /v2 has no counterpart of.
+    # A `mode` deploy goes through /v1, which /v2 has no counterpart of.
     if mode is None:
         keboola_client.data_science_client.deploy_data_app.assert_awaited_once_with('app-1', '5')
         keboola_client.data_science_client.deploy_data_app_in_mode.assert_not_awaited()
@@ -3818,7 +3820,7 @@ async def test_get_data_apps_detail_for_prod_lists_drafts(
     detail = result.data_apps[0]
     assert isinstance(detail, DataApp)
     keboola_client.data_science_client.list_drafts.assert_awaited_once_with(prod.data_app_id)
-    assert detail.drafts is not None
+    assert detail.drafts_unavailable is False
     assert {d.draft_id: d.git_branch for d in detail.drafts} == {f'd-{i}': f'v2-{i}' for i in range(n_drafts)}
     assert {d.configuration_id: d.git_branch for d in detail.legacy_drafts} == {
         cfg_id: f'branch-{cfg_id}' for cfg_id in draft_cfg_ids
@@ -3829,7 +3831,8 @@ async def test_get_data_apps_detail_for_prod_lists_drafts(
 
 @pytest.mark.asyncio
 async def test_get_data_apps_detail_for_prod_reports_unlisted_drafts(mocker, mcp_context_client: Context) -> None:
-    """A failing drafts listing (e.g. a stack without the drafts API) leaves `drafts` null, not empty."""
+    """A failing drafts listing (e.g. a stack without the drafts API) is flagged, and the flag survives the
+    compact serializer that drops null values."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     prod = _make_python_js_prod_data_app(configuration_id='cfg-prod-1')
     keboola_client.storage_client.configuration_list = mocker.AsyncMock(return_value=[])
@@ -3844,7 +3847,9 @@ async def test_get_data_apps_detail_for_prod_reports_unlisted_drafts(mocker, mcp
     result = await get_data_apps(ctx=mcp_context_client, configuration_ids=['cfg-prod-1'])
     detail = result.data_apps[0]
     assert isinstance(detail, DataApp)
-    assert detail.drafts is None
+    assert detail.drafts == []
+    assert detail.drafts_unavailable is True
+    assert 'drafts_unavailable: true' in toon_serializer_compact(detail)
 
 
 @pytest.mark.asyncio
@@ -5078,24 +5083,22 @@ async def test_create_python_js_data_app_draft_waits_for_url(mocker, mcp_context
 @pytest.mark.parametrize(
     ('wait_seconds', 'get_draft'),
     [
-        (0, _draft(None)),
+        (0.05, asyncio.Event().wait),
         (30, _http_error(500, _sandboxes_error(500, 'Internal Server Error occurred.'))),
     ],
-    ids=['deadline', 'failed_poll'],
+    ids=['stalled_read', 'failed_poll'],
 )
 async def test_create_python_js_data_app_draft_returns_a_draft_without_url(
-    mocker, mcp_context_client: Context, wait_seconds: int, get_draft: DraftResponse | Exception
+    mocker, mcp_context_client: Context, wait_seconds: float, get_draft: Any
 ) -> None:
-    """The POST created the draft: past the wait budget, or after a failed read, it is returned without a URL."""
+    """The POST created the draft: when a read outlasts the wait budget, or fails, it is returned without a URL."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     prod = _make_python_js_prod_data_app(configuration_id='cfg-prod-1', data_app_id='app-prod-1')
     mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=prod))
     mocker.patch('keboola_mcp_server.tools.data_apps._DRAFT_URL_WAIT_SECONDS', wait_seconds)
-    mocker.patch('keboola_mcp_server.tools.data_apps.asyncio.sleep', mocker.AsyncMock())
+    mocker.patch('keboola_mcp_server.tools.data_apps._DRAFT_URL_POLL_SECONDS', 0)
     keboola_client.data_science_client.create_draft = mocker.AsyncMock(return_value=_draft(None))
-    keboola_client.data_science_client.get_draft = mocker.AsyncMock(
-        **({'side_effect': get_draft} if isinstance(get_draft, Exception) else {'return_value': get_draft})
-    )
+    keboola_client.data_science_client.get_draft = mocker.AsyncMock(side_effect=get_draft)
 
     result = await create_python_js_data_app_draft(
         ctx=mcp_context_client, configuration_id='cfg-prod-1', git_branch='feat'
@@ -5105,20 +5108,23 @@ async def test_create_python_js_data_app_draft_returns_a_draft_without_url(
     assert result.draft.url is None
     assert result.change_summary is not None
     assert 'do not create another draft' in result.change_summary
-    # A failed read ends the wait at once; the deadline case never reads.
-    assert keboola_client.data_science_client.get_draft.await_count == (1 if wait_seconds else 0)
+    # The stalled read is cut off by the budget; a failed read ends the wait at once.
+    assert keboola_client.data_science_client.get_draft.await_count == 1
 
 
 @pytest.mark.asyncio
-async def test_create_python_js_data_app_draft_reraises_an_unsent_request(mocker, mcp_context_client: Context) -> None:
+@pytest.mark.parametrize('error', NEVER_SENT_ERRORS)
+async def test_create_python_js_data_app_draft_reraises_an_unsent_request(
+    mocker, mcp_context_client: Context, error: type[httpx.TransportError]
+) -> None:
     """A request that never left starts no draft, so the connection error goes up as it is."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     mocker.patch(
         'keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=_preview_app('prod'))
     )
-    keboola_client.data_science_client.create_draft = mocker.AsyncMock(side_effect=httpx.ConnectError('refused'))
+    keboola_client.data_science_client.create_draft = mocker.AsyncMock(side_effect=error('never sent'))
 
-    with pytest.raises(httpx.ConnectError):
+    with pytest.raises(error):
         await create_python_js_data_app_draft(ctx=mcp_context_client, configuration_id='cfg-prod-1', git_branch='x')
 
 
