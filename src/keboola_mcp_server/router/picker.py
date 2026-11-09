@@ -18,6 +18,9 @@ PICKER_HEADERS = {
 }
 PICKER_STYLESHEET_PATH = '/router-static/picker.css'
 
+# The router has no Keboola session, so it cannot say who is signed in; the stack's consent screen can.
+ACCOUNT_NOTE = 'The next screen shows the Keboola account you are signed in with. You can switch it there.'
+
 PICKER_CSS = """\
 body { font-family: system-ui, sans-serif; margin: 0; padding: 2rem 1rem; background: #f6f7f9; color: #1f2933; }
 main { max-width: 32rem; margin: 0 auto; background: #fff; border-radius: 8px; padding: 1.5rem 2rem; }
@@ -27,6 +30,7 @@ a.stack { display: block; padding: 0.75rem; margin: 0.5rem 0; border: 1px solid 
 a.stack:hover, a.stack.last-used { border-color: #1f8fff; }
 .host { display: block; color: #616e7c; font-size: 0.875rem; }
 .hint { color: #1f8fff; font-size: 0.875rem; }
+.note { color: #616e7c; font-size: 0.875rem; margin-bottom: 0; }
 """
 
 
@@ -56,5 +60,5 @@ def render_picker(*, stacks: Iterable[Stack], params: Iterable[tuple[str, str]],
         f'<title>Choose your Keboola stack</title><link rel="stylesheet" href="{PICKER_STYLESHEET_PATH}">'
         '</head><body><main><h1>Where is your Keboola account?</h1>'
         '<p>Pick the stack you log in to. Its login address is shown under each name.</p>'
-        f'<nav>{links}</nav></main></body></html>'
+        f'<nav>{links}</nav><p class="note">{ACCOUNT_NOTE}</p></main></body></html>'
     )
