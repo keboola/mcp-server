@@ -5058,37 +5058,26 @@ async def test_create_python_js_data_app_draft_waits_for_url(mocker, mcp_context
 
 
 @pytest.mark.asyncio
-async def test_create_python_js_data_app_draft_stops_waiting_at_the_deadline(
-    mocker, mcp_context_client: Context
+@pytest.mark.parametrize(
+    ('wait_seconds', 'get_draft'),
+    [
+        (0, _draft(None)),
+        (30, _http_error(500, _sandboxes_error(500, 'Internal Server Error occurred.'))),
+    ],
+    ids=['deadline', 'failed_poll'],
+)
+async def test_create_python_js_data_app_draft_returns_a_draft_without_url(
+    mocker, mcp_context_client: Context, wait_seconds: int, get_draft: DraftResponse | Exception
 ) -> None:
-    """Past the wait budget the draft is returned without a URL, with a note not to create another one."""
+    """The POST created the draft: past the wait budget, or after a failed read, it is returned without a URL."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     prod = _make_python_js_prod_data_app(configuration_id='cfg-prod-1', data_app_id='app-prod-1')
     mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=prod))
-    mocker.patch('keboola_mcp_server.tools.data_apps._DRAFT_URL_WAIT_SECONDS', 0)
-    keboola_client.data_science_client.create_draft = mocker.AsyncMock(return_value=_draft(None))
-    keboola_client.data_science_client.get_draft = mocker.AsyncMock(return_value=_draft(None))
-
-    result = await create_python_js_data_app_draft(
-        ctx=mcp_context_client, configuration_id='cfg-prod-1', git_branch='feat'
-    )
-
-    keboola_client.data_science_client.get_draft.assert_not_called()
-    assert result.draft.url is None
-    assert result.change_summary is not None
-    assert 'do not create another draft' in result.change_summary
-
-
-@pytest.mark.asyncio
-async def test_create_python_js_data_app_draft_survives_a_failed_poll(mocker, mcp_context_client: Context) -> None:
-    """The POST created the draft: a failing read while waiting for its URL still returns it, never an error."""
-    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-    prod = _make_python_js_prod_data_app(configuration_id='cfg-prod-1', data_app_id='app-prod-1')
-    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=prod))
+    mocker.patch('keboola_mcp_server.tools.data_apps._DRAFT_URL_WAIT_SECONDS', wait_seconds)
     mocker.patch('keboola_mcp_server.tools.data_apps.asyncio.sleep', mocker.AsyncMock())
     keboola_client.data_science_client.create_draft = mocker.AsyncMock(return_value=_draft(None))
     keboola_client.data_science_client.get_draft = mocker.AsyncMock(
-        side_effect=_http_error(500, _sandboxes_error(500, 'Internal Server Error occurred.'))
+        **({'side_effect': get_draft} if isinstance(get_draft, Exception) else {'return_value': get_draft})
     )
 
     result = await create_python_js_data_app_draft(
@@ -5156,12 +5145,12 @@ async def test_delete_python_js_data_app_draft_by_draft_id(mocker, mcp_context_c
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ('status', 'expected'),
-    [(404, ValueError), (500, httpx.HTTPStatusError)],
+    ('status', 'expected', 'match'),
+    [(404, ValueError, 'has no draft "d-1"'), (500, httpx.HTTPStatusError, None)],
     ids=['gone_is_reported', 'server_error_is_raised'],
 )
 async def test_delete_python_js_data_app_draft_errors(
-    mocker, mcp_context_client: Context, status: int, expected: type[Exception]
+    mocker, mcp_context_client: Context, status: int, expected: type[Exception], match: str | None
 ) -> None:
     """Only a 404 means the draft is gone already; any other failure is raised as it is."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
@@ -5171,10 +5160,8 @@ async def test_delete_python_js_data_app_draft_errors(
         side_effect=_http_error(status, _sandboxes_error(status, 'Draft "d-1" not found.'))
     )
 
-    with pytest.raises(expected) as exc_info:
+    with pytest.raises(expected, match=match):
         await delete_python_js_data_app_draft(ctx=mcp_context_client, configuration_id='cfg-prod-1', draft_id='d-1')
-    if expected is ValueError:
-        assert 'has no draft "d-1"' in str(exc_info.value)
 
 
 @pytest.mark.asyncio

@@ -13,7 +13,7 @@ from fastmcp import Context, FastMCP
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, Field, PrivateAttr
 
-from keboola_mcp_server.clients.base import InvalidArgumentError, JsonDict
+from keboola_mcp_server.clients.base import NEVER_SENT_ERRORS, InvalidArgumentError, JsonDict
 from keboola_mcp_server.clients.client import DATA_APP_COMPONENT_ID, KeboolaClient
 from keboola_mcp_server.clients.data_science import (
     ORGANIZATION_GIT_AUTH,
@@ -2260,7 +2260,7 @@ async def deploy_data_app(
     if action == 'deploy':
         data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
         if _is_draft_config(data_app.configuration):
-            raise ValueError(_legacy_draft_deploy_message(data_app))
+            raise ValueError(_legacy_draft_convert_message(data_app))
         if mode == 'dev':
             raise ValueError(
                 f'Data app "{configuration_id}" cannot be deployed in dev mode. Deploy it without `mode`; to preview '
@@ -2406,7 +2406,7 @@ async def create_python_js_data_app_draft(
     branch = _normalize_branch_name(git_branch)
     try:
         draft = await client.data_science_client.create_draft(data_app.data_app_id, branch)
-    except (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout):
+    except NEVER_SENT_ERRORS:
         raise  # never sent: no draft exists
     except httpx.TransportError as e:
         # Sent but unanswered: the draft may exist, and another call would start a second one.
@@ -2653,7 +2653,7 @@ def _preview_link_error(exc: httpx.HTTPStatusError, data_app: DataApp) -> ValueE
         return ValueError(_not_in_dev_mode_message(data_app))
     if status == HTTPStatus.BAD_REQUEST and _PREVIEW_LINK_NO_URL in api_error:
         if _is_draft_config(data_app.configuration):
-            return ValueError(_legacy_draft_deploy_message(data_app))
+            return ValueError(_legacy_draft_convert_message(data_app))
         return ValueError(
             f'Data app "{cfg}" has no URL yet, so it has no preview link. Wait until `get_data_apps` reports it '
             f'running, then call this tool again.'
@@ -2709,15 +2709,17 @@ def _draft_preview_link_error(exc: httpx.HTTPStatusError, configuration_id: str,
     return None
 
 
-def _legacy_draft_deploy_message(data_app: DataApp) -> str:
-    """How to move on from a legacy draft, which is never deployed again."""
+def _legacy_draft_convert_message(data_app: DataApp) -> str:
+    """How to move on from a legacy draft, which is never deployed again: convert it to a draft on its branch."""
     block = _data_app_block(data_app.configuration)
     parent = block.get('parentConfigurationId')
     branch = _config_git_branch(data_app.configuration)
     return (
         f'Configuration "{data_app.configuration_id}" is a legacy draft, which is no longer deployed. Convert it: '
-        f'`create_python_js_data_app_draft(configuration_id="{parent}", git_branch="{branch}")`, then '
-        f'`delete_python_js_data_app_draft(configuration_id="{data_app.configuration_id}")`. The branch keeps the work.'
+        f'`create_python_js_data_app_draft(configuration_id="{parent}", git_branch="{branch}")`; the branch keeps '
+        f'the work. Delete the legacy draft (`delete_python_js_data_app_draft(configuration_id='
+        f'"{data_app.configuration_id}")`) only once its configuration holds nothing the prod app lacks, or the user '
+        'agreed to lose it: the delete cannot be undone.'
     )
 
 
@@ -2747,7 +2749,7 @@ def _not_in_dev_mode_message(data_app: DataApp) -> str:
     if _uses_organization_git_auth(data_app.configuration):
         return _organization_git_dev_mode_message(cfg)
     if _is_draft_config(data_app.configuration):
-        return _legacy_draft_deploy_message(data_app)
+        return _legacy_draft_convert_message(data_app)
     return (
         f'Data app "{cfg}" is a production app and is not in dev mode, so it has no preview link. Do not switch '
         f'it to dev mode. Preview a draft instead: find one with `get_data_apps` (configuration_ids=["{cfg}"]) '
