@@ -217,7 +217,7 @@ _NO_AUTH_ON_DRAFT_MESSAGE = (
     "authentication_type='no-auth' is not allowed on draft data apps. A draft inherits the prod "
     'app\'s data access, so disabling its authentication exposes Storage-reading and Storage-writing '
     'endpoints publicly. Never disable authentication to make the preview work -- the in-platform '
-    "preview (deploy_data_app mode='dev') authenticates on top of the configured auth. Keep "
+    "preview link authenticates on top of the configured auth. Keep "
     "'basic-auth' or 'default'; if the user explicitly wants the published app to be public, set "
     "'no-auth' on the prod app."
 )
@@ -2406,6 +2406,15 @@ async def create_python_js_data_app_draft(
     branch = _normalize_branch_name(git_branch)
     try:
         draft = await client.data_science_client.create_draft(data_app.data_app_id, branch)
+    except (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout):
+        raise  # never sent: no draft exists
+    except httpx.TransportError as e:
+        # Sent but unanswered: the draft may exist, and another call would start a second one.
+        raise ValueError(
+            f'The draft request got no answer, so the draft may exist already. Check '
+            f'get_data_apps(configuration_ids=["{configuration_id}"]) for a draft on "{branch}" before calling '
+            'this tool again.'
+        ) from e
     except httpx.HTTPStatusError as e:
         api_error = _api_error_text(e.response)
         if e.response.status_code == HTTPStatus.BAD_REQUEST and _DRAFT_BRANCH_MISSING in api_error:
@@ -2547,7 +2556,7 @@ async def get_data_app_preview_link(
         Field(
             description=(
                 'With `draft_id`: Storage configuration ID of the prod app the draft belongs to. Without it: '
-                'Storage configuration ID of a legacy draft deployed with `deploy_data_app` (mode="dev").'
+                'Storage configuration ID of a legacy draft running in dev mode.'
             )
         ),
     ],
@@ -2560,7 +2569,7 @@ async def get_data_app_preview_link(
     """Creates a short-lived link that opens a python-js draft in your browser without the app's login.
 
     - With `draft_id`: the link opens that draft on its own host.
-    - Without it: the link opens a legacy draft deployed with `deploy_data_app(action='deploy', mode='dev')`.
+    - Without it: the link opens a legacy draft still running in dev mode.
       An app that is not in dev mode has no preview link.
 
     ## How to use the link
@@ -2581,7 +2590,7 @@ async def get_data_app_preview_link(
 
     ## Errors
     - "has no URL yet" on a draft: it is still starting; call again in a few seconds.
-    - "not running in dev mode": deploy the legacy draft with `deploy_data_app` (mode='dev') first.
+    - "not running in dev mode" on a legacy draft: convert it to a draft on its branch, as the error says.
     - "is a production app": preview a draft of it instead; never switch a production app to dev mode.
     - "is not in dev mode" on another app type (e.g. Streamlit): it has no dev mode; tell the user and do not
       change its deploy mode.
@@ -2643,9 +2652,10 @@ def _preview_link_error(exc: httpx.HTTPStatusError, data_app: DataApp) -> ValueE
     if status == HTTPStatus.BAD_REQUEST and _PREVIEW_LINK_NOT_DEV in api_error:
         return ValueError(_not_in_dev_mode_message(data_app))
     if status == HTTPStatus.BAD_REQUEST and _PREVIEW_LINK_NO_URL in api_error:
+        if _is_draft_config(data_app.configuration):
+            return ValueError(_legacy_draft_deploy_message(data_app))
         return ValueError(
-            f'Data app "{cfg}" has no URL yet, so it has no preview link. Deploy it with `deploy_data_app` '
-            f'(action="deploy", mode="dev") if that has not happened, wait until `get_data_apps` reports it '
+            f'Data app "{cfg}" has no URL yet, so it has no preview link. Wait until `get_data_apps` reports it '
             f'running, then call this tool again.'
         )
     if status == HTTPStatus.FORBIDDEN or (
@@ -2737,11 +2747,7 @@ def _not_in_dev_mode_message(data_app: DataApp) -> str:
     if _uses_organization_git_auth(data_app.configuration):
         return _organization_git_dev_mode_message(cfg)
     if _is_draft_config(data_app.configuration):
-        return (
-            f'Data app "{cfg}" is not running in dev mode, so it has no preview link. Deploy it in dev mode first '
-            f'with `deploy_data_app` (action="deploy", mode="dev", configuration_id="{cfg}"), then call this tool '
-            f'again.'
-        )
+        return _legacy_draft_deploy_message(data_app)
     return (
         f'Data app "{cfg}" is a production app and is not in dev mode, so it has no preview link. Do not switch '
         f'it to dev mode. Preview a draft instead: find one with `get_data_apps` (configuration_ids=["{cfg}"]) '
@@ -3243,25 +3249,22 @@ async def _fetch_logs(client: KeboolaClient, data_app_id: str) -> list[str]:
         return []
 
 
-_LATEST_RUN_LOOKBACK = 20
-
-
 async def _fetch_latest_run(client: KeboolaClient, data_app: DataApp) -> AppRunInfo | None:
-    """The most recent run (deployment attempt) of a data app, or None when there is none.
+    """The most recent run of the app's latest deployment, or None when there is none.
 
-    - A prod app's runs also list its drafts' runs (`mode="dev"`); those are skipped.
+    - Runs of the app's drafts are listed under the app too; filtering on the deployment leaves them out.
+    - An app with no `/v2` deployment (never deployed, or a legacy draft) reads its newest run of any kind.
     - Diagnostics must not break the detail fetch: any error is logged and reported as "no run info".
     """
-    skip_dev = not _is_draft_config(data_app.configuration)
+    deployment_id = None if _is_draft_config(data_app.configuration) else data_app.desired_deployment_id
     try:
         runs = await client.data_science_client.list_app_runs(
-            data_app.data_app_id, limit=_LATEST_RUN_LOOKBACK if skip_dev else 1
+            data_app.data_app_id, limit=1, deployment_id=deployment_id
         )
     except Exception:
         LOG.exception(f'Failed to fetch app runs for data app: {data_app.data_app_id}')
         return None
-    run = next((run for run in runs if not (skip_dev and run.mode == 'dev')), None)
-    return AppRunInfo.from_api_response(run) if run else None
+    return AppRunInfo.from_api_response(runs[0]) if runs else None
 
 
 def _oidc_provider(authorization: Mapping[str, Any]) -> Mapping[str, Any] | None:
