@@ -552,7 +552,8 @@ async def _apply_vars_to_parent_cfg(
 
     defaults = [{'name': v.name, 'value': v.default_value} for v in variables if v.default_value is not None]
     existing_rows = (existing or {}).get('rows') or []
-    default_row = next((r for r in existing_rows if r.get('name') == 'Default Values'), None)
+    # The UI names the row 'Default values'.
+    default_row = next((r for r in existing_rows if str(r.get('name', '')).lower() == 'default values'), None)
     default_values_row_id: str | None = None
     if defaults:
         row_cfg = {'values': defaults}
@@ -1072,6 +1073,11 @@ _UNSUITABLE_COMPONENTS_MESSAGES: Mapping[str, str] = {
     ORCHESTRATOR_COMPONENT_ID: 'Use `create_flow` / `create_conditional_flow` / `update_flow` instead.',
     BIGQUERY_TRANSFORMATION_ID: 'Use `create_sql_transformation` / `update_sql_transformation` instead.',
     SNOWFLAKE_TRANSFORMATION_ID: 'Use `create_sql_transformation` / `update_sql_transformation` instead.',
+    # Variables rows hold `values`, not `parameters`; generic tools would write an invalid `parameters` key.
+    VARIABLES_COMPONENT_ID: (
+        'Use the `variables` argument of `create_sql_transformation` / `update_sql_transformation` / '
+        '`create_config` / `update_config` on the configuration that uses the variables instead.'
+    ),
 }
 # Overrides for a session of the ChatGPT plugin, which has no `modify_python_js_data_app` (`mcp.DIRECTORY_TOOLS`).
 _DIRECTORY_UNSUITABLE_COMPONENTS_MESSAGES: Mapping[str, str] = {

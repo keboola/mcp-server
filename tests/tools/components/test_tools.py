@@ -1933,6 +1933,47 @@ async def test_update_config_folder_skipped_for_extractor(
             'Use `create_sql_transformation` / `update_sql_transformation` instead.',
         ),
         (
+            update_config_row,
+            {
+                'configuration_id': 'foo',
+                'configuration_row_id': 'bar',
+                'change_description': 'baz',
+                'parameter_updates': [ConfigParamSet(op='set', path='values[1].value', value='22')],
+            },
+            VARIABLES_COMPONENT_ID,
+            (
+                'Use the `variables` argument of `create_sql_transformation` / `update_sql_transformation` / '
+                '`create_config` / `update_config` on the configuration that uses the variables instead.'
+            ),
+        ),
+        (
+            update_config,
+            {'configuration_id': 'foo', 'change_description': 'baz'},
+            VARIABLES_COMPONENT_ID,
+            (
+                'Use the `variables` argument of `create_sql_transformation` / `update_sql_transformation` / '
+                '`create_config` / `update_config` on the configuration that uses the variables instead.'
+            ),
+        ),
+        (
+            create_config,
+            {'name': 'foo', 'description': 'bar', 'parameters': {}},
+            VARIABLES_COMPONENT_ID,
+            (
+                'Use the `variables` argument of `create_sql_transformation` / `update_sql_transformation` / '
+                '`create_config` / `update_config` on the configuration that uses the variables instead.'
+            ),
+        ),
+        (
+            add_config_row,
+            {'name': 'foo', 'description': 'bar', 'configuration_id': 'baz', 'parameters': {}},
+            VARIABLES_COMPONENT_ID,
+            (
+                'Use the `variables` argument of `create_sql_transformation` / `update_sql_transformation` / '
+                '`create_config` / `update_config` on the configuration that uses the variables instead.'
+            ),
+        ),
+        (
             create_config,
             {'name': 'foo', 'description': 'bar', 'parameters': {}},
             DATA_APP_COMPONENT_ID,
@@ -2358,9 +2399,10 @@ def _make_vars_config(
     config_id: str = _PARENT_CFG_ID,
     *,
     with_default_row: bool = False,
+    default_row_name: str = 'Default Values',
 ) -> dict[str, Any]:
     rows = (
-        [{'id': _DEFAULT_ROW_ID, 'name': 'Default Values', 'configuration': {'values': []}}] if with_default_row else []
+        [{'id': _DEFAULT_ROW_ID, 'name': default_row_name, 'configuration': {'values': []}}] if with_default_row else []
     )
     return {
         'id': _VARS_CONFIG_ID,
@@ -2405,6 +2447,15 @@ def _make_parent_config(extra: dict | None = None) -> dict[str, Any]:
         ([_make_vars_config(with_default_row=True)], True, False, False, True, False),
         # Existing vars config WITH a Default Values row, no new default → clear the row
         ([_make_vars_config(with_default_row=True)], False, False, False, False, True),
+        # Existing vars config WITH a UI-created 'Default values' row → update row instead of create
+        (
+            [_make_vars_config(with_default_row=True, default_row_name='Default values')],
+            True,
+            False,
+            False,
+            True,
+            False,
+        ),
     ],
     ids=[
         'new-no-default',
@@ -2413,6 +2464,7 @@ def _make_parent_config(extra: dict | None = None) -> dict[str, Any]:
         'existing-with-default',
         'existing-row-update',
         'existing-row-clear-default',
+        'existing-ui-row-update',
     ],
 )
 @pytest.mark.asyncio
