@@ -2483,7 +2483,7 @@ Streamlit apps have no managed git repo, so `mode` has no effect on the deployed
 Creates a short-lived link that opens a python-js draft in your browser without the app's login.
 
 - With `draft_id`: the link opens that draft on its own host.
-- Without it: the link opens a legacy draft deployed with `deploy_data_app(action='deploy', mode='dev')`.
+- Without it: the link opens a legacy draft still running in dev mode.
   An app that is not in dev mode has no preview link.
 
 ## How to use the link
@@ -2504,7 +2504,7 @@ Creates a short-lived link that opens a python-js draft in your browser without 
 
 ## Errors
 - "has no URL yet" on a draft: it is still starting; call again in a few seconds.
-- "not running in dev mode": deploy the legacy draft with `deploy_data_app` (mode='dev') first.
+- "not running in dev mode" on a legacy draft: convert it to a draft on its branch, as the error says.
 - "is a production app": preview a draft of it instead; never switch a production app to dev mode.
 - "is not in dev mode" on another app type (e.g. Streamlit): it has no dev mode; tell the user and do not
   change its deploy mode.
@@ -2517,7 +2517,7 @@ Creates a short-lived link that opens a python-js draft in your browser without 
   "additionalProperties": false,
   "properties": {
     "configuration_id": {
-      "description": "With `draft_id`: Storage configuration ID of the prod app the draft belongs to. Without it: Storage configuration ID of a legacy draft deployed with `deploy_data_app` (mode=\"dev\").",
+      "description": "With `draft_id`: Storage configuration ID of the prod app the draft belongs to. Without it: Storage configuration ID of a legacy draft running in dev mode.",
       "type": "string"
     },
     "draft_id": {
