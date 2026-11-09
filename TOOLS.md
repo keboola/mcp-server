@@ -2403,8 +2403,7 @@ branch-delete — is yours. This tool only triggers deploys against existing git
   deploy was triggered -- deploy again to publish it.
 
 ## Streamlit apps
-Streamlit apps have no managed git repo, so `mode` has no effect on the deployed app.
-`mode=None` is the expected call shape.
+Streamlit apps have no managed git repo; deploy them without `mode`.
 
 ## General considerations
 - Redeploying a data app takes some time; the app reports `state="starting"` until the new deployment serves
