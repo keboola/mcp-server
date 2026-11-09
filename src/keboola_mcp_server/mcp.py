@@ -184,7 +184,8 @@ DATA_APP_BRANCH_GATED_TOOLS = {
 # OpenAI forbids in responses:
 # `create_python_js_data_app_git_credential` and `modify_python_js_data_app` (git URLs with an embedded secret),
 # `create_python_js_data_app_draft` and `delete_python_js_data_app_draft` (part of that git workflow) and
-# `get_data_app_preview_link` (a URL that carries a secret and skips the app login). The merge-request tools are not listed either: not reviewed for the directory yet.
+# `get_data_app_preview_link` (a URL that carries a secret and skips the app login). The merge-request tools are not
+# listed either: not reviewed for the directory yet.
 DIRECTORY_TOOLS = frozenset(
     {
         'create_conditional_flow',
