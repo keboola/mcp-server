@@ -577,3 +577,15 @@ async def test_draft_endpoints() -> None:
     client.delete.assert_awaited_once_with(endpoint='v2/apps/app-1/drafts/d-1')
     assert (created.git_branch, created.run_state, created.url) == ('feat', 'neverRun', None)
     assert [d.id for d in listed] == ['d-1']
+
+
+@pytest.mark.asyncio
+async def test_list_app_runs_filters_by_deployment() -> None:
+    client = DataScienceClient.create('https://api.example.com', token=None)
+    client.get = AsyncMock(return_value=[])  # type: ignore[assignment]
+
+    await client.list_app_runs('app-1', limit=1, deployment_id='dep-2')
+
+    client.get.assert_awaited_once_with(
+        endpoint='v2/apps/app-1/runs', params={'limit': 1, 'offset': 0, 'deploymentId': 'dep-2'}
+    )

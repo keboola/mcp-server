@@ -458,6 +458,7 @@ class TestToolsFilteringMiddleware:
             'modify_streamlit_data_app',
             'get_data_apps',
             'deploy_data_app',
+            'create_python_js_data_app_draft',
             'delete_python_js_data_app_draft',
             'get_data_app_preview_link',
         ]
@@ -658,6 +659,7 @@ class TestToolsFilteringMiddleware:
         'tool_name',
         [
             'modify_streamlit_data_app',
+            'create_python_js_data_app_draft',
             'delete_python_js_data_app_draft',
             'get_data_app_preview_link',
         ],

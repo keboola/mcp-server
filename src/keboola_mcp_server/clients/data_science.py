@@ -759,16 +759,22 @@ class DataScienceClient(KeboolaServiceClient):
         response = await self.get(endpoint=f'v2/apps/{data_app_id}/git-repo')
         return AppGitRepoResponse.model_validate(response)
 
-    async def list_app_runs(self, data_app_id: str, *, limit: int = 5, offset: int = 0) -> list[AppRunResponse]:
+    async def list_app_runs(
+        self, data_app_id: str, *, limit: int = 5, offset: int = 0, deployment_id: str | None = None
+    ) -> list[AppRunResponse]:
         """
         List runs (deployment attempts) of a data app, newest first.
 
         :param data_app_id: The ID of the data app
         :param limit: Maximum number of runs to return
         :param offset: Number of runs to skip
+        :param deployment_id: Only the runs of this deployment (or draft); runs older than run subjects have none
         :return: The app runs, including `failure_reason` for unsuccessful ones.
         """
-        response = await self.get(endpoint=f'v2/apps/{data_app_id}/runs', params={'limit': limit, 'offset': offset})
+        params: dict[str, Any] = {'limit': limit, 'offset': offset}
+        if deployment_id:
+            params['deploymentId'] = deployment_id
+        response = await self.get(endpoint=f'v2/apps/{data_app_id}/runs', params=params)
         assert isinstance(response, list)
         return [AppRunResponse.model_validate(run) for run in response]
 
