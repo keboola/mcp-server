@@ -2264,8 +2264,7 @@ additional token without invalidating any tokens already held by other clients.
 
 1. **Right after `modify_python_js_data_app` create of a prod app** — the new prod has a
    managed repo but no credentials yet. Call this tool with the new app's `configuration_id`
-   to enable git access. (Note: when creating a **draft**, the prod-side token is minted and
-   embedded into the returned `git_clone_url` automatically — no separate call needed.)
+   to enable git access.
 
 2. **Recovery when the cached token is gone / continuing an unfinished draft** — e.g., a fresh
    sandbox continuing yesterday's work, with the previous sandbox's filesystem wiped. The
