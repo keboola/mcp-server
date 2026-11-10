@@ -44,6 +44,7 @@ from keboola_mcp_server.tools.data_apps import (
     _get_query_function_code,
     _get_secrets,
     _inject_query_to_source_code,
+    _legacy_draft_convert_message,
     _oidc_setup_required,
     _prune_empty_storage_objects,
     _resolve_app_image,
@@ -4171,8 +4172,10 @@ async def test_fetch_latest_run_degrades_to_none(
     else:
         mock = mocker.AsyncMock(side_effect=RuntimeError('404 Not Found'))
     keboola_client.data_science_client.list_app_runs = mock
+    data_app = _preview_app('prod').model_copy(update={'desired_deployment_id': 'dep-1'})
 
-    assert await _fetch_latest_run(keboola_client, _preview_app('prod')) is None
+    assert await _fetch_latest_run(keboola_client, data_app) is None
+    mock.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -5172,6 +5175,38 @@ async def test_create_python_js_data_app_draft_errors(
         await create_python_js_data_app_draft(ctx=mcp_context_client, configuration_id='cfg-1', git_branch='x')
     if error is None:
         keboola_client.data_science_client.create_draft.assert_not_called()
+
+
+@pytest.mark.parametrize('missing', ['parent', 'branch'])
+def test_legacy_draft_convert_message_without_parent_or_branch(missing: str) -> None:
+    """A legacy draft missing its parent or branch gets no ready-to-run convert call, only the delete."""
+    draft = _preview_app('draft')
+    block = draft.configuration['parameters']['dataApp']
+    if missing == 'parent':
+        del block['parentConfigurationId']
+    else:
+        del block['git']['branch']
+
+    message = _legacy_draft_convert_message(draft)
+
+    assert 'cannot be converted' in message
+    assert 'create_python_js_data_app_draft' not in message
+    assert '"None"' not in message
+
+
+@pytest.mark.asyncio
+async def test_create_python_js_data_app_draft_passes_a_4xx_through(mocker, mcp_context_client: Context) -> None:
+    """A 4xx the tool does not map is a refused create, not a draft that may exist."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    mocker.patch(
+        'keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=_preview_app('prod'))
+    )
+    error = _http_error(403, _sandboxes_error(403, 'Access denied.'))
+    keboola_client.data_science_client.create_draft = mocker.AsyncMock(side_effect=error)
+
+    with pytest.raises(httpx.HTTPStatusError) as exc_info:
+        await create_python_js_data_app_draft(ctx=mcp_context_client, configuration_id='cfg-1', git_branch='x')
+    assert exc_info.value is error
 
 
 @pytest.mark.asyncio

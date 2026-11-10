@@ -2399,6 +2399,8 @@ async def create_python_js_data_app_draft(
         raise ValueError(f'Data app "{configuration_id}" is type "{data_app.type}"; only python-js apps have drafts.')
     if _is_draft_config(data_app.configuration):
         parent = _data_app_block(data_app.configuration).get('parentConfigurationId')
+        if not isinstance(parent, str):
+            raise ValueError(_legacy_draft_convert_message(data_app))
         raise ValueError(
             f'Configuration "{configuration_id}" is a legacy draft, not a prod app. Pass the prod app\'s '
             f'configuration_id ("{parent}").'
@@ -2732,6 +2734,12 @@ def _legacy_draft_convert_message(data_app: DataApp) -> str:
     block = _data_app_block(data_app.configuration)
     parent = block.get('parentConfigurationId')
     branch = _config_git_branch(data_app.configuration)
+    if not isinstance(parent, str) or branch is None:
+        return (
+            f'Configuration "{data_app.configuration_id}" is a legacy draft with no prod app or branch recorded, so '
+            'it cannot be converted. Tell the user; delete it (`delete_python_js_data_app_draft(configuration_id='
+            f'"{data_app.configuration_id}")`) only once they agree: the delete cannot be undone.'
+        )
     return (
         f'Configuration "{data_app.configuration_id}" is a legacy draft, which is no longer deployed. Convert it: '
         f'`create_python_js_data_app_draft(configuration_id="{parent}", git_branch="{branch}")`; the branch keeps '
