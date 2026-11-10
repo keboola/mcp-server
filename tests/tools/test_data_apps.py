@@ -5195,6 +5195,23 @@ def test_legacy_draft_convert_message_without_parent_or_branch(missing: str) -> 
 
 
 @pytest.mark.asyncio
+async def test_create_python_js_data_app_draft_on_a_legacy_draft_without_parent(
+    mocker, mcp_context_client: Context
+) -> None:
+    """A legacy draft with no parent gets no `configuration_id="None"` to pass, and no draft is created."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    draft = _preview_app('draft')
+    del draft.configuration['parameters']['dataApp']['parentConfigurationId']
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=draft))
+    keboola_client.data_science_client.create_draft = mocker.AsyncMock()
+
+    with pytest.raises(ValueError, match='cannot be converted') as exc_info:
+        await create_python_js_data_app_draft(ctx=mcp_context_client, configuration_id='cfg-draft-1', git_branch='x')
+    assert '"None"' not in str(exc_info.value)
+    keboola_client.data_science_client.create_draft.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_create_python_js_data_app_draft_passes_a_4xx_through(mocker, mcp_context_client: Context) -> None:
     """A 4xx the tool does not map is a refused create, not a draft that may exist."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
