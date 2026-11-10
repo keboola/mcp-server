@@ -36,7 +36,7 @@ tests = [
     "pytest-cov ~= 7.0",
     "pytest-datadir ~= 1.8",
     "pytest-mock ~= 3.15",
-    "python-dateutil ~= 2.9",
+    "python-dateutil ~= 4.0",
     "python-dotenv ~= 1.2",
 ]
 integtests = [
@@ -69,7 +69,10 @@ exclude-newer = "7 days"
 # GHSA (dependabot alert #38, urllib3 cross-origin header leak on proxied redirects).
 # kbcstorage never imports urllib3 directly (only via `requests`), so overriding is
 # safe. Drop this override once kbcstorage relaxes its own pin upstream.
-override-dependencies = ["urllib3>=2.7.0"]
+override-dependencies = ["urllib3>=2.7.0", "python-dateutil>=4.0,<5"]
+# botocore (via kbcstorage -> boto3, integtests extra only) caps python-dateutil<3 (boto/botocore#3844).
+# It uses dateutil only for timestamp parsing, and python-dateutil is not a runtime dependency of the
+# server, so the override only affects the test/integtest environments. Drop it once botocore allows 4.x.
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/keboola_mcp_server"]
