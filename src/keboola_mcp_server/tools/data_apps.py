@@ -3,10 +3,11 @@ import copy
 import logging
 import re
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Mapping, Sequence
+from dataclasses import dataclass
 from http import HTTPStatus
 from importlib import resources
-from typing import Annotated, Any, Literal, cast
+from typing import Annotated, Any, Literal, TypeVar, cast
 from urllib.parse import quote, urlsplit, urlunsplit
 
 import httpx
@@ -758,6 +759,7 @@ class DeploymentDataAppOutput(BaseModel):
     deployment_info: DeploymentInfo | None = Field(
         description='Deployment info with a link to the app and logs to diagnose in-app errors.', default=None
     )
+    change_summary: str | None = Field(default=None, description='Notes about the result to act on.')
     links: list[Link] = Field(description='Navigation links for the web interface.')
 
 
@@ -842,10 +844,9 @@ async def modify_streamlit_data_app(
         AuthenticationType,
         Field(
             description=(
-                'Authentication type, "no-auth" removes authentication completely, "basic-auth" sets the data '
-                'app to be secured using the HTTP basic authentication, "oidc" sets up OIDC login (update '
-                'only, needs the `oidc` argument), and "default" keeps the existing authentication type '
-                'when updating.'
+                '"default": basic auth on create, keep the existing auth on update. "basic-auth": HTTP basic '
+                'auth. "oidc": OIDC login, update only, needs `oidc`. "no-auth": public app, only when the user '
+                'asks for one.'
             )
         ),
     ],
@@ -856,9 +857,8 @@ async def modify_streamlit_data_app(
         OidcAuthConfig | None,
         Field(
             description=(
-                'OIDC settings. Required with authentication_type="oidc" and not allowed with any other '
-                'type. Only for updating an existing app, not for create. It has no secret '
-                'field: the user enters the client secret in the Keboola UI.'
+                'OIDC settings; required with authentication_type="oidc", rejected otherwise. Has no secret: '
+                'the user enters it in the Keboola UI.'
             ),
             json_schema_extra=_type_object_on_ref,
         ),
@@ -896,29 +896,14 @@ async def modify_streamlit_data_app(
     the literal placeholder breaks the app.
     - Write SQL queries so they are compatible with the current workspace backend, you can ensure this by using the
     `query_data` tool to inspect the data in the workspace before using it in the data app.
-    - If you're updating an existing data app, provide the `configuration_id` parameter and the `change_description`
-    parameter. To keep existing data app values during an update, leave them as empty strings, lists, or None
-    appropriately based on the parameter type.
-    - After creating or updating a data app with this tool, ALWAYS call
-    `deploy_data_app(action="deploy", configuration_id=...)` to start a new app or restart an existing app so
-    changes take effect. Without this step, a newly created app will not start, and an existing app will keep
-    running the previous deployment without the latest changes.
-    - New apps use the HTTP basic authentication by default for security unless explicitly specified otherwise; when
-    updating, set `authentication_type` to `default` to keep the existing authentication type configuration
-    (including OIDC setups) unless explicitly specified otherwise.
-    - `authentication_type='oidc'` (with the `oidc` argument) switches an existing app to OIDC. It is rejected on
-    create. The tool never takes a client secret: the user enters it in the Keboola UI.
-    Set up OIDC in this order:
-    1. Create the app with `'basic-auth'`. The output has `oidc_callback_url`.
-    2. The user registers `oidc_callback_url` at the identity provider and gives you the `client_id`.
-    3. Update the app with `authentication_type='oidc'` and `oidc` (`client_id`, `issuer_url`, and optionally
-       `logout_url`, `allowed_roles`).
-    4. The user enters the client secret in the app's Authentication section in the Keboola UI. If the client
-       can open URLs, it is asked to open that page.
-    5. Only if you use `allowed_roles`: update with `'oidc'` once more after the secret is saved.
-    6. Call `deploy_data_app` last.
-    If the output has `oidc_setup_required=true`, tell the user to follow `change_summary`. In `oidc`, null keeps
-    the stored `logout_url` / `allowed_roles`; `''` or `[]` removes them. The slug stays fixed on OIDC apps.
+    - To update an app, pass `configuration_id` and `change_description`.
+    - After a create or update, ALWAYS call `deploy_data_app(action="deploy", configuration_id=...)`: without it a
+    new app does not start and a running app keeps the previous code.
+    - On update, `authentication_type='default'` keeps the existing auth (including OIDC set up elsewhere).
+    - **OIDC** (update only): first register the `oidc_callback_url` (returned on create) at the identity
+    provider, then update with `authentication_type='oidc'` and `oidc`. The user enters the client secret in the
+    Keboola UI (see `change_summary` while `oidc_setup_required` is true); with `allowed_roles`, update with
+    `'oidc'` once more after that. Deploy last.
 
     SQL & DATA TYPE RULES:
     - Use delimited identifiers for the current SQL dialect for all column names and aliases in SQL.
@@ -979,22 +964,23 @@ async def modify_streamlit_data_app(
             # Only stamp the UPDATED_BY_MCP version when the new version is actually known. Falling back to the
             # pre-update version would record a misleading version (the write did increment it), so skip the
             # metadata write when the response carried no numeric version.
-            if new_version.isdigit():
-                await set_cfg_update_metadata(
+            # Without `folder`, an update keeps the folder: the hint lists every data app, so only a create gives it.
+            _, folder_hint, data_app = await asyncio.gather(
+                set_cfg_update_metadata(
                     client=client,
                     component_id=DATA_APP_COMPONENT_ID,
                     configuration_id=configuration_id,
                     configuration_version=int(new_version),
                 )
-            # Without `folder`, an update keeps the folder: the hint lists every data app, so only a create gives it.
-            folder_hint = (
-                await apply_configuration_folder(
+                if new_version.isdigit()
+                else _no_op(),
+                apply_configuration_folder(
                     client, DATA_APP_COMPONENT_ID, configuration_id, folder, 'data apps', 'modify_streamlit_data_app'
                 )
                 if folder is not None
-                else None
+                else _no_op(),
+                _fetch_data_app(client, configuration_id=configuration_id),
             )
-            data_app = await _fetch_data_app(client, configuration_id=configuration_id)
             links = links_manager.get_data_app_links(
                 configuration_id=data_app.configuration_id,
                 configuration_name=name,
@@ -1047,19 +1033,22 @@ async def modify_streamlit_data_app(
         )
         # --- app created past this point; response building is strictly best-effort ---
         try:
-            await set_cfg_creation_metadata(
-                client=client,
-                component_id=DATA_APP_COMPONENT_ID,
-                configuration_id=data_app_resp.config_id,
-            )
-            folder_hint = await apply_configuration_folder(
-                client,
-                DATA_APP_COMPONENT_ID,
-                data_app_resp.config_id,
-                folder,
-                'data apps',
-                'modify_streamlit_data_app',
-                is_new=True,
+            _, folder_hint, config_version = await asyncio.gather(
+                set_cfg_creation_metadata(
+                    client=client,
+                    component_id=DATA_APP_COMPONENT_ID,
+                    configuration_id=data_app_resp.config_id,
+                ),
+                apply_configuration_folder(
+                    client,
+                    DATA_APP_COMPONENT_ID,
+                    data_app_resp.config_id,
+                    folder,
+                    'data apps',
+                    'modify_streamlit_data_app',
+                    is_new=True,
+                ),
+                _config_version_or_blank(client, data_app_resp.config_id),
             )
             links = links_manager.get_data_app_links(
                 configuration_id=data_app_resp.config_id,
@@ -1070,9 +1059,7 @@ async def modify_streamlit_data_app(
             return ModifiedDataAppOutput(
                 response='created',
                 change_summary=folder_hint,
-                data_app=DataAppSummary.from_api_response(
-                    data_app_resp, await _config_version_or_blank(client, data_app_resp.config_id)
-                ),
+                data_app=DataAppSummary.from_api_response(data_app_resp, config_version),
                 links=links,
                 oidc_callback_url=_oidc_callback_url(client, data_app_resp.id, config),
             )
@@ -1133,6 +1120,9 @@ async def modify_streamlit_data_app_internal(
     return data_app, updated_config, folder_preview
 
 
+_PartialOutput = TypeVar('_PartialOutput', ModifiedDataAppOutput, ModifiedPythonJsDataAppOutput)
+
+
 def _partial_update_output(
     *,
     data_app_pre: DataApp,
@@ -1140,8 +1130,9 @@ def _partial_update_output(
     configuration_id: str,
     name: str,
     new_version: str,
-) -> ModifiedDataAppOutput:
-    """Build a truthful partial-success response after a committed Streamlit update whose response building failed.
+    output_cls: type[_PartialOutput] = ModifiedDataAppOutput,  # type: ignore[assignment]
+) -> _PartialOutput:
+    """Build a truthful partial-success response after a committed update whose response building failed.
 
     The configuration write already landed, so this MUST NOT raise -- it is built entirely from the pre-update
     data app (fetched before the write) plus the new version from the update response. The ``change_summary``
@@ -1177,7 +1168,7 @@ def _partial_update_output(
     # Mirror the success-path wording: the redeploy hint only applies to a deployed app. The pre-update
     # state is a faithful proxy here -- a config write does not change deployment state on its own.
     response = _update_response(data_app_pre)
-    return ModifiedDataAppOutput(
+    return output_cls(
         response=response,
         change_summary=(
             f'The configuration WAS updated (version {new_version or "unknown"}), but loading the full app '
@@ -1187,6 +1178,24 @@ def _partial_update_output(
         data_app=summary,
         links=links,
     )
+
+
+async def _no_op() -> None:
+    """A placeholder for a call `asyncio.gather` skips."""
+    return
+
+
+_T = TypeVar('_T')
+_D = TypeVar('_D')
+
+
+async def _best_effort(awaitable: Awaitable[_T], default: _D, what: str) -> _T | _D:
+    """`awaitable`'s result, or `default` when it raises: for calls after a committed write, which must not fail."""
+    try:
+        return await awaitable
+    except Exception:
+        LOG.exception(f'{what} failed')
+        return default
 
 
 def _partial_create_output(
@@ -1255,10 +1264,9 @@ async def modify_python_js_data_app(
         str | None,
         Field(
             description=(
-                'URL-safe slug for the data app (used as a subdomain). Optional on create — when omitted '
-                'it is auto-derived from `name`. An explicit slug must be at '
-                'most 63 characters (DNS-label max; the UI URL-prefix limit is 50). On update it moves a '
-                'prod app to a new URL — pass it only after the user approved that URL (see "Slug on update").'
+                'URL slug (DNS label: lowercase letters, digits, hyphens; at most 50 characters). Optional on '
+                'create: derived from `name`. On update it moves a deployed app to a new URL; pass it only after '
+                'the user approved that URL.'
             ),
         ),
     ] = None,
@@ -1266,15 +1274,9 @@ async def modify_python_js_data_app(
         str | None,
         Field(
             description=(
-                'Git branch of the data app, written to `parameters.dataApp.git.branch`. Two uses:\n'
-                '- **On update** (with `configuration_id`): repoints an existing **external-git** app to '
-                'a different branch (e.g. flip a repo-backed app from `main` to a feature branch for '
-                'testing, then back). Only valid for external-git apps — a legacy draft, or an app bound to an '
-                'external repository. Rejected for apps on a Keboola-managed git repo, whose branch is '
-                'owned by the platform. On update `main` is allowed. Redeploy the app afterwards to serve '
-                'the new branch.\n'
-                '- **With `git_repository`** (create or update of a prod app): the branch of that repository '
-                'the app deploys. Defaults to `main`.'
+                'Git branch the app deploys. With `git_repository`: the branch of that repository (default '
+                '`main`). On update without it: repoints an external-git app (a legacy draft or an app on an '
+                "external repository); rejected for a Keboola-managed repo. Redeploy to serve it."
             ),
         ),
     ] = None,
@@ -1282,11 +1284,9 @@ async def modify_python_js_data_app(
         str | None,
         Field(
             description=(
-                "HTTPS URL of a customer's GitHub repository (`https://github.com/<owner>/<repo>`, or a "
-                '`*.ghe.com` host) to deploy a **prod** app from instead of a Keboola-managed repo. Requires '
-                '`git_auth`. On create, the app gets no managed repo; on update, an app already bound to an '
-                'external repository is rebound to this one. Rejected for apps on a Keboola-managed repo. '
-                'No credential is stored.'
+                "HTTPS URL of a customer's GitHub repository (`https://github.com/<owner>/<repo>` or a "
+                '`*.ghe.com` host) a **prod** app deploys from instead of a managed repo; requires `git_auth`. '
+                'On update it rebinds an app already on an external repository; rejected for a managed-repo app.'
             ),
         ),
     ] = None,
@@ -1294,9 +1294,8 @@ async def modify_python_js_data_app(
         GitAuthType | None,
         Field(
             description=(
-                'How the platform authenticates to `git_repository`; required together with it. Only '
-                '"organization" is supported: a short-lived read-only token is minted through the Keboola '
-                "organization's GitHub App connection, so no credential is stored in the configuration."
+                'Required with `git_repository`. Only "organization": the platform clones through the Keboola '
+                "organization's GitHub App connection; no credential is stored."
             ),
         ),
     ] = None,
@@ -1304,15 +1303,9 @@ async def modify_python_js_data_app(
         AuthenticationType,
         Field(
             description=(
-                'Authentication type. "no-auth" removes authentication completely (the app becomes '
-                'public -- only use it when the user explicitly asks for a public app; it is rejected '
-                'on drafts, which inherit the prod app\'s data access), "basic-auth" secures the data '
-                'app via HTTP basic authentication, "oidc" sets up OIDC login (update of a prod app only, '
-                'needs the `oidc` argument), and "default" means: on create, apply basic auth '
-                '(safe default for new apps); on update, keep the existing authentication configuration '
-                '(including OIDC setups configured outside the MCP). Never disable authentication to '
-                'make a preview work -- the in-platform preview authenticates on top of the configured '
-                'auth.'
+                '"default": basic auth on create, keep the existing auth on update (including OIDC set up '
+                'elsewhere). "basic-auth": HTTP basic auth. "oidc": OIDC login, update of a prod app only, needs '
+                '`oidc`. "no-auth": public app, only when the user asks for one; rejected on drafts.'
             ),
         ),
     ] = 'default',
@@ -1320,34 +1313,23 @@ async def modify_python_js_data_app(
         OidcAuthConfig | None,
         Field(
             description=(
-                'OIDC settings. Required with authentication_type="oidc" and not allowed with any other '
-                'type. Only for updating an existing prod app, not for create or drafts. It has no secret '
-                'field: the user enters the client secret in the Keboola UI.'
+                'OIDC settings; required with authentication_type="oidc", rejected otherwise. Has no secret: '
+                'the user enters it in the Keboola UI.'
             ),
             json_schema_extra=_type_object_on_ref,
         ),
     ] = None,
     auto_suspend_after_seconds: Annotated[
         int | None,
-        Field(
-            description=(
-                'Number of seconds after which the running data app is automatically suspended. '
-                'Leave unset (None) to keep the app\'s current value on update; on create it defaults '
-                'to 900.'
-            ),
-        ),
+        Field(description='Seconds without requests before the app suspends. None keeps it; create defaults to 900.'),
     ] = None,
     storage: Annotated[
         dict[str, Any] | None,
         Field(
             description=(
-                'Complete storage configuration for the data app (input/output table mappings). '
-                'Validated against the storage JSON schema. Replaces the ENTIRE storage block when '
-                'updating an existing app. For data apps with Storage Access, declare output tables '
-                'with `unload_strategy: "direct-grant"` (in that case `source` is not required and '
-                'the workspace is granted direct SELECT/INSERT/UPDATE/DELETE/TRUNCATE on the destination '
-                'Storage table). Leave unset (None) to preserve the existing storage configuration; '
-                'pass an empty dict to explicitly clear it.'
+                'Complete storage block (input/output table mappings), validated against the schema; replaces the '
+                'whole block. Output tables of an app with Storage access use `unload_strategy: "direct-grant"` '
+                '(no `source`). None keeps it; `{}` clears it.'
             ),
         ),
     ] = None,
@@ -1355,26 +1337,9 @@ async def modify_python_js_data_app(
         bool | None,
         Field(
             description=(
-                'Whether the app gets read-only Storage access -- a workspace whose ID the platform '
-                'injects as the WORKSPACE_ID environment variable, which the generated `query_data` '
-                'helper needs. Distinct from `storage`, which declares table input/output mappings: '
-                'this switch decides whether the app can reach Storage at all.\n'
-                '- **On create**: leave unset (None) for the default, which is Storage access ON. '
-                'Pass `False` only for an app that must not read Storage.\n'
-                '- **On update**: leave unset (None) to keep whatever the app has -- an unrelated '
-                'edit never grants or revokes Storage access. Pass `True` to turn it on (this is how '
-                'you fix an existing app failing with `missing required env vars: WORKSPACE_ID`, with '
-                'no UI step), or `False` to turn it off. Redeploy the app afterwards to apply it.\n'
-                'Check `data_app.storage_access_enabled` in the response to confirm the result.\n'
-                'The workspace is scoped to the **whole project**, not to the tables the app '
-                'queries -- the app can read every table in the project Storage. Tell the user that '
-                'when you turn it on, and especially when the app is `no-auth`, where anyone with '
-                'the URL reaches project data through it. If the app must be limited to particular '
-                'tables, that is an input/output mapping via `storage`, not this switch.\n'
-                'On projects without the `data-apps-storage-workspace` feature this falls back to '
-                'writing `parameters.dataApp.secrets.WORKSPACE_ID`, which is **deprecated** -- it pins '
-                'the app to the shared MCP-managed workspace instead of a per-app one. Never write that '
-                'secret by hand; use this argument, and pass the hint in `change_summary` on to the user.'
+                'Read-only Storage access to the WHOLE project (WORKSPACE_ID env var, needed by `query_data`). '
+                'None: on by default on create, kept on update. True also fixes `missing required env vars: '
+                'WORKSPACE_ID`. Tell the user the app can read every table. Redeploy to apply.'
             ),
         ),
     ] = None,
@@ -1382,16 +1347,9 @@ async def modify_python_js_data_app(
         str | None,
         Field(
             description=(
-                'Backend image the app runs on (the UI\'s "Backend version"), written to '
-                '`runtime.image.version`. An image tag from the platform catalog, which names its Python '
-                'and Node.js versions (e.g. `<release>_python-3.13_node-24`). '
-                '`get_data_apps(configuration_ids=[...])` lists the valid tags in `available_images` and '
-                "the app's current one in `deployment_info.image`; an unknown tag is rejected with the "
-                'list of valid ones.\n'
-                '- Leave unset (None) to keep what the app has on update; on create the app follows the '
-                'platform default.\n'
-                '- Pass "" to drop a pin and follow the platform default again.\n'
-                'Redeploy the app afterwards to apply it.'
+                'Backend image tag (`runtime.image.version`); valid tags are in `get_data_apps` '
+                '`available_images`. None keeps it (create follows the platform default); "" drops the pin. '
+                'Redeploy to apply.'
             ),
         ),
     ] = None,
@@ -1403,93 +1361,25 @@ async def modify_python_js_data_app(
 ) -> ModifiedPythonJsDataAppOutput:
     """Creates or updates a python-js data app.
 
-    Python-js is the default type for new data apps when you can run git: this tool only creates the
-    configuration and the repository, and you deliver the source code by `git push`. Use
-    `modify_streamlit_data_app` instead when you cannot run git or when the user asks for Streamlit explicitly.
-
-    - A python-js app owns a managed git repository; `git_clone_url` comes from
-      `create_python_js_data_app_git_credential`. MCP never runs git: clone, branch, push and merge are yours.
-    - Source changes are previewed in a draft (`create_python_js_data_app_draft`) on a branch of that repository.
-      `main` advances only by merging an approved branch; then `deploy_data_app` serves it from the prod app.
-    - A legacy draft (`parameters.dataApp.isDraft=true`) is a separate configuration; this tool can still update it,
-      but no longer creates one.
-
-    ## Scenario D — Deploy a prod app from a customer's GitHub repository
-
-    The code lives in the customer's own GitHub repository, not in a Keboola-managed one, and the
-    platform clones it through the Keboola organization's GitHub App connection — no token is ever
-    passed to or stored by the MCP.
-
-    1. `modify_python_js_data_app(name=..., git_repository='https://github.com/<owner>/<repo>',
-       git_auth='organization', branch='main')` → prod app with `parameters.dataApp.git`
-       `{repository, branch, authType: 'organization', private: true}` and no managed repo.
-       To move an app that is already bound to an external repository onto another repository,
-       pass the same arguments with its `configuration_id` (rebind). An app on a Keboola-managed repo
-       cannot be rebound — create a new app instead.
-    2. Code changes go to that GitHub repository through the user's own GitHub access; the MCP mints
-       no git credential for it (`create_python_js_data_app_git_credential` is rejected).
-    3. `deploy_data_app(action='deploy', configuration_id=PROD)` — production mode only. Drafts,
-       dev mode and the preview link are not supported for such apps yet.
-    If the deploy fails because the organization's GitHub connection is missing, someone who is both a
-    Keboola organization admin and an owner of the GitHub organization installs the Keboola GitHub App
-    first, then connects the GitHub organization:
-    https://help.keboola.com/management/organization/#connect-github (not a menu path).
-
-    ## Argument rules
-
-    - `branch` on **create** is only valid with `git_repository` (defaults to `'main'`). On **update** it
-      repoints an existing **external-git** app's pinned branch.
-    - `git_repository` and `git_auth` go together (Scenario D).
-    - `slug` is optional on create (auto-derived from `name` when omitted). See "Slug on update" below.
-    - The **update path** (passing `configuration_id`) is for changing `name`, `description`,
-      `authentication_type`, `auto_suspend_after_seconds`, `storage`, `image_version`, a prod app's `slug`
-      (see "Slug on update"), and an **external-git** app's `branch`. Source code changes go through git, not
-      this tool. After a `branch` repoint, call `deploy_data_app` to serve the new branch.
-
-    ## Authentication
-
-    New apps default to HTTP basic authentication for safety. Pass `authentication_type='no-auth'`
-    to expose publicly -- only when the user explicitly asks for a public app. `'no-auth'` is
-    rejected on legacy drafts: a draft inherits the prod app's data access, so disabling its
-    authentication would expose Storage-reading and Storage-writing endpoints publicly. Never
-    disable authentication to make the preview work -- the preview link authenticates on top of the
-    configured auth. On update,
-    `authentication_type='default'` preserves the existing `authorization` block (including OIDC
-    setups configured outside the MCP); `'basic-auth'` / `'no-auth'` overwrite it.
-
-    `authentication_type='oidc'` (with the `oidc` argument) switches an existing prod app to OIDC. It is
-    rejected on create and on drafts. The tool never takes a client secret: the user enters it in the Keboola UI.
-
-    Set up OIDC in this order:
-    1. Create the app with `'basic-auth'`. The output has `oidc_callback_url`.
-    2. The user registers `oidc_callback_url` at the identity provider and gives you the `client_id`.
-    3. Update the app with `authentication_type='oidc'` and `oidc` (`client_id`, `issuer_url`, and optionally
-       `logout_url`, `allowed_roles`).
-    4. The user enters the client secret in the app's Authentication section in the Keboola UI. If the client
-       can open URLs, it is asked to open that page.
-    5. Only if you use `allowed_roles`: update with `'oidc'` once more after the secret is saved.
-    6. Call `deploy_data_app` last.
-    If the output has `oidc_setup_required=true`, tell the user to follow `change_summary`. In `oidc`, null keeps
-    the stored `logout_url` / `allowed_roles`; `''` or `[]` removes them. The slug stays fixed on OIDC apps.
-
-    ## Slug constraint
-
-    Must be DNS-label-safe (lowercase letters, digits, hyphens). Optional on create: when omitted it
-    is auto-derived from `name` and capped at 50 characters (the data-app URL-prefix limit enforced
-    by the UI). Pass an explicit slug to override; an explicit
-    slug must be at most 63 characters (the DNS-label max), and note the UI's own URL-prefix limit is
-    50, so an explicit slug of 51-63 characters may still be rejected at deploy time.
-
-    ## Slug on update
-
-    The slug is the app URL (`https://<slug>-<app id>.hub.<stack>`), so changing it moves the app.
-    1. Until the prod app is first deployed, a rename moves a slug that follows the name (e.g.
-       `new-app` for "New App") to the new name automatically — nobody has the URL yet.
-    2. Once the app has been deployed, a rename keeps the slug. Change it only with an explicit
-       `slug`, and only after the user approved the new URL.
-    3. Legacy drafts never change their slug.
-    After an explicit `slug` the new URL applies on the next `deploy_data_app` and the old URL stops
-    working; tell the user both.
+    - The default type when you can run git; otherwise use `modify_streamlit_data_app`.
+    - Creates the configuration and a managed git repository (`repo_url`). You deliver code by `git push`
+      with a token from `create_python_js_data_app_git_credential`. **MCP never runs git**: clone, branch,
+      commit, push and merge are yours.
+    - Preview changes in a draft (`create_python_js_data_app_draft`) on a branch; merge an approved branch
+      into `main`, then `deploy_data_app` serves it.
+    - Update (`configuration_id`) changes name, description, auth, auto-suspend, storage, Storage access,
+      image, slug, and an external-git app's branch; code changes go through git. A legacy draft
+      (`isDraft=true`) can be updated but is no longer created.
+    - **Customer GitHub repository**: pass `git_repository` with `git_auth='organization'` to deploy a prod
+      app from the customer's repo. Code goes there through the user's own GitHub access; such an app has no
+      managed repo, no git credential, no drafts and deploys in production mode only.
+    - **OIDC** (update of a prod app only): first register the `oidc_callback_url` (returned on create) at the
+      identity provider, then update with `authentication_type='oidc'` and `oidc`. The user enters the client
+      secret in the Keboola UI (see `change_summary` while `oidc_setup_required` is true); with
+      `allowed_roles`, update with `'oidc'` once more after that. Deploy last.
+    - **Slug**: the slug is the app URL. A never-deployed app's slug follows its name; a deployed app keeps
+      it unless you pass `slug` (with the user's approval). The new URL applies on the next deploy and the old
+      one stops working; tell the user. An OIDC app's slug never follows its name; a legacy draft's never changes.
     """
     _validate_oidc_args(authentication_type, oidc, is_create=not configuration_id)
     _validate_git_repository_args(git_repository, git_auth)
@@ -1570,7 +1460,7 @@ async def modify_python_js_data_app(
             slug=new_slug,
             image_version=image_version,
         )
-        await client.storage_client.configuration_update(
+        update_resp = await client.storage_client.configuration_update(
             component_id=DATA_APP_COMPONENT_ID,
             configuration_id=configuration_id,
             configuration=updated_config,
@@ -1578,21 +1468,43 @@ async def modify_python_js_data_app(
             updated_name=name or data_app.name,
             updated_description=description or data_app.description,
         )
-        data_app = await _fetch_data_app(client, configuration_id=configuration_id, with_repo=True)
-        await set_cfg_update_metadata(
-            client=client,
-            component_id=DATA_APP_COMPONENT_ID,
-            configuration_id=configuration_id,
-            configuration_version=int(data_app.config_version),
-        )
+        # --- write committed past this point: nothing below may turn it into an error ---
+        new_version = str(update_resp.get('version') or '') if isinstance(update_resp, dict) else ''
         # Without `folder`, an update keeps the folder: the hint lists every data app, so only a create gives it.
-        folder_hint = (
-            await apply_configuration_folder(
+        fetched, _, folder_hint = await asyncio.gather(
+            _best_effort(
+                _fetch_data_app(client, configuration_id=configuration_id, with_repo=True),
+                None,
+                f'Re-reading the updated data app {configuration_id}',
+            ),
+            _best_effort(
+                set_cfg_update_metadata(
+                    client=client,
+                    component_id=DATA_APP_COMPONENT_ID,
+                    configuration_id=configuration_id,
+                    configuration_version=int(new_version),
+                ),
+                None,
+                f'Setting the update metadata of data app {configuration_id}',
+            )
+            if new_version.isdigit()
+            else _no_op(),
+            apply_configuration_folder(
                 client, DATA_APP_COMPONENT_ID, configuration_id, folder, 'data apps', 'modify_python_js_data_app'
             )
             if folder is not None
-            else None
+            else _no_op(),
         )
+        if fetched is None:
+            return _partial_update_output(
+                data_app_pre=data_app,
+                links_manager=links_manager,
+                configuration_id=configuration_id,
+                name=name or data_app.name,
+                new_version=new_version,
+                output_cls=ModifiedPythonJsDataAppOutput,
+            )
+        data_app = fetched
         written_authorization = updated_config.get('authorization') or {}
         oidc_callback_url = _oidc_callback_url(client, data_app.data_app_id, updated_config)
         # Without an explicit `slug`, a new slug is a never-deployed app's slug following its name.
@@ -1727,39 +1639,53 @@ async def modify_python_js_data_app(
             # An app on a customer's repository brings its own git binding; any other gets a managed repo.
             use_managed_git_repo=git_block is None,
         )
+        # --- app created past this point: nothing below may turn it into an error, or a retry duplicates it ---
+        new_config_id = data_app_resp.config_id
+        managed_repo, _, folder_hint, config_version = await asyncio.gather(
+            _best_effort(
+                client.data_science_client.get_app_git_repo(data_app_resp.id),
+                None,
+                f'Reading the git repo of the created data app {data_app_resp.id}',
+            )
+            if git_block is None
+            else _no_op(),
+            _best_effort(
+                set_cfg_creation_metadata(
+                    client=client, component_id=DATA_APP_COMPONENT_ID, configuration_id=new_config_id
+                ),
+                None,
+                f'Setting the creation metadata of data app {new_config_id}',
+            ),
+            apply_configuration_folder(
+                client,
+                DATA_APP_COMPONENT_ID,
+                new_config_id,
+                folder,
+                'data apps',
+                'modify_python_js_data_app',
+                is_new=True,
+            ),
+            _config_version_or_blank(client, new_config_id),
+        )
+        repo_hint = None
         if git_block is not None:
             repo_url = git_block.repository
+        elif managed_repo is not None and managed_repo.https_url:
+            repo_url = managed_repo.https_url
         else:
-            repo_resp = await client.data_science_client.get_app_git_repo(data_app_resp.id)
-            if repo_resp.https_url is None:
-                raise ValueError(
-                    f'Data app {data_app_resp.id} reports no HTTPS clone URL despite having a managed git repo. '
-                    'This indicates a platform-side bug — retry or contact support.'
-                )
-            repo_url = repo_resp.https_url
-        await set_cfg_creation_metadata(
-            client=client,
-            component_id=DATA_APP_COMPONENT_ID,
-            configuration_id=data_app_resp.config_id,
-        )
-        folder_hint = await apply_configuration_folder(
-            client,
-            DATA_APP_COMPONENT_ID,
-            data_app_resp.config_id,
-            folder,
-            'data apps',
-            'modify_python_js_data_app',
-            is_new=True,
-        )
+            LOG.error(f'Data app {data_app_resp.id} was created but its managed repo reports no HTTPS URL')
+            repo_url = None
+            repo_hint = (
+                'The app WAS created, but its git repo URL could not be read. Do NOT create it again: read '
+                f'`repo_url` from get_data_apps(configuration_ids=["{new_config_id}"]).'
+            )
         links = links_manager.get_data_app_links(
             configuration_id=data_app_resp.config_id,
             configuration_name=name,
             deployment_link=data_app_resp.url,
             uses_basic_authentication=uses_basic_auth,
         )
-        data_app_summary = DataAppSummary.from_api_response(
-            data_app_resp, await _config_version_or_blank(client, data_app_resp.config_id)
-        )
+        data_app_summary = DataAppSummary.from_api_response(data_app_resp, config_version)
         data_app_summary.repo_url = repo_url
         data_app_summary.storage_access_enabled = wants_storage_access
         app_branch = git_block.branch if git_block is not None else None
@@ -1769,7 +1695,8 @@ async def modify_python_js_data_app(
             _organization_git_hint(git_block, rebound=False) if git_block is not None and git_block.auth_type else None
         )
         change_summary = (
-            '\n'.join(note for note in (folder_hint, organization_hint, legacy_fallback_hint) if note) or None
+            '\n'.join(note for note in (repo_hint, folder_hint, organization_hint, legacy_fallback_hint) if note)
+            or None
         )
         return ModifiedPythonJsDataAppOutput(
             response='created',
@@ -1790,43 +1717,14 @@ async def create_python_js_data_app_git_credential(
     configuration_id: Annotated[str, Field(description='Storage configuration ID of the python-js data app.')],
     project_id: ProjectIdArg = None,
 ) -> CreatedGitCredentialOutput:
-    """Mints a one-time HTTPS token on a python-js **prod** data app so the caller can clone, pull,
-    and push to the app's managed git repo over HTTPS.
+    """Mints an HTTPS token for the managed git repo of a python-js **prod** data app.
 
-    **Always call against the prod app's configuration_id** — drafts have no managed repo of their
-    own, so calling this on a draft fails. The prod app is the canonical repo owner; drafts
-    iterate against branches of that same repo.
+    - Returns `git_clone_url` (token embedded) and the raw `secret`.
 
-    **MCP never runs git on your behalf.** All git work — clone, branch, commit, push, merge,
-    branch-delete — is yours. This tool only mints credentials.
-
-    Returns a ready-to-use `git_clone_url` of the form `https://kai:<secret>@<host>/<path>.git`
-    plus the raw `secret`. The token is returned **only** at creation — the platform cannot return
-    it again on any subsequent read. Stash the URL (or the secret) somewhere the LLM can reuse for
-    the rest of the session.
-
-    The data-science API accepts multiple credentials per app, so calling this again mints an
-    additional token without invalidating any tokens already held by other clients.
-
-    ## When to call
-
-    1. **Right after `modify_python_js_data_app` create of a prod app** — the new prod has a
-       managed repo but no credentials yet. Call this tool with the new app's `configuration_id`
-       to enable git access.
-
-    2. **Recovery when the cached token is gone / continuing an unfinished draft** — e.g., a fresh
-       sandbox continuing yesterday's work, with the previous sandbox's filesystem wiped. The
-       cached `git_clone_url` is lost; the configuration ID for the prod app is all you have.
-       Call this tool with the **prod app's** `configuration_id` to mint a fresh token (drafts
-       have no managed repo, so always mint against prod). Existing credentials remain valid, so
-       other clients are not disrupted.
-
-    ## Constraints
-    - Only python-js prod data apps have a managed git repo. Streamlit apps reject the call with
-      a clear error, and so do apps on a customer GitHub repository (`git_auth_type='organization'`).
-    - Permissions are always `readWrite` — the LLM virtually always needs push access. The
-      data-science API supports read-only credentials, but the tool does not expose that knob;
-      revisit once a real use case appears.
+    - Call it after creating a prod app, or when the token you had is gone. Always pass the prod app's
+      `configuration_id`: drafts use branches of the prod app's repo.
+    - The secret is shown only once. Each call mints another `readWrite` token; existing ones stay valid.
+    - Rejected for Streamlit apps and apps on a customer GitHub repository.
     """
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
@@ -2164,10 +2062,7 @@ async def get_data_apps(
       that fails to start, check its `failure_reason`/`failure_message` FIRST — they cover setup-phase
       failures (e.g. invalid secrets, git clone errors, failing setup scripts) that happen before the
       container starts and therefore never appear in the regular logs.
-    - `repo_url` (managed git repo URL for python-js apps) is ONLY populated on the detail path
-      (when `configuration_ids` is provided). The inventory list always returns `repo_url=None`,
-      even for python-js apps with a managed repo — to retrieve the URL, call this tool again
-      with the target `configuration_ids`.
+    - `repo_url` is set only on the detail path (`configuration_ids`), never in the inventory list.
     - For a python-js **prod** app the detail also lists its `drafts` (with `draft_id`, `git_branch`, `url`,
       `run_state`) and its `legacy_drafts` (separate draft configurations).
     """
@@ -2227,51 +2122,35 @@ async def deploy_data_app(
             ),
         ),
     ] = None,
+    wait: Annotated[
+        bool,
+        Field(
+            description=(
+                'With action="deploy": wait (up to about 4 minutes) until the new deployment runs or fails. '
+                'False returns at once with state "starting".'
+            ),
+        ),
+    ] = True,
     project_id: ProjectIdArg = None,
 ) -> DeploymentDataAppOutput:
-    """Deploys/redeploys a data app or stops a running data app in the Keboola environment asynchronously, given the
-    action and the configuration ID.
+    """Deploys (or redeploys) a data app, or stops it.
 
-    **MCP never runs git on your behalf.** All git work — clone, branch, commit, push, merge,
-    branch-delete — is yours. This tool only triggers deploys against existing git state.
-
-    ## Mode (python-js apps)
-    - For prod redeploys (including after merging a draft's branch into `main`), use no `mode` —
-      the prod app picks up the current `main`.
-    <!-- directory:omit -->
-    - A draft from `create_python_js_data_app_draft` needs no deploy: it serves its branch live.
-    <!-- /directory:omit -->
-    - `mode='dev'` is rejected, and so is a deploy of a legacy draft (`isDraft=true`): convert the legacy
-      draft to a draft on its branch instead.
-    - An app on a customer GitHub repository (`git_auth_type='organization'`) deploys in production
-      mode only: a deploy without `mode` switches an app left in dev mode back to production.
-
-    ## Configuration publishing
-    - Every deploy **publishes the latest saved configuration version** (for both python-js and
-      Streamlit apps), so configuration-only changes -- secrets, Storage access, git branch, size --
-      go live together with the code. For python-js apps the code itself is always re-pulled from git.
-    - `deployment_info.version` is the configuration version the app is actually running;
-      `deployment_info.latest_config_version` is the latest saved one. If
-      `deployment_info.has_unpublished_changes` is true, the configuration was changed after the
-      deploy was triggered -- deploy again to publish it.
-
-    ## Streamlit apps
-    Streamlit apps have no managed git repo; deploy them without `mode`.
-
-    ## General considerations
-    - Redeploying a data app takes some time; the app reports `state="starting"` until the new deployment serves
-      production.
-    - `state` is `notDeployed` (never deployed), `starting`, `running`, `suspended` (asleep, wakes on the next
-      visit) or `disabled` (failed to start; only a deploy brings it back).
-    - After deployment, the deployment info includes the app URL and the latest logs to help diagnose in-app
-      errors.
-    - To start or restart an app on a schedule or after other jobs, add it to a flow as a `keboola.data-app-control`
-      task (see the flow tools) instead of calling this tool.
+    - A deploy publishes the latest saved configuration; a python-js app also pulls the current `main` of its
+      repo (git is yours: merge first). A draft needs no deploy, and a legacy draft cannot be deployed:
+      convert it to a draft on its branch.
+    - A deploy returns when the new deployment serves production (`state="running"`), when it failed to start
+      (`change_summary` says so; `deployment_info.last_run` and `logs` say why), or after about 4 minutes with
+      `state="starting"`. Act on the result; do not sleep or poll before reading it.
+    - `state`: `notDeployed`, `starting`, `running`, `suspended` (wakes on the next visit) or `disabled`
+      (failed to start; only a deploy brings it back).
+    - `deployment_info.has_unpublished_changes` true: the configuration changed after the deploy; deploy again.
+    - To start an app on a schedule or after other jobs, add a `keboola.data-app-control` task to a flow.
     """
     client = KeboolaClient.from_state(ctx.session.state)
-    links_manager = await ProjectLinksManager.from_client(client)
     if action == 'deploy':
-        data_app = await _fetch_data_app(client, configuration_id=configuration_id)
+        links_manager, data_app = await asyncio.gather(
+            ProjectLinksManager.from_client(client), _fetch_data_app(client, configuration_id=configuration_id)
+        )
         if _is_draft_config(data_app.configuration):
             raise ValueError(_legacy_draft_convert_message(data_app))
         if mode == 'dev':
@@ -2284,34 +2163,29 @@ async def deploy_data_app(
             # mode: an external-repo app once deployed in dev mode would stay there on a deploy without
             # `mode`, so switch it to production explicitly.
             mode = 'production'
-        # Always pin the latest config version (python-js included): without `configVersion` the data-app
-        # service keeps the previously published version, so config-only changes (secrets, Storage access,
-        # git branch, ...) would never go live.
-        config_version = await client.storage_client.configuration_version_latest(
-            DATA_APP_COMPONENT_ID, data_app.configuration_id
-        )
-        await _trigger_deploy(client, data_app, str(config_version), mode)
-        data_app = await _fetch_data_app(client, configuration_id=configuration_id)
-        logs, last_run, images = await asyncio.gather(
-            _fetch_logs(client, data_app.data_app_id),
-            _fetch_latest_run(client, data_app),
-            _fetch_app_images(client, data_app),
-        )
-        if data_app.state == 'disabled':
-            # The operator picks the new deployment up a moment later; until then the record and its
-            # latest run still describe the start that failed before this deploy.
-            data_app.state = 'starting'
-            last_run = None
-        data_app = data_app.with_deployment_info(logs, last_run=last_run).with_image(images)
+        # The detail read gives the current (latest) version; pin it (python-js included): without
+        # `configVersion` the data-app service keeps the previously published version, so config-only changes
+        # (secrets, Storage access, git branch, ...) would never go live.
+        deployment_id = await _trigger_deploy(client, data_app, data_app.config_version, mode)
+        # --- deploy committed past this point: waiting and reporting must not turn it into an error ---
+        waited = await _wait_for_deployment(client, data_app, deployment_id, _DEPLOY_WAIT_SECONDS) if wait else None
+        change_summary = await _apply_deploy_outcome(client, data_app, waited)
         links = links_manager.get_data_app_links(
             configuration_id=data_app.configuration_id,
             configuration_name=data_app.name,
             deployment_link=data_app.deployment_url,
             uses_basic_authentication=_uses_basic_authentication(data_app.configuration.get('authorization') or {}),
         )
-        return DeploymentDataAppOutput(state=data_app.state, links=links, deployment_info=data_app.deployment_info)
+        return DeploymentDataAppOutput(
+            state=data_app.state,
+            links=links,
+            deployment_info=data_app.deployment_info,
+            change_summary=change_summary,
+        )
     elif action == 'stop':
-        data_app = await _fetch_data_app(client, configuration_id=configuration_id)
+        links_manager, data_app = await asyncio.gather(
+            ProjectLinksManager.from_client(client), _fetch_data_app(client, configuration_id=configuration_id)
+        )
         if data_app.state == 'starting':
             raise ValueError('Data app is currently "starting", could not be stopped at the moment.')
         if data_app.state != 'suspended':
@@ -2338,13 +2212,17 @@ async def deploy_data_app(
 
 async def _trigger_deploy(
     client: KeboolaClient, data_app: DataApp, config_version: str, mode: Literal['production'] | None
-) -> None:
-    """Ask the data-science API to deploy `config_version`, mapping known refusals to actionable errors."""
+) -> str | None:
+    """Ask the data-science API to deploy `config_version`, mapping known refusals to actionable errors.
+
+    :return: The new deployment's ID; None for a `mode` deploy, whose `/v1` endpoint returns none.
+    """
     try:
         if mode is not None:
             await client.data_science_client.deploy_data_app_in_mode(data_app.data_app_id, config_version, 'prod')
-        else:
-            await client.data_science_client.deploy_data_app(data_app.data_app_id, config_version)
+            return None
+        deployment = await client.data_science_client.deploy_data_app(data_app.data_app_id, config_version)
+        return deployment.id
     except httpx.HTTPStatusError as e:
         api_error = _api_error_text(e.response)
         if mode is None and e.response.status_code == HTTPStatus.CONFLICT and _LEGACY_WORKLOAD in api_error:
@@ -2358,6 +2236,115 @@ async def _trigger_deploy(
                 f'{api_error} {hint}'
             ) from e
         raise
+
+
+# A prod deploy is a cold image build (2-4 min). The budget stays under every hard limit on the hosted path
+# (Kai's tool-call limit is 12 min, the platform blocks a promotion after 10 min); the 60 s idle timeout of
+# the ingress never fires because a streamable-HTTP response pings every 15 s while the tool runs.
+_DEPLOY_WAIT_SECONDS = 240
+# (elapsed seconds, poll interval): poll every 2 s for the first 10 s, every 5 s up to a minute, then every 10 s.
+_DEPLOY_POLL_STEPS = ((10, 2), (60, 5))
+_DEPLOY_POLL_MAX_SECONDS = 10
+
+
+def _deploy_poll_interval(elapsed: float) -> float:
+    return next((interval for until, interval in _DEPLOY_POLL_STEPS if elapsed < until), _DEPLOY_POLL_MAX_SECONDS)
+
+
+@dataclass
+class _DeployWait:
+    """How the deploy wait ended, and the app record it read last (None when it never read the app).
+
+    - `outcome` is None when there was nothing to wait on or a read failed.
+    - `failed_run` is set only with `outcome='failed'`.
+    """
+
+    record: DataAppResponse | None = None
+    outcome: Literal['running', 'failed', 'timeout'] | None = None
+    failed_run: AppRunResponse | None = None
+
+
+async def _wait_for_deployment(
+    client: KeboolaClient, data_app: DataApp, deployment_id: str | None, budget: float
+) -> _DeployWait:
+    """Poll the app until the new deployment serves production, its run fails, or `budget` runs out.
+
+    - Done when `production.actualDeploymentId` is the new deployment and the app is `running`: during a
+      rollout of a running app, `state` stays `running` while the previous deployment still serves.
+    - Failed when the newest run of the new deployment failed.
+    - A `mode` deploy (`/v1`) returns no ID: the new one is the desired deployment once it differs from the
+      one before the deploy. Without it (an app still on a /v1 workload) there is nothing to wait on.
+    - Never raises: the deploy is committed, so a failed read only ends the wait.
+    """
+    app_id = data_app.data_app_id
+    seen = _DeployWait()
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    try:
+        async with asyncio.timeout(budget):
+            if deployment_id is None:
+                seen.record = await client.data_science_client.get_data_app(app_id)
+                desired = seen.record.production.desired_deployment_id
+                if not desired or desired == data_app.desired_deployment_id:
+                    return seen
+                deployment_id = desired
+            while True:
+                await asyncio.sleep(_deploy_poll_interval(loop.time() - started))
+                seen.record, runs = await asyncio.gather(
+                    client.data_science_client.get_data_app(app_id),
+                    client.data_science_client.list_app_runs(app_id, limit=1, deployment_id=deployment_id),
+                )
+                if seen.record.production.actual_deployment_id == deployment_id and seen.record.state == 'running':
+                    seen.outcome = 'running'
+                    return seen
+                if runs and runs[0].state == 'failed':
+                    seen.outcome, seen.failed_run = 'failed', runs[0]
+                    return seen
+    except TimeoutError:
+        LOG.info(f'Deployment {deployment_id} of data app {app_id} is not running after {budget} s')
+        seen.outcome = 'timeout'
+    except Exception:
+        LOG.exception(f'Failed to read data app {app_id} while waiting for deployment {deployment_id}')
+    return seen
+
+
+async def _apply_deploy_outcome(client: KeboolaClient, data_app: DataApp, waited: _DeployWait | None) -> str | None:
+    """Set the app's state and deployment info as the deploy leaves it; return the `change_summary`.
+
+    - Logs and the failed run are read only when the new deployment failed.
+    """
+    waited = waited or _DeployWait()
+    record = waited.record
+    # The deploy published the latest version; the record says so once it was read.
+    data_app.published_config_version = data_app.config_version
+    if record is not None:
+        data_app.deployment_url = record.url or data_app.deployment_url
+        data_app.published_config_version = record.production.desired_config_version or data_app.config_version
+    if waited.outcome == 'running':
+        data_app.state = 'running'
+        data_app.with_deployment_info([])
+        return None
+    if waited.outcome == 'failed' and waited.failed_run is not None:
+        # A failed rollout of a running app reads `starting` (the previous deployment still serves), never
+        # `running`: the new code is not live.
+        data_app.state = record.reported_state if record is not None else 'disabled'
+        logs = await _fetch_logs(client, data_app.data_app_id)
+        data_app.with_deployment_info(logs, last_run=AppRunInfo.from_api_response(waited.failed_run))
+        serving = (
+            ' Production still serves the previous deployment.'
+            if record is not None and record.production.actual_deployment_id
+            else ''
+        )
+        return (
+            'The new deployment failed to start; `deployment_info.last_run` and `logs` say why.'
+            f'{serving} Fix the cause, then deploy again.'
+        )
+    data_app.state = 'starting'
+    data_app.with_deployment_info([])
+    check = f'Check it with get_data_apps(configuration_ids=["{data_app.configuration_id}"]); do not deploy again.'
+    if waited.outcome == 'timeout':
+        return f'The app is still starting after {_DEPLOY_WAIT_SECONDS} s. {check}'
+    return f'The deploy started. {check}'
 
 
 def _organization_git_dev_mode_message(configuration_id: str) -> str:
@@ -2393,8 +2380,7 @@ async def create_python_js_data_app_draft(
       production traffic.
     - It suspends itself after 15 minutes without requests and wakes on the next one.
     - It outlives a prod deployment. Delete it with `delete_python_js_data_app_draft` when the work is done.
-    - The tool waits until the draft has a `url`. `run_state` reaches `running` 1–2 minutes later; check it with
-      `get_data_apps`.
+    - The tool waits until the draft has a `url`; `run_state` reaches `running` 1–2 minutes later.
     - Not idempotent: every call starts another draft. When a call fails or times out, look for the draft in
       `get_data_apps` before calling again.
 
@@ -2583,35 +2569,18 @@ async def get_data_app_preview_link(
     ] = None,
     project_id: ProjectIdArg = None,
 ) -> DataAppPreviewLinkOutput:
-    """Creates a short-lived link that opens a python-js draft in your browser without the app's login.
+    """Creates a short-lived link that opens a python-js draft in a browser without the app's login.
 
-    - With `draft_id`: the link opens that draft on its own host.
-    - Without it: the link opens a legacy draft still running in dev mode.
-      An app that is not in dev mode has no preview link.
-
-    ## How to use the link
-    - Open `url` in a real browser before `link_expires_at` (about 60 seconds after this call): a browser tool,
-      or a headless browser CLI run from your shell. Do not fetch it with an HTTP client or curl: only a browser
+    - With `draft_id` it opens that draft; without it, a legacy draft running in dev mode.
+    - Open `url` in a real browser before `link_expires_at` (about 60 s): a browser tool, or
+      a headless browser CLI run from your shell. Do not fetch it with an HTTP client or curl: only a browser
       can turn it into a session.
-    - After one successful open, the browser session keeps working and slides while you use the app, so reloads,
-      navigation and later checks of the same app need no new link. Do not call this tool before every check.
-    - The session belongs to this one app. It ends without notice: after about 4 hours without requests,
-      12 hours after the link was opened at the latest, or at once when the app leaves dev mode.
-    - Call this tool again only when the app shows its login page ("This app is password protected") or looks
-      broken until reloaded, or when you did not open the previous `url` before its `link_expires_at` (the
-      browser then shows "Preview link is invalid or expired").
+    - The browser session then keeps working for hours, so do not call this tool before every check. Call it
+      again only when the app shows its login page or the link expired unopened.
     - Never type a password into the app's login page, and never ask the user for one.
     - Do not share `url`: do not show it to the user and do not put it into files, commits, messages, or any
-      tool or any command other than the one that opens the browser. Anyone who opens it before it expires gets
-      into the app.
-
-    ## Errors
-    - "has no URL yet" on a draft: it is still starting; call again in a few seconds.
-    - "not running in dev mode" on a legacy draft: convert it to a draft on its branch, as the error says.
-    - "is a production app": preview a draft of it instead; never switch a production app to dev mode.
-    - "is not in dev mode" on another app type (e.g. Streamlit): it has no dev mode; tell the user and do not
-      change its deploy mode.
-    - "not configured on this Keboola stack": preview links are not available here; tell the user.
+      tool or any command other than the one that opens the browser.
+    - Errors say what to do; never switch a production app to dev mode.
     """
     if draft_id is not None:
         _validate_draft_id(draft_id)
@@ -2969,7 +2938,18 @@ async def _fetch_data_app(client: KeboolaClient, *, configuration_id: str, with_
     )
     api_config = ConfigurationAPIResponse.model_validate(raw_configuration | {'component_id': DATA_APP_COMPONENT_ID})
     data_app_id = cast(str, api_config.configuration['parameters']['id'])
-    data_app_science = await client.data_science_client.get_data_app(data_app_id)
+    # The repo read needs only the app ID, so it runs alongside the app read. A Streamlit config (it embeds its
+    # code) has no repo to read; any other non-python-js answer is dropped below.
+    data_app_block = _data_app_block(api_config.configuration)
+    read_repo = with_repo and not _is_draft_config(api_config.configuration) and 'streamlit' not in data_app_block
+    data_app_science, repo_resp = await asyncio.gather(
+        client.data_science_client.get_data_app(data_app_id),
+        _best_effort(
+            client.data_science_client.get_app_git_repo(data_app_id), None, f'Reading the git repo of {data_app_id}'
+        )
+        if read_repo
+        else _no_op(),
+    )
     if data_app_science.component_id != DATA_APP_COMPONENT_ID:
         raise ValueError(
             f'Data app tools only support {DATA_APP_COMPONENT_ID} component, but the data app '
@@ -2977,13 +2957,9 @@ async def _fetch_data_app(client: KeboolaClient, *, configuration_id: str, with_
         )
     data_app = DataApp.from_api_responses(data_app_science, api_config)
     data_app.deployment_url = data_app.deployment_url or _app_url(client, data_app_science.id, api_config.configuration)
-    if with_repo and data_app_science.type == 'python-js' and not _is_draft_config(api_config.configuration):
-        try:
-            repo_resp = await client.data_science_client.get_app_git_repo(data_app_science.id)
-            data_app.repo_url = repo_resp.https_url
-            data_app.is_managed_git_repo = repo_resp.is_managed_git_repo
-        except Exception as exc:
-            LOG.warning(f'Could not fetch git repo info for python-js app {data_app_science.id}: {exc}')
+    if repo_resp is not None and data_app_science.type == 'python-js':
+        data_app.repo_url = repo_resp.https_url
+        data_app.is_managed_git_repo = repo_resp.is_managed_git_repo
     return data_app
 
 
@@ -3192,14 +3168,15 @@ def _uses_organization_git_auth(configuration: Mapping[str, Any]) -> bool:
 
 
 async def _fetch_prod_drafts(client: KeboolaClient, *, prod_configuration_id: str) -> tuple[list[DataAppSummary], int]:
-    """List the drafts (configs with `parentConfigurationId == prod_configuration_id`) of a python-js
-    prod app. Returns full `DataAppSummary` entries (one extra DSAPI fetch per draft, capped at
-    10 parallel) plus the count of drafts whose detail fetch transiently failed and were omitted —
-    so the caller can tell "temporarily unreachable" from "deleted". Drafts in trash are not returned
-    by `configuration_list` and so do not appear here.
+    """List the legacy drafts (configs with `parentConfigurationId == prod_configuration_id`) of a python-js
+    prod app, built from two listings: the component's configurations and the project's apps.
+
+    - Returns the summaries plus the count of drafts whose app could not be read (missing from the app
+      listing, or the listing failed), so the caller can tell "temporarily unreachable" from "deleted".
+    - Drafts in trash are not returned by `configuration_list` and so do not appear here.
     """
     configs = await client.storage_client.configuration_list(DATA_APP_COMPONENT_ID)
-    draft_cfg_ids: list[str] = []
+    draft_cfgs: list[tuple[str, Mapping[str, Any]]] = []
     for cfg in configs:
         cfg_body = cast(Mapping[str, Any], cfg.get('configuration') or {})
         # A draft must satisfy BOTH halves of the contract: `isDraft=true` AND `parentConfigurationId`
@@ -3207,28 +3184,33 @@ async def _fetch_prod_drafts(client: KeboolaClient, *, prod_configuration_id: st
         # non-draft (e.g. a clone that kept the pointer but lost the flag) as a draft.
         if not _is_draft_config(cfg_body):
             continue
-        data_app_block = cast(Mapping[str, Any], cfg_body.get('parameters') or {}).get('dataApp') or {}
-        if data_app_block.get('parentConfigurationId') == prod_configuration_id:
-            cfg_id = cfg.get('id')
-            if isinstance(cfg_id, str):
-                draft_cfg_ids.append(cfg_id)
+        if _data_app_block(cfg_body).get('parentConfigurationId') == prod_configuration_id:
+            draft_cfgs.append((cast(str, cfg.get('id')), cfg))
 
-    if not draft_cfg_ids:
+    if not draft_cfgs:
         return [], 0
 
-    async def fetch_summary(cfg_id: str) -> DataAppSummary | None:
-        try:
-            draft = await _fetch_data_app(client, configuration_id=cfg_id, with_repo=True)
-        except Exception:
-            LOG.exception(f'Failed to fetch draft data app by configuration ID: {cfg_id}')
-            return None
-        summary = DataAppSummary.model_validate(draft.model_dump())
-        summary.repo_url = draft.repo_url
-        return summary
+    try:
+        apps = {app.id: app for app in await client.data_science_client.list_all_data_apps()}
+    except Exception:
+        LOG.exception(f'Failed to list the apps of the legacy drafts of {prod_configuration_id}')
+        return [], len(draft_cfgs)
 
-    results = await process_concurrently(draft_cfg_ids, fetch_summary, max_concurrency=10)
-    drafts = [s for s in results if isinstance(s, DataAppSummary)]
-    return drafts, len(draft_cfg_ids) - len(drafts)
+    drafts: list[DataAppSummary] = []
+    for cfg_id, cfg in draft_cfgs:
+        cfg_body = cast(Mapping[str, Any], cfg.get('configuration') or {})
+        app = apps.get(str(_parameters_block(cfg_body).get('id')))
+        if app is None:
+            LOG.warning(f'Legacy draft {cfg_id} has no app in the app listing')
+            continue
+        summary = DataAppSummary.from_api_response(app, str(cfg.get('version', '')))
+        summary.configuration_id = cfg_id
+        summary.deployment_url = app.url or _app_url(client, app.id, cfg_body)
+        summary.auto_suspend_after_seconds = _config_auto_suspend(cfg_body)
+        summary.git_branch = _config_git_branch(cfg_body)
+        summary.git_auth_type = _config_git_auth_type(cfg_body)
+        drafts.append(summary)
+    return drafts, len(draft_cfgs) - len(drafts)
 
 
 async def _list_drafts_or_none(client: KeboolaClient, data_app_id: str) -> list[DraftInfo] | None:

@@ -56,12 +56,10 @@ current production version with the chosen content.
 
 ### Other Tools
 - [create_python_js_data_app_draft](#create_python_js_data_app_draft): Creates a draft of a python-js data app: its own workload on its own host, serving `git_branch`.
-- [create_python_js_data_app_git_credential](#create_python_js_data_app_git_credential): Mints a one-time HTTPS token on a python-js **prod** data app so the caller can clone, pull,
-and push to the app's managed git repo over HTTPS.
+- [create_python_js_data_app_git_credential](#create_python_js_data_app_git_credential): Mints an HTTPS token for the managed git repo of a python-js **prod** data app.
 - [delete_python_js_data_app_draft](#delete_python_js_data_app_draft): Deletes a draft of a python-js data app.
-- [deploy_data_app](#deploy_data_app): Deploys/redeploys a data app or stops a running data app in the Keboola environment asynchronously, given the
-action and the configuration ID.
-- [get_data_app_preview_link](#get_data_app_preview_link): Creates a short-lived link that opens a python-js draft in your browser without the app's login.
+- [deploy_data_app](#deploy_data_app): Deploys (or redeploys) a data app, or stops it.
+- [get_data_app_preview_link](#get_data_app_preview_link): Creates a short-lived link that opens a python-js draft in a browser without the app's login.
 - [get_data_apps](#get_data_apps): Lists summaries of data apps in the project given the limit and offset or gets details of a data apps by
 providing their configuration IDs.
 - [modify_python_js_data_app](#modify_python_js_data_app): Creates or updates a python-js data app.
@@ -2189,8 +2187,7 @@ Creates a draft of a python-js data app: its own workload on its own host, servi
   production traffic.
 - It suspends itself after 15 minutes without requests and wakes on the next one.
 - It outlives a prod deployment. Delete it with `delete_python_js_data_app_draft` when the work is done.
-- The tool waits until the draft has a `url`. `run_state` reaches `running` 1–2 minutes later; check it with
-  `get_data_apps`.
+- The tool waits until the draft has a `url`; `run_state` reaches `running` 1–2 minutes later.
 - Not idempotent: every call starts another draft. When a call fails or times out, look for the draft in
   `get_data_apps` before calling again.
 
@@ -2242,43 +2239,14 @@ Errors:
 
 **Description**:
 
-Mints a one-time HTTPS token on a python-js **prod** data app so the caller can clone, pull,
-and push to the app's managed git repo over HTTPS.
+Mints an HTTPS token for the managed git repo of a python-js **prod** data app.
 
-**Always call against the prod app's configuration_id** — drafts have no managed repo of their
-own, so calling this on a draft fails. The prod app is the canonical repo owner; drafts
-iterate against branches of that same repo.
+- Returns `git_clone_url` (token embedded) and the raw `secret`.
 
-**MCP never runs git on your behalf.** All git work — clone, branch, commit, push, merge,
-branch-delete — is yours. This tool only mints credentials.
-
-Returns a ready-to-use `git_clone_url` of the form `https://kai:<secret>@<host>/<path>.git`
-plus the raw `secret`. The token is returned **only** at creation — the platform cannot return
-it again on any subsequent read. Stash the URL (or the secret) somewhere the LLM can reuse for
-the rest of the session.
-
-The data-science API accepts multiple credentials per app, so calling this again mints an
-additional token without invalidating any tokens already held by other clients.
-
-## When to call
-
-1. **Right after `modify_python_js_data_app` create of a prod app** — the new prod has a
-   managed repo but no credentials yet. Call this tool with the new app's `configuration_id`
-   to enable git access.
-
-2. **Recovery when the cached token is gone / continuing an unfinished draft** — e.g., a fresh
-   sandbox continuing yesterday's work, with the previous sandbox's filesystem wiped. The
-   cached `git_clone_url` is lost; the configuration ID for the prod app is all you have.
-   Call this tool with the **prod app's** `configuration_id` to mint a fresh token (drafts
-   have no managed repo, so always mint against prod). Existing credentials remain valid, so
-   other clients are not disrupted.
-
-## Constraints
-- Only python-js prod data apps have a managed git repo. Streamlit apps reject the call with
-  a clear error, and so do apps on a customer GitHub repository (`git_auth_type='organization'`).
-- Permissions are always `readWrite` — the LLM virtually always needs push access. The
-  data-science API supports read-only credentials, but the tool does not expose that knob;
-  revisit once a real use case appears.
+- Call it after creating a prod app, or when the token you had is gone. Always pass the prod app's
+  `configuration_id`: drafts use branches of the prod app's repo.
+- The secret is shown only once. Each call mints another `readWrite` token; existing ones stay valid.
+- Rejected for Streamlit apps and apps on a customer GitHub repository.
 
 
 **Input JSON Schema**:
@@ -2377,42 +2345,18 @@ Deletes a draft of a python-js data app. It never touches the prod app or the gi
 
 **Description**:
 
-Deploys/redeploys a data app or stops a running data app in the Keboola environment asynchronously, given the
-action and the configuration ID.
+Deploys (or redeploys) a data app, or stops it.
 
-**MCP never runs git on your behalf.** All git work — clone, branch, commit, push, merge,
-branch-delete — is yours. This tool only triggers deploys against existing git state.
-
-## Mode (python-js apps)
-- For prod redeploys (including after merging a draft's branch into `main`), use no `mode` —
-  the prod app picks up the current `main`.
-- A draft from `create_python_js_data_app_draft` needs no deploy: it serves its branch live.
-- `mode='dev'` is rejected, and so is a deploy of a legacy draft (`isDraft=true`): convert the legacy
-  draft to a draft on its branch instead.
-- An app on a customer GitHub repository (`git_auth_type='organization'`) deploys in production
-  mode only: a deploy without `mode` switches an app left in dev mode back to production.
-
-## Configuration publishing
-- Every deploy **publishes the latest saved configuration version** (for both python-js and
-  Streamlit apps), so configuration-only changes -- secrets, Storage access, git branch, size --
-  go live together with the code. For python-js apps the code itself is always re-pulled from git.
-- `deployment_info.version` is the configuration version the app is actually running;
-  `deployment_info.latest_config_version` is the latest saved one. If
-  `deployment_info.has_unpublished_changes` is true, the configuration was changed after the
-  deploy was triggered -- deploy again to publish it.
-
-## Streamlit apps
-Streamlit apps have no managed git repo; deploy them without `mode`.
-
-## General considerations
-- Redeploying a data app takes some time; the app reports `state="starting"` until the new deployment serves
-  production.
-- `state` is `notDeployed` (never deployed), `starting`, `running`, `suspended` (asleep, wakes on the next
-  visit) or `disabled` (failed to start; only a deploy brings it back).
-- After deployment, the deployment info includes the app URL and the latest logs to help diagnose in-app
-  errors.
-- To start or restart an app on a schedule or after other jobs, add it to a flow as a `keboola.data-app-control`
-  task (see the flow tools) instead of calling this tool.
+- A deploy publishes the latest saved configuration; a python-js app also pulls the current `main` of its
+  repo (git is yours: merge first). A draft needs no deploy, and a legacy draft cannot be deployed:
+  convert it to a draft on its branch.
+- A deploy returns when the new deployment serves production (`state="running"`), when it failed to start
+  (`change_summary` says so; `deployment_info.last_run` and `logs` say why), or after about 4 minutes with
+  `state="starting"`. Act on the result; do not sleep or poll before reading it.
+- `state`: `notDeployed`, `starting`, `running`, `suspended` (wakes on the next visit) or `disabled`
+  (failed to start; only a deploy brings it back).
+- `deployment_info.has_unpublished_changes` true: the configuration changed after the deploy; deploy again.
+- To start an app on a schedule or after other jobs, add a `keboola.data-app-control` task to a flow.
 
 
 **Input JSON Schema**:
@@ -2448,6 +2392,11 @@ Streamlit apps have no managed git repo; deploy them without `mode`.
       "default": null,
       "description": "Leave None (default). \"dev\" is rejected: an app never runs in dev mode by a deploy.\nA draft from `create_python_js_data_app_draft` runs in dev mode by itself and needs no deploy."
     },
+    "wait": {
+      "default": true,
+      "description": "With action=\"deploy\": wait (up to about 4 minutes) until the new deployment runs or fails. False returns at once with state \"starting\".",
+      "type": "boolean"
+    },
     "project_id": {
       "anyOf": [
         {
@@ -2478,35 +2427,18 @@ Streamlit apps have no managed git repo; deploy them without `mode`.
 
 **Description**:
 
-Creates a short-lived link that opens a python-js draft in your browser without the app's login.
+Creates a short-lived link that opens a python-js draft in a browser without the app's login.
 
-- With `draft_id`: the link opens that draft on its own host.
-- Without it: the link opens a legacy draft still running in dev mode.
-  An app that is not in dev mode has no preview link.
-
-## How to use the link
-- Open `url` in a real browser before `link_expires_at` (about 60 seconds after this call): a browser tool,
-  or a headless browser CLI run from your shell. Do not fetch it with an HTTP client or curl: only a browser
+- With `draft_id` it opens that draft; without it, a legacy draft running in dev mode.
+- Open `url` in a real browser before `link_expires_at` (about 60 s): a browser tool, or
+  a headless browser CLI run from your shell. Do not fetch it with an HTTP client or curl: only a browser
   can turn it into a session.
-- After one successful open, the browser session keeps working and slides while you use the app, so reloads,
-  navigation and later checks of the same app need no new link. Do not call this tool before every check.
-- The session belongs to this one app. It ends without notice: after about 4 hours without requests,
-  12 hours after the link was opened at the latest, or at once when the app leaves dev mode.
-- Call this tool again only when the app shows its login page ("This app is password protected") or looks
-  broken until reloaded, or when you did not open the previous `url` before its `link_expires_at` (the
-  browser then shows "Preview link is invalid or expired").
+- The browser session then keeps working for hours, so do not call this tool before every check. Call it
+  again only when the app shows its login page or the link expired unopened.
 - Never type a password into the app's login page, and never ask the user for one.
 - Do not share `url`: do not show it to the user and do not put it into files, commits, messages, or any
-  tool or any command other than the one that opens the browser. Anyone who opens it before it expires gets
-  into the app.
-
-## Errors
-- "has no URL yet" on a draft: it is still starting; call again in a few seconds.
-- "not running in dev mode" on a legacy draft: convert it to a draft on its branch, as the error says.
-- "is a production app": preview a draft of it instead; never switch a production app to dev mode.
-- "is not in dev mode" on another app type (e.g. Streamlit): it has no dev mode; tell the user and do not
-  change its deploy mode.
-- "not configured on this Keboola stack": preview links are not available here; tell the user.
+  tool or any command other than the one that opens the browser.
+- Errors say what to do; never switch a production app to dev mode.
 
 
 **Input JSON Schema**:
@@ -2576,10 +2508,7 @@ data app logs to investigate in-app errors. The logs may be updated after openin
   that fails to start, check its `failure_reason`/`failure_message` FIRST — they cover setup-phase
   failures (e.g. invalid secrets, git clone errors, failing setup scripts) that happen before the
   container starts and therefore never appear in the regular logs.
-- `repo_url` (managed git repo URL for python-js apps) is ONLY populated on the detail path
-  (when `configuration_ids` is provided). The inventory list always returns `repo_url=None`,
-  even for python-js apps with a managed repo — to retrieve the URL, call this tool again
-  with the target `configuration_ids`.
+- `repo_url` is set only on the detail path (`configuration_ids`), never in the inventory list.
 - For a python-js **prod** app the detail also lists its `drafts` (with `draft_id`, `git_branch`, `url`,
   `run_state`) and its `legacy_drafts` (separate draft configurations).
 
@@ -2623,93 +2552,25 @@ data app logs to investigate in-app errors. The logs may be updated after openin
 
 Creates or updates a python-js data app.
 
-Python-js is the default type for new data apps when you can run git: this tool only creates the
-configuration and the repository, and you deliver the source code by `git push`. Use
-`modify_streamlit_data_app` instead when you cannot run git or when the user asks for Streamlit explicitly.
-
-- A python-js app owns a managed git repository; `git_clone_url` comes from
-  `create_python_js_data_app_git_credential`. MCP never runs git: clone, branch, push and merge are yours.
-- Source changes are previewed in a draft (`create_python_js_data_app_draft`) on a branch of that repository.
-  `main` advances only by merging an approved branch; then `deploy_data_app` serves it from the prod app.
-- A legacy draft (`parameters.dataApp.isDraft=true`) is a separate configuration; this tool can still update it,
-  but no longer creates one.
-
-## Scenario D — Deploy a prod app from a customer's GitHub repository
-
-The code lives in the customer's own GitHub repository, not in a Keboola-managed one, and the
-platform clones it through the Keboola organization's GitHub App connection — no token is ever
-passed to or stored by the MCP.
-
-1. `modify_python_js_data_app(name=..., git_repository='https://github.com/<owner>/<repo>',
-   git_auth='organization', branch='main')` → prod app with `parameters.dataApp.git`
-   `{repository, branch, authType: 'organization', private: true}` and no managed repo.
-   To move an app that is already bound to an external repository onto another repository,
-   pass the same arguments with its `configuration_id` (rebind). An app on a Keboola-managed repo
-   cannot be rebound — create a new app instead.
-2. Code changes go to that GitHub repository through the user's own GitHub access; the MCP mints
-   no git credential for it (`create_python_js_data_app_git_credential` is rejected).
-3. `deploy_data_app(action='deploy', configuration_id=PROD)` — production mode only. Drafts,
-   dev mode and the preview link are not supported for such apps yet.
-If the deploy fails because the organization's GitHub connection is missing, someone who is both a
-Keboola organization admin and an owner of the GitHub organization installs the Keboola GitHub App
-first, then connects the GitHub organization:
-https://help.keboola.com/management/organization/#connect-github (not a menu path).
-
-## Argument rules
-
-- `branch` on **create** is only valid with `git_repository` (defaults to `'main'`). On **update** it
-  repoints an existing **external-git** app's pinned branch.
-- `git_repository` and `git_auth` go together (Scenario D).
-- `slug` is optional on create (auto-derived from `name` when omitted). See "Slug on update" below.
-- The **update path** (passing `configuration_id`) is for changing `name`, `description`,
-  `authentication_type`, `auto_suspend_after_seconds`, `storage`, `image_version`, a prod app's `slug`
-  (see "Slug on update"), and an **external-git** app's `branch`. Source code changes go through git, not
-  this tool. After a `branch` repoint, call `deploy_data_app` to serve the new branch.
-
-## Authentication
-
-New apps default to HTTP basic authentication for safety. Pass `authentication_type='no-auth'`
-to expose publicly -- only when the user explicitly asks for a public app. `'no-auth'` is
-rejected on legacy drafts: a draft inherits the prod app's data access, so disabling its
-authentication would expose Storage-reading and Storage-writing endpoints publicly. Never
-disable authentication to make the preview work -- the preview link authenticates on top of the
-configured auth. On update,
-`authentication_type='default'` preserves the existing `authorization` block (including OIDC
-setups configured outside the MCP); `'basic-auth'` / `'no-auth'` overwrite it.
-
-`authentication_type='oidc'` (with the `oidc` argument) switches an existing prod app to OIDC. It is
-rejected on create and on drafts. The tool never takes a client secret: the user enters it in the Keboola UI.
-
-Set up OIDC in this order:
-1. Create the app with `'basic-auth'`. The output has `oidc_callback_url`.
-2. The user registers `oidc_callback_url` at the identity provider and gives you the `client_id`.
-3. Update the app with `authentication_type='oidc'` and `oidc` (`client_id`, `issuer_url`, and optionally
-   `logout_url`, `allowed_roles`).
-4. The user enters the client secret in the app's Authentication section in the Keboola UI. If the client
-   can open URLs, it is asked to open that page.
-5. Only if you use `allowed_roles`: update with `'oidc'` once more after the secret is saved.
-6. Call `deploy_data_app` last.
-If the output has `oidc_setup_required=true`, tell the user to follow `change_summary`. In `oidc`, null keeps
-the stored `logout_url` / `allowed_roles`; `''` or `[]` removes them. The slug stays fixed on OIDC apps.
-
-## Slug constraint
-
-Must be DNS-label-safe (lowercase letters, digits, hyphens). Optional on create: when omitted it
-is auto-derived from `name` and capped at 50 characters (the data-app URL-prefix limit enforced
-by the UI). Pass an explicit slug to override; an explicit
-slug must be at most 63 characters (the DNS-label max), and note the UI's own URL-prefix limit is
-50, so an explicit slug of 51-63 characters may still be rejected at deploy time.
-
-## Slug on update
-
-The slug is the app URL (`https://<slug>-<app id>.hub.<stack>`), so changing it moves the app.
-1. Until the prod app is first deployed, a rename moves a slug that follows the name (e.g.
-   `new-app` for "New App") to the new name automatically — nobody has the URL yet.
-2. Once the app has been deployed, a rename keeps the slug. Change it only with an explicit
-   `slug`, and only after the user approved the new URL.
-3. Legacy drafts never change their slug.
-After an explicit `slug` the new URL applies on the next `deploy_data_app` and the old URL stops
-working; tell the user both.
+- The default type when you can run git; otherwise use `modify_streamlit_data_app`.
+- Creates the configuration and a managed git repository (`repo_url`). You deliver code by `git push`
+  with a token from `create_python_js_data_app_git_credential`. **MCP never runs git**: clone, branch,
+  commit, push and merge are yours.
+- Preview changes in a draft (`create_python_js_data_app_draft`) on a branch; merge an approved branch
+  into `main`, then `deploy_data_app` serves it.
+- Update (`configuration_id`) changes name, description, auth, auto-suspend, storage, Storage access,
+  image, slug, and an external-git app's branch; code changes go through git. A legacy draft
+  (`isDraft=true`) can be updated but is no longer created.
+- **Customer GitHub repository**: pass `git_repository` with `git_auth='organization'` to deploy a prod
+  app from the customer's repo. Code goes there through the user's own GitHub access; such an app has no
+  managed repo, no git credential, no drafts and deploys in production mode only.
+- **OIDC** (update of a prod app only): first register the `oidc_callback_url` (returned on create) at the
+  identity provider, then update with `authentication_type='oidc'` and `oidc`. The user enters the client
+  secret in the Keboola UI (see `change_summary` while `oidc_setup_required` is true); with
+  `allowed_roles`, update with `'oidc'` once more after that. Deploy last.
+- **Slug**: the slug is the app URL. A never-deployed app's slug follows its name; a deployed app keeps
+  it unless you pass `slug` (with the user's approval). The new URL applies on the next deploy and the old
+  one stops working; tell the user. An OIDC app's slug never follows its name; a legacy draft's never changes.
 
 
 **Input JSON Schema**:
@@ -2792,7 +2653,7 @@ working; tell the user both.
         }
       ],
       "default": null,
-      "description": "URL-safe slug for the data app (used as a subdomain). Optional on create \u2014 when omitted it is auto-derived from `name`. An explicit slug must be at most 63 characters (DNS-label max; the UI URL-prefix limit is 50). On update it moves a prod app to a new URL \u2014 pass it only after the user approved that URL (see \"Slug on update\")."
+      "description": "URL slug (DNS label: lowercase letters, digits, hyphens; at most 50 characters). Optional on create: derived from `name`. On update it moves a deployed app to a new URL; pass it only after the user approved that URL."
     },
     "branch": {
       "anyOf": [
@@ -2804,7 +2665,7 @@ working; tell the user both.
         }
       ],
       "default": null,
-      "description": "Git branch of the data app, written to `parameters.dataApp.git.branch`. Two uses:\n- **On update** (with `configuration_id`): repoints an existing **external-git** app to a different branch (e.g. flip a repo-backed app from `main` to a feature branch for testing, then back). Only valid for external-git apps \u2014 a legacy draft, or an app bound to an external repository. Rejected for apps on a Keboola-managed git repo, whose branch is owned by the platform. On update `main` is allowed. Redeploy the app afterwards to serve the new branch.\n- **With `git_repository`** (create or update of a prod app): the branch of that repository the app deploys. Defaults to `main`."
+      "description": "Git branch the app deploys. With `git_repository`: the branch of that repository (default `main`). On update without it: repoints an external-git app (a legacy draft or an app on an external repository); rejected for a Keboola-managed repo. Redeploy to serve it."
     },
     "git_repository": {
       "anyOf": [
@@ -2816,7 +2677,7 @@ working; tell the user both.
         }
       ],
       "default": null,
-      "description": "HTTPS URL of a customer's GitHub repository (`https://github.com/<owner>/<repo>`, or a `*.ghe.com` host) to deploy a **prod** app from instead of a Keboola-managed repo. Requires `git_auth`. On create, the app gets no managed repo; on update, an app already bound to an external repository is rebound to this one. Rejected for apps on a Keboola-managed repo. No credential is stored."
+      "description": "HTTPS URL of a customer's GitHub repository (`https://github.com/<owner>/<repo>` or a `*.ghe.com` host) a **prod** app deploys from instead of a managed repo; requires `git_auth`. On update it rebinds an app already on an external repository; rejected for a managed-repo app."
     },
     "git_auth": {
       "anyOf": [
@@ -2829,11 +2690,11 @@ working; tell the user both.
         }
       ],
       "default": null,
-      "description": "How the platform authenticates to `git_repository`; required together with it. Only \"organization\" is supported: a short-lived read-only token is minted through the Keboola organization's GitHub App connection, so no credential is stored in the configuration."
+      "description": "Required with `git_repository`. Only \"organization\": the platform clones through the Keboola organization's GitHub App connection; no credential is stored."
     },
     "authentication_type": {
       "default": "default",
-      "description": "Authentication type. \"no-auth\" removes authentication completely (the app becomes public -- only use it when the user explicitly asks for a public app; it is rejected on drafts, which inherit the prod app's data access), \"basic-auth\" secures the data app via HTTP basic authentication, \"oidc\" sets up OIDC login (update of a prod app only, needs the `oidc` argument), and \"default\" means: on create, apply basic auth (safe default for new apps); on update, keep the existing authentication configuration (including OIDC setups configured outside the MCP). Never disable authentication to make a preview work -- the in-platform preview authenticates on top of the configured auth.",
+      "description": "\"default\": basic auth on create, keep the existing auth on update (including OIDC set up elsewhere). \"basic-auth\": HTTP basic auth. \"oidc\": OIDC login, update of a prod app only, needs `oidc`. \"no-auth\": public app, only when the user asks for one; rejected on drafts.",
       "enum": [
         "no-auth",
         "basic-auth",
@@ -2853,7 +2714,7 @@ working; tell the user both.
         }
       ],
       "default": null,
-      "description": "OIDC settings. Required with authentication_type=\"oidc\" and not allowed with any other type. Only for updating an existing prod app, not for create or drafts. It has no secret field: the user enters the client secret in the Keboola UI."
+      "description": "OIDC settings; required with authentication_type=\"oidc\", rejected otherwise. Has no secret: the user enters it in the Keboola UI."
     },
     "auto_suspend_after_seconds": {
       "anyOf": [
@@ -2865,7 +2726,7 @@ working; tell the user both.
         }
       ],
       "default": null,
-      "description": "Number of seconds after which the running data app is automatically suspended. Leave unset (None) to keep the app's current value on update; on create it defaults to 900."
+      "description": "Seconds without requests before the app suspends. None keeps it; create defaults to 900."
     },
     "storage": {
       "anyOf": [
@@ -2878,7 +2739,7 @@ working; tell the user both.
         }
       ],
       "default": null,
-      "description": "Complete storage configuration for the data app (input/output table mappings). Validated against the storage JSON schema. Replaces the ENTIRE storage block when updating an existing app. For data apps with Storage Access, declare output tables with `unload_strategy: \"direct-grant\"` (in that case `source` is not required and the workspace is granted direct SELECT/INSERT/UPDATE/DELETE/TRUNCATE on the destination Storage table). Leave unset (None) to preserve the existing storage configuration; pass an empty dict to explicitly clear it."
+      "description": "Complete storage block (input/output table mappings), validated against the schema; replaces the whole block. Output tables of an app with Storage access use `unload_strategy: \"direct-grant\"` (no `source`). None keeps it; `{}` clears it."
     },
     "storage_access": {
       "anyOf": [
@@ -2890,7 +2751,7 @@ working; tell the user both.
         }
       ],
       "default": null,
-      "description": "Whether the app gets read-only Storage access -- a workspace whose ID the platform injects as the WORKSPACE_ID environment variable, which the generated `query_data` helper needs. Distinct from `storage`, which declares table input/output mappings: this switch decides whether the app can reach Storage at all.\n- **On create**: leave unset (None) for the default, which is Storage access ON. Pass `False` only for an app that must not read Storage.\n- **On update**: leave unset (None) to keep whatever the app has -- an unrelated edit never grants or revokes Storage access. Pass `True` to turn it on (this is how you fix an existing app failing with `missing required env vars: WORKSPACE_ID`, with no UI step), or `False` to turn it off. Redeploy the app afterwards to apply it.\nCheck `data_app.storage_access_enabled` in the response to confirm the result.\nThe workspace is scoped to the **whole project**, not to the tables the app queries -- the app can read every table in the project Storage. Tell the user that when you turn it on, and especially when the app is `no-auth`, where anyone with the URL reaches project data through it. If the app must be limited to particular tables, that is an input/output mapping via `storage`, not this switch.\nOn projects without the `data-apps-storage-workspace` feature this falls back to writing `parameters.dataApp.secrets.WORKSPACE_ID`, which is **deprecated** -- it pins the app to the shared MCP-managed workspace instead of a per-app one. Never write that secret by hand; use this argument, and pass the hint in `change_summary` on to the user."
+      "description": "Read-only Storage access to the WHOLE project (WORKSPACE_ID env var, needed by `query_data`). None: on by default on create, kept on update. True also fixes `missing required env vars: WORKSPACE_ID`. Tell the user the app can read every table. Redeploy to apply."
     },
     "image_version": {
       "anyOf": [
@@ -2902,7 +2763,7 @@ working; tell the user both.
         }
       ],
       "default": null,
-      "description": "Backend image the app runs on (the UI's \"Backend version\"), written to `runtime.image.version`. An image tag from the platform catalog, which names its Python and Node.js versions (e.g. `<release>_python-3.13_node-24`). `get_data_apps(configuration_ids=[...])` lists the valid tags in `available_images` and the app's current one in `deployment_info.image`; an unknown tag is rejected with the list of valid ones.\n- Leave unset (None) to keep what the app has on update; on create the app follows the platform default.\n- Pass \"\" to drop a pin and follow the platform default again.\nRedeploy the app afterwards to apply it."
+      "description": "Backend image tag (`runtime.image.version`); valid tags are in `get_data_apps` `available_images`. None keeps it (create follows the platform default); \"\" drops the pin. Redeploy to apply."
     },
     "folder": {
       "anyOf": [
@@ -2963,29 +2824,14 @@ feature. A configuration written any other way (e.g. Storage API, CLI) must defi
 the literal placeholder breaks the app.
 - Write SQL queries so they are compatible with the current workspace backend, you can ensure this by using the
 `query_data` tool to inspect the data in the workspace before using it in the data app.
-- If you're updating an existing data app, provide the `configuration_id` parameter and the `change_description`
-parameter. To keep existing data app values during an update, leave them as empty strings, lists, or None
-appropriately based on the parameter type.
-- After creating or updating a data app with this tool, ALWAYS call
-`deploy_data_app(action="deploy", configuration_id=...)` to start a new app or restart an existing app so
-changes take effect. Without this step, a newly created app will not start, and an existing app will keep
-running the previous deployment without the latest changes.
-- New apps use the HTTP basic authentication by default for security unless explicitly specified otherwise; when
-updating, set `authentication_type` to `default` to keep the existing authentication type configuration
-(including OIDC setups) unless explicitly specified otherwise.
-- `authentication_type='oidc'` (with the `oidc` argument) switches an existing app to OIDC. It is rejected on
-create. The tool never takes a client secret: the user enters it in the Keboola UI.
-Set up OIDC in this order:
-1. Create the app with `'basic-auth'`. The output has `oidc_callback_url`.
-2. The user registers `oidc_callback_url` at the identity provider and gives you the `client_id`.
-3. Update the app with `authentication_type='oidc'` and `oidc` (`client_id`, `issuer_url`, and optionally
-   `logout_url`, `allowed_roles`).
-4. The user enters the client secret in the app's Authentication section in the Keboola UI. If the client
-   can open URLs, it is asked to open that page.
-5. Only if you use `allowed_roles`: update with `'oidc'` once more after the secret is saved.
-6. Call `deploy_data_app` last.
-If the output has `oidc_setup_required=true`, tell the user to follow `change_summary`. In `oidc`, null keeps
-the stored `logout_url` / `allowed_roles`; `''` or `[]` removes them. The slug stays fixed on OIDC apps.
+- To update an app, pass `configuration_id` and `change_description`.
+- After a create or update, ALWAYS call `deploy_data_app(action="deploy", configuration_id=...)`: without it a
+new app does not start and a running app keeps the previous code.
+- On update, `authentication_type='default'` keeps the existing auth (including OIDC set up elsewhere).
+- **OIDC** (update only): first register the `oidc_callback_url` (returned on create) at the identity
+provider, then update with `authentication_type='oidc'` and `oidc`. The user enters the client secret in the
+Keboola UI (see `change_summary` while `oidc_setup_required` is true); with `allowed_roles`, update with
+`'oidc'` once more after that. Deploy last.
 
 SQL & DATA TYPE RULES:
 - Use delimited identifiers for the current SQL dialect for all column names and aliases in SQL.
@@ -3067,7 +2913,7 @@ SQL & DATA TYPE RULES:
       "type": "array"
     },
     "authentication_type": {
-      "description": "Authentication type, \"no-auth\" removes authentication completely, \"basic-auth\" sets the data app to be secured using the HTTP basic authentication, \"oidc\" sets up OIDC login (update only, needs the `oidc` argument), and \"default\" keeps the existing authentication type when updating.",
+      "description": "\"default\": basic auth on create, keep the existing auth on update. \"basic-auth\": HTTP basic auth. \"oidc\": OIDC login, update only, needs `oidc`. \"no-auth\": public app, only when the user asks for one.",
       "enum": [
         "no-auth",
         "basic-auth",
@@ -3092,7 +2938,7 @@ SQL & DATA TYPE RULES:
         }
       ],
       "default": null,
-      "description": "OIDC settings. Required with authentication_type=\"oidc\" and not allowed with any other type. Only for updating an existing app, not for create. It has no secret field: the user enters the client secret in the Keboola UI."
+      "description": "OIDC settings; required with authentication_type=\"oidc\", rejected otherwise. Has no secret: the user enters it in the Keboola UI."
     },
     "change_description": {
       "default": "",

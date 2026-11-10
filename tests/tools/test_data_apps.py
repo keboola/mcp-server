@@ -6,6 +6,7 @@ from types import ModuleType
 from typing import Any, Literal, cast
 from unittest.mock import MagicMock
 
+import httpx
 import pytest
 from fastmcp import Context
 
@@ -16,6 +17,7 @@ from keboola_mcp_server.clients.data_science import (
     AppRunResponse,
     DataAppConfig,
     DataAppResponse,
+    DeploymentResponse,
     DraftResponse,
     RuntimeResponse,
 )
@@ -906,6 +908,8 @@ class TestFetchDataApp:
         ('app_type', 'with_repo', 'expected_repo_url'),
         [
             pytest.param('streamlit', False, None, id='streamlit'),
+            # A Streamlit config embeds its code: no repo read even when asked.
+            pytest.param('streamlit', True, None, id='streamlit_with_repo'),
             pytest.param('python-js', False, None, id='python_js_without_repo'),
             pytest.param('python-js', True, 'https://managed.repo/org/app.git', id='python_js_with_repo'),
         ],
@@ -942,7 +946,14 @@ class TestFetchDataApp:
                 'id': config_id,
                 'name': 'test-app',
                 'description': 'test',
-                'configuration': {'parameters': {'id': data_app_id}, 'authorization': {}, 'storage': {}},
+                'configuration': {
+                    'parameters': {
+                        'id': data_app_id,
+                        'dataApp': {'streamlit': {'config.toml': ''}} if app_type == 'streamlit' else {'slug': 'a'},
+                    },
+                    'authorization': {},
+                    'storage': {},
+                },
                 'version': 2,
             }
         )
@@ -2158,17 +2169,23 @@ async def test_modify_streamlit_data_app_update_oidc_output(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(('auto_suspend_after_seconds', 'expected_auto_suspend'), [(600, 600), (None, 3600)])
+@pytest.mark.parametrize(
+    ('auto_suspend_after_seconds', 'expected_auto_suspend', 'post_write_fails'),
+    [(600, 600, False), (None, 3600, False), (None, 3600, True)],
+)
 async def test_modify_python_js_data_app_update_patches_storage_config(
     mocker,
     mcp_context_client: Context,
     workspace_manager,
     auto_suspend_after_seconds: int | None,
     expected_auto_suspend: int,
+    post_write_fails: bool,
 ) -> None:
     """Update path: fetch storage config → merge updates → PATCH via configuration_update.
 
-    An omitted `auto_suspend_after_seconds` keeps the app's value, so a rename leaves it alone.
+    An omitted `auto_suspend_after_seconds` keeps the app's value, so a rename leaves it alone. The metadata
+    takes the new version from the PUT response; a failed re-read or metadata write after the committed PUT
+    still reports success.
     """
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.has_feature = mocker.AsyncMock(return_value=True)
@@ -2192,11 +2209,12 @@ async def test_modify_python_js_data_app_update_patches_storage_config(
     )
     updated_data_app = existing_data_app.model_copy(update={'config_version': '3', 'name': 'New'})
 
+    error = httpx.ConnectError('boom')
     mocker.patch(
         'keboola_mcp_server.tools.data_apps._fetch_data_app',
-        mocker.AsyncMock(side_effect=[existing_data_app, updated_data_app]),
+        mocker.AsyncMock(side_effect=[existing_data_app, error if post_write_fails else updated_data_app]),
     )
-    keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value={})
+    keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value={'version': 3})
     keboola_client.data_science_client = mocker.AsyncMock()
     keboola_client.data_science_client.get_app_git_repo = mocker.AsyncMock(
         return_value=AppGitRepoResponse(
@@ -2205,7 +2223,10 @@ async def test_modify_python_js_data_app_update_patches_storage_config(
             is_managed_git_repo=True,
         )
     )
-    mocker.patch('keboola_mcp_server.tools.data_apps.set_cfg_update_metadata', mocker.AsyncMock())
+    set_metadata = mocker.patch(
+        'keboola_mcp_server.tools.data_apps.set_cfg_update_metadata',
+        mocker.AsyncMock(side_effect=error if post_write_fails else None),
+    )
     mocker.patch('keboola_mcp_server.tools.data_apps.apply_configuration_folder', mocker.AsyncMock(return_value=None))
 
     result = await modify_python_js_data_app(
@@ -2217,7 +2238,12 @@ async def test_modify_python_js_data_app_update_patches_storage_config(
     )
 
     assert isinstance(result, ModifiedPythonJsDataAppOutput)
-    assert result.response == 'updated'
+    assert set_metadata.await_args.kwargs['configuration_version'] == 3
+    if post_write_fails:
+        assert result.data_app.config_version == '3'
+        assert 'WAS updated' in (result.change_summary or '')
+    else:
+        assert result.response == 'updated'
     # The PATCH should carry merged config
     patch_kwargs = keboola_client.storage_client.configuration_update.await_args.kwargs
     new_cfg = patch_kwargs['configuration']
@@ -3207,78 +3233,175 @@ def test_validate_branch_update_rejects_managed_and_unknown(is_managed_git_repo:
         _validate_branch_update('feature-x', app, 'cfg-1')
 
 
-# ===== Tests for deploy_data_app config publishing =====
+# ===== Tests for deploy_data_app: publishing and waiting for the new deployment =====
+
+
+def _make_failed_app_run(**overrides) -> AppRunResponse:
+    payload = {
+        'id': 'run-1',
+        'appId': 'app-prod-1',
+        'state': 'failed',
+        'createdAt': '2026-06-12T10:36:20+00:00',
+        'startedAt': None,
+        'stoppedAt': '2026-06-12T10:36:21+00:00',
+        'startupLogs': None,
+        'failureReason': {
+            'reason': 'ConfigDecryptionFailed',
+            'message': 'failed to decrypt key "#API_KEY"',
+        },
+        'mode': 'prod',
+    }
+    payload.update(overrides)
+    return AppRunResponse.model_validate(payload)
+
+
+def _deploy_record(
+    state: str, actual: str | None, *, desired: str | None = 'dep-new', config_version: str = '5'
+) -> DataAppResponse:
+    """The app record as `GET /v2/apps/{id}` reports it during a deploy."""
+    return _make_data_app_response(data_app_id='app-1', config_id='cfg-1').model_copy(
+        update={
+            'type': 'python-js',
+            'state': state,
+            'url': 'https://app-1.hub.test',
+            'production': AppProductionResponse(
+                desired_deployment_id=desired,
+                actual_deployment_id=actual,
+                desired_config_version=config_version if desired else None,
+                actual_config_version=config_version if actual == desired else '4',
+            ),
+        }
+    )
+
+
+_PREVIOUS = _deploy_record('running', 'dep-old', desired='dep-old', config_version='4')
+_ROLLING_OUT = _deploy_record('running', 'dep-old')
+_LIVE = _deploy_record('running', 'dep-new')
+_FAILED_RUN = _make_failed_app_run()
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ('app_type', 'mode', 'published_after', 'latest_after', 'expected_unpublished'),
+    ('app_type', 'polls', 'runs', 'wait', 'expected_state', 'expected_summary', 'expected_polls'),
+    # `polls`/`runs`: what successive reads return; the last reading repeats.
     [
-        # python-js used to omit configVersion, so DSAPI kept the old published version while the tool
-        # reported the latest one as deployed.
-        pytest.param('python-js', None, '5', '5', False, id='python_js_prod_publishes_latest'),
-        pytest.param('streamlit', None, '5', '5', False, id='streamlit_publishes_latest'),
-        # The config was saved again after the deploy was triggered: report the drift, not the latest version.
-        pytest.param('python-js', None, '5', '6', True, id='config_changed_after_deploy'),
+        # A running app keeps `state=running` through the rollout; only `actualDeploymentId` tells it is done.
+        pytest.param(
+            'python-js', [_ROLLING_OUT, _ROLLING_OUT, _LIVE], [], True, 'running', None, 3, id='running_after_polls'
+        ),
+        pytest.param('streamlit', [_LIVE], [], True, 'running', None, 1, id='streamlit_running'),
+        pytest.param(
+            'python-js',
+            [_ROLLING_OUT, _ROLLING_OUT],
+            [[], [_FAILED_RUN]],
+            True,
+            'starting',
+            'failed to start.*previous deployment',
+            2,
+            id='new_deployment_failed',
+        ),
+        pytest.param(
+            'python-js',
+            [_deploy_record('disabled', None)],
+            [[_FAILED_RUN]],
+            True,
+            'disabled',
+            'failed to start; ',
+            1,
+            id='first_deployment_failed',
+        ),
+        # The previous deployment keeps serving `running` until the budget runs out: never reported as live.
+        pytest.param('python-js', [_ROLLING_OUT], [], True, 'starting', 'still starting after', None, id='timeout'),
+        pytest.param('python-js', [], [], False, 'starting', 'deploy started', 0, id='no_wait'),
     ],
 )
-async def test_deploy_data_app_publishes_latest_config_version_and_reports_published(
+async def test_deploy_data_app_waits_for_the_new_deployment(
     mocker,
     mcp_context_client: Context,
     app_type: str,
-    mode: Literal['dev', 'production'] | None,
-    published_after: str,
-    latest_after: str,
-    expected_unpublished: bool,
+    polls: list[DataAppResponse],
+    runs: list[list[AppRunResponse]],
+    wait: bool,
+    expected_state: str,
+    expected_summary: str | None,
+    expected_polls: int | None,
+) -> None:
+    """Requests a deploy sends: the detail read, the POST of the latest config version, then polls of the app
+    record and the new deployment's runs; logs only after a failure."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.storage_client.configuration_detail = mocker.AsyncMock(
+        return_value={
+            'id': 'cfg-1',
+            'name': 'app',
+            'configuration': {'parameters': {'id': 'app-1', 'dataApp': {'slug': 'app'}}},
+            'version': 5,
+        }
+    )
+    keboola_client.storage_client.configuration_version_latest = mocker.AsyncMock()
+    ds = keboola_client.data_science_client
+    records = [_PREVIOUS.model_copy(update={'type': app_type}), *polls]
+    run_pages = [*runs, []]
+    ds.get_data_app = mocker.AsyncMock(side_effect=lambda *_: records.pop(0) if len(records) > 1 else records[0])
+    ds.list_app_runs = mocker.AsyncMock(side_effect=lambda *_, **__: run_pages.pop(0) if len(run_pages) > 1 else [])
+    ds.deploy_data_app = mocker.AsyncMock(return_value=DeploymentResponse(id='dep-new', config_version='5'))
+    ds.tail_app_logs = mocker.AsyncMock(return_value='boom')
+    ds.list_runtimes = mocker.AsyncMock()
+    mocker.patch('keboola_mcp_server.tools.data_apps._deploy_poll_interval', return_value=0.001)
+    mocker.patch('keboola_mcp_server.tools.data_apps._DEPLOY_WAIT_SECONDS', 0.1)
+
+    result = await deploy_data_app(ctx=mcp_context_client, action='deploy', configuration_id='cfg-1', wait=wait)
+
+    # The detail read carries the latest version: no separate version lookup, no second detail read.
+    ds.deploy_data_app.assert_awaited_once_with('app-1', '5')
+    keboola_client.storage_client.configuration_version_latest.assert_not_called()
+    keboola_client.storage_client.configuration_detail.assert_awaited_once()
+    ds.list_runtimes.assert_not_called()
+    if expected_polls is not None:
+        assert ds.get_data_app.await_count == 1 + expected_polls
+    for call in ds.list_app_runs.await_args_list:
+        assert call.kwargs['deployment_id'] == 'dep-new'
+    assert result.state == expected_state
+    assert result.deployment_info is not None
+    assert result.deployment_info.version == '5'
+    assert result.deployment_info.has_unpublished_changes is False
+    failed = expected_summary is not None and expected_summary.startswith('failed')
+    assert (result.deployment_info.last_run is not None) is failed
+    assert result.deployment_info.logs == (['boom'] if failed else [])
+    assert ds.tail_app_logs.await_count == (1 if failed else 0)
+    if expected_summary is None:
+        assert result.change_summary is None
+    else:
+        assert result.change_summary is not None
+        assert re.search(expected_summary, result.change_summary)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('first_read', 'expected_state', 'expected_reads'),
+    [
+        # /v1 returns no deployment id: the new one is the desired deployment once it changed.
+        pytest.param(_ROLLING_OUT, 'running', 2, id='new_desired_deployment'),
+        # Nothing new to wait on (an app still on a /v1 workload): return at once.
+        pytest.param(_PREVIOUS, 'starting', 1, id='no_new_deployment'),
+    ],
+)
+async def test_deploy_data_app_waits_after_a_mode_deploy(
+    mocker, mcp_context_client: Context, first_read: DataAppResponse, expected_state: str, expected_reads: int
 ) -> None:
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-    keboola_client.data_science_client = mocker.AsyncMock()
-    keboola_client.data_science_client.list_runtimes = mocker.AsyncMock(return_value=_RUNTIMES)
-    keboola_client.storage_client.configuration_version_latest = mocker.AsyncMock(return_value=5)
+    ds = keboola_client.data_science_client = mocker.AsyncMock()
+    app = _make_organization_git_data_app()
+    app.desired_deployment_id = 'dep-old'
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=app))
+    mocker.patch('keboola_mcp_server.tools.data_apps._deploy_poll_interval', return_value=0.001)
+    ds.get_data_app = mocker.AsyncMock(side_effect=[first_read, _LIVE])
+    ds.list_app_runs = mocker.AsyncMock(return_value=[])
 
-    def make_app(config_version: str, published_config_version: str) -> DataApp:
-        return DataApp(
-            name='app',
-            component_id=DATA_APP_COMPONENT_ID,
-            configuration_id='cfg-1',
-            data_app_id='app-1',
-            project_id='proj-1',
-            branch_id='branch-1',
-            config_version=config_version,
-            published_config_version=published_config_version,
-            type=app_type,
-            configuration={'parameters': {'autoSuspendAfterSeconds': 900, 'dataApp': {'slug': 'x'}}},
-            state='running',
-            desired_deployment_id='dep-2',
-        )
+    result = await deploy_data_app(ctx=mcp_context_client, action='deploy', configuration_id='cfg-org-1')
 
-    mocker.patch(
-        'keboola_mcp_server.tools.data_apps._fetch_data_app',
-        mocker.AsyncMock(side_effect=[make_app('5', '3'), make_app(latest_after, published_after)]),
-    )
-    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_logs', mocker.AsyncMock(return_value=[]))
-    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_latest_run', mocker.AsyncMock(return_value=None))
-
-    result = await deploy_data_app(ctx=mcp_context_client, action='deploy', configuration_id='cfg-1', mode=mode)
-
-    keboola_client.storage_client.configuration_version_latest.assert_awaited_once_with(DATA_APP_COMPONENT_ID, 'cfg-1')
-    # A `mode` deploy goes through /v1, which /v2 has no counterpart of.
-    if mode is None:
-        keboola_client.data_science_client.deploy_data_app.assert_awaited_once_with('app-1', '5')
-        keboola_client.data_science_client.deploy_data_app_in_mode.assert_not_awaited()
-    else:
-        keboola_client.data_science_client.deploy_data_app_in_mode.assert_awaited_once_with('app-1', '5', mode)
-        keboola_client.data_science_client.deploy_data_app.assert_not_awaited()
-    assert result.deployment_info is not None
-    assert result.deployment_info.version == published_after
-    assert result.deployment_info.latest_config_version == latest_after
-    assert result.deployment_info.has_unpublished_changes is expected_unpublished
-    # A python-js app reports the image it runs; the unpinned app follows the catalog default.
-    is_python_js = app_type == 'python-js'
-    assert result.deployment_info.image == (_PYTHON_JS_IMAGES[0] if is_python_js else None)
-    assert result.deployment_info.image_pinned is (False if is_python_js else None)
-    # Only a python-js deploy reads the catalog.
-    assert keboola_client.data_science_client.list_runtimes.await_count == (1 if is_python_js else 0)
+    ds.deploy_data_app_in_mode.assert_awaited_once_with('app-org-1', '1', 'prod')
+    assert ds.get_data_app.await_count == expected_reads
+    assert result.state == expected_state
 
 
 @pytest.mark.parametrize(
@@ -3405,12 +3528,15 @@ def _make_python_js_parent_data_app(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('post_write_fails', [False, True])
 async def test_modify_python_js_data_app_create_prod_calls_get_app_git_repo_for_url(
     mocker,
     mcp_context_client: Context,
     workspace_manager,
+    post_write_fails: bool,
 ) -> None:
-    """Prod creates always go through get_app_git_repo (no short-circuit branch)."""
+    """Prod creates always go through get_app_git_repo (no short-circuit branch). Once the app exists, a failed
+    repo read or metadata write still reports it created, so a retry cannot duplicate it."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
     keboola_client.has_feature = mocker.AsyncMock(return_value=True)
@@ -3419,19 +3545,29 @@ async def test_modify_python_js_data_app_create_prod_calls_get_app_git_repo_for_
     keboola_client.data_science_client.create_data_app = mocker.AsyncMock(
         return_value=_make_python_js_data_app_response()
     )
+    error = httpx.ConnectError('boom')
     keboola_client.data_science_client.get_app_git_repo = mocker.AsyncMock(
         return_value=AppGitRepoResponse(
             ssh_url=None,
             https_url='https://managed.repo/org/prod.git',
             is_managed_git_repo=True,
-        )
+        ),
+        side_effect=error if post_write_fails else None,
     )
-    mocker.patch('keboola_mcp_server.tools.data_apps.set_cfg_creation_metadata', mocker.AsyncMock())
+    mocker.patch(
+        'keboola_mcp_server.tools.data_apps.set_cfg_creation_metadata',
+        mocker.AsyncMock(side_effect=error if post_write_fails else None),
+    )
     mocker.patch('keboola_mcp_server.tools.data_apps.apply_configuration_folder', mocker.AsyncMock(return_value=None))
 
     result = await modify_python_js_data_app(ctx=mcp_context_client, name='Prod', description='', slug='demo')
 
-    assert result.repo_url == 'https://managed.repo/org/prod.git'
+    assert result.response == 'created'
+    if post_write_fails:
+        assert result.repo_url is None
+        assert 'WAS created' in (result.change_summary or '')
+    else:
+        assert result.repo_url == 'https://managed.repo/org/prod.git'
     keboola_client.data_science_client.get_app_git_repo.assert_awaited_once()
     create_kwargs = keboola_client.data_science_client.create_data_app.await_args.kwargs
     assert create_kwargs['use_managed_git_repo'] is True
@@ -3717,16 +3853,24 @@ def _build_storage_config_entry(*, cfg_id: str, parent_configuration_id: str | N
     data_app_block: dict = {'slug': f'app-{cfg_id}'}
     if parent_configuration_id is not None:
         data_app_block['parentConfigurationId'] = parent_configuration_id
+        data_app_block['git'] = {'repository': 'https://managed.repo/org/prod.git', 'branch': f'branch-{cfg_id}'}
         if is_draft:
             data_app_block['isDraft'] = True
     return {
         'id': cfg_id,
         'name': f'app-{cfg_id}',
         'configuration': {
-            'parameters': {'autoSuspendAfterSeconds': 900, 'dataApp': data_app_block},
+            'parameters': {'id': f'app-{cfg_id}', 'autoSuspendAfterSeconds': 900, 'dataApp': data_app_block},
         },
         'version': 1,
     }
+
+
+def _legacy_draft_app(cfg_id: str) -> DataAppResponse:
+    """The `/v2/apps` listing entry of the legacy draft `_build_storage_config_entry(cfg_id=...)` stores."""
+    return _make_data_app_response(data_app_id=f'app-{cfg_id}', config_id=cfg_id).model_copy(
+        update={'type': 'python-js', 'url': f'https://{cfg_id}.hub.test'}
+    )
 
 
 @pytest.mark.parametrize(
@@ -3775,15 +3919,6 @@ async def test_get_data_apps_detail_for_prod_lists_drafts(
     prod_cfg_id = 'cfg-prod-1'
     prod = _make_python_js_prod_data_app(configuration_id=prod_cfg_id)
     draft_cfg_ids = [f'cfg-draft-{i}' for i in range(n_drafts)]
-    drafts = {
-        cfg_id: _make_python_js_draft_data_app(
-            configuration_id=cfg_id,
-            data_app_id=f'app-{cfg_id}',
-            parent_configuration_id=prod_cfg_id,
-            branch=f'branch-{cfg_id}',
-        )
-        for cfg_id in draft_cfg_ids
-    }
     # Throw in a config that's parented to a DIFFERENT prod to verify we filter properly.
     foreign_cfg = _build_storage_config_entry(cfg_id='cfg-other-draft', parent_configuration_id='cfg-prod-other')
     configs = [
@@ -3791,7 +3926,7 @@ async def test_get_data_apps_detail_for_prod_lists_drafts(
     ]
     configs.append(foreign_cfg)
     # A config that points at THIS prod but lacks `isDraft` is a misconfiguration, not a draft —
-    # it must be excluded (and never even fetched, or fake_fetch below would KeyError).
+    # it must be excluded.
     configs.append(
         _build_storage_config_entry(cfg_id='cfg-non-draft-child', parent_configuration_id=prod_cfg_id, is_draft=False)
     )
@@ -3799,14 +3934,12 @@ async def test_get_data_apps_detail_for_prod_lists_drafts(
     configs.append(_build_storage_config_entry(cfg_id=prod_cfg_id, parent_configuration_id=None))
 
     keboola_client.storage_client.configuration_list = mocker.AsyncMock(return_value=configs)
-
-    async def fake_fetch(client, *, configuration_id, with_repo=False):
-        if configuration_id == prod_cfg_id:
-            return prod
-        return drafts[configuration_id]
-
-    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', side_effect=fake_fetch)
+    fetch = mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=prod))
     mocker.patch('keboola_mcp_server.tools.data_apps._fetch_logs', mocker.AsyncMock(return_value=[]))
+    # One listing of the project's apps covers every legacy draft: no detail read per draft.
+    keboola_client.data_science_client.list_all_data_apps = mocker.AsyncMock(
+        return_value=[_legacy_draft_app(cfg_id) for cfg_id in [*draft_cfg_ids, 'cfg-other-draft']]
+    )
     v2_drafts = [
         {'id': f'd-{i}', 'url': None, 'gitBranch': f'v2-{i}', 'runState': 'running', 'createdAt': 't'}
         for i in range(n_drafts)
@@ -3825,8 +3958,11 @@ async def test_get_data_apps_detail_for_prod_lists_drafts(
     assert {d.configuration_id: d.git_branch for d in detail.legacy_drafts} == {
         cfg_id: f'branch-{cfg_id}' for cfg_id in draft_cfg_ids
     }
-    # All drafts fetched successfully, so nothing was omitted.
+    assert {d.configuration_id: d.state for d in detail.legacy_drafts} == dict.fromkeys(draft_cfg_ids, 'running')
+    assert {d.deployment_url for d in detail.legacy_drafts} == {f'https://{c}.hub.test' for c in draft_cfg_ids}
     assert detail.legacy_drafts_unavailable == 0
+    fetch.assert_awaited_once()
+    assert keboola_client.data_science_client.list_all_data_apps.await_count == (1 if n_drafts else 0)
 
 
 @pytest.mark.asyncio
@@ -3853,43 +3989,42 @@ async def test_get_data_apps_detail_for_prod_reports_unlisted_drafts(mocker, mcp
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('listed', 'expected_drafts', 'expected_unavailable'),
+    [
+        # One draft's app is missing from the listing: the other is still returned, the omission counted.
+        pytest.param([_legacy_draft_app('cfg-draft-ok')], ['cfg-draft-ok'], 1, id='one_missing'),
+        pytest.param(httpx.ConnectError('timeout'), [], 2, id='listing_failed'),
+    ],
+)
 async def test_get_data_apps_detail_for_prod_counts_unavailable_drafts(
     mocker,
     mcp_context_client: Context,
+    listed: list[DataAppResponse] | Exception,
+    expected_drafts: list[str],
+    expected_unavailable: int,
 ) -> None:
-    """A transient DSAPI failure on one draft's detail fetch must NOT silently shrink the list:
-    the surviving draft is still returned and `drafts_unavailable` counts the omission so the
-    caller can tell "temporarily unreachable" from "deleted"."""
+    """An unreadable legacy draft must NOT silently shrink the list: `legacy_drafts_unavailable` counts
+    the omission so the caller can tell "temporarily unreachable" from "deleted"."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     prod_cfg_id = 'cfg-prod-1'
     prod = _make_python_js_prod_data_app(configuration_id=prod_cfg_id)
-    ok_cfg_id, failing_cfg_id = 'cfg-draft-ok', 'cfg-draft-fail'
-    ok_draft = _make_python_js_draft_data_app(
-        configuration_id=ok_cfg_id, data_app_id=f'app-{ok_cfg_id}', parent_configuration_id=prod_cfg_id
-    )
     configs = [
-        _build_storage_config_entry(cfg_id=ok_cfg_id, parent_configuration_id=prod_cfg_id),
-        _build_storage_config_entry(cfg_id=failing_cfg_id, parent_configuration_id=prod_cfg_id),
+        _build_storage_config_entry(cfg_id='cfg-draft-ok', parent_configuration_id=prod_cfg_id),
+        _build_storage_config_entry(cfg_id='cfg-draft-fail', parent_configuration_id=prod_cfg_id),
         _build_storage_config_entry(cfg_id=prod_cfg_id, parent_configuration_id=None),
     ]
     keboola_client.storage_client.configuration_list = mocker.AsyncMock(return_value=configs)
-
-    async def fake_fetch(client, *, configuration_id, with_repo=False):
-        if configuration_id == prod_cfg_id:
-            return prod
-        if configuration_id == failing_cfg_id:
-            raise RuntimeError('transient DSAPI failure (timeout)')
-        return ok_draft
-
-    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', side_effect=fake_fetch)
+    keboola_client.data_science_client.list_all_data_apps = mocker.AsyncMock(side_effect=[listed])
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=prod))
     mocker.patch('keboola_mcp_server.tools.data_apps._fetch_logs', mocker.AsyncMock(return_value=[]))
     keboola_client.data_science_client.list_drafts = mocker.AsyncMock(return_value=[])
 
     result = await get_data_apps(ctx=mcp_context_client, configuration_ids=[prod_cfg_id])
     detail = result.data_apps[0]
     assert isinstance(detail, DataApp)
-    assert [d.configuration_id for d in detail.legacy_drafts] == [ok_cfg_id]
-    assert detail.legacy_drafts_unavailable == 1
+    assert [d.configuration_id for d in detail.legacy_drafts] == expected_drafts
+    assert detail.legacy_drafts_unavailable == expected_unavailable
 
 
 @pytest.mark.asyncio
@@ -4067,25 +4202,6 @@ async def test_delete_python_js_data_app_draft_refuses_streamlit(
     keboola_client.storage_client.configuration_delete.assert_not_called()
 
 
-def _make_failed_app_run(**overrides) -> AppRunResponse:
-    payload = {
-        'id': 'run-1',
-        'appId': 'app-prod-1',
-        'state': 'failed',
-        'createdAt': '2026-06-12T10:36:20+00:00',
-        'startedAt': None,
-        'stoppedAt': '2026-06-12T10:36:21+00:00',
-        'startupLogs': None,
-        'failureReason': {
-            'reason': 'ConfigDecryptionFailed',
-            'message': 'failed to decrypt key "#API_KEY"',
-        },
-        'mode': 'prod',
-    }
-    payload.update(overrides)
-    return AppRunResponse.model_validate(payload)
-
-
 def test_app_run_info_flattens_failure_reason() -> None:
     info = AppRunInfo.from_api_response(_make_failed_app_run())
     assert info.state == 'failed'
@@ -4212,7 +4328,6 @@ async def test_get_data_apps_detail_includes_last_run_failure(mocker, mcp_contex
 
 import logging  # noqa: E402
 
-import httpx  # noqa: E402
 from pydantic import ValidationError  # noqa: E402
 
 from keboola_mcp_server.clients.base import RawKeboolaClient  # noqa: E402
@@ -4580,7 +4695,6 @@ async def test_deploy_data_app_turns_a_conflict_into_guidance(
     keboola_client.data_science_client = mocker.AsyncMock()
     keboola_client.data_science_client.deploy_data_app.side_effect = _http_error(409, error)
     keboola_client.data_science_client.suspend_data_app.side_effect = _http_error(409, error)
-    keboola_client.storage_client.configuration_version_latest = mocker.AsyncMock(return_value=5)
     app = DataApp(
         name='app',
         component_id=DATA_APP_COMPONENT_ID,
@@ -4622,38 +4736,6 @@ async def test_deploy_data_app_stop_leaves_a_suspended_app_alone(mocker, mcp_con
 
     keboola_client.data_science_client.suspend_data_app.assert_not_awaited()
     assert result.state == 'suspended'
-
-
-@pytest.mark.asyncio
-async def test_deploy_data_app_reports_a_redeployed_failed_app_as_starting(mocker, mcp_context_client: Context) -> None:
-    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-    keboola_client.data_science_client = mocker.AsyncMock()
-    keboola_client.data_science_client.list_runtimes = mocker.AsyncMock(return_value=_RUNTIMES)
-    keboola_client.storage_client.configuration_version_latest = mocker.AsyncMock(return_value=5)
-    app = DataApp(
-        name='app',
-        component_id=DATA_APP_COMPONENT_ID,
-        configuration_id='cfg-1',
-        data_app_id='app-1',
-        project_id='proj-1',
-        branch_id='branch-1',
-        config_version='5',
-        type='python-js',
-        configuration={},
-        state='disabled',
-        desired_deployment_id='dep-2',
-    )
-    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=app))
-    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_logs', mocker.AsyncMock(return_value=[]))
-    failed_run = AppRunInfo(state='failed', failure_reason='SandboxBuildFailed')
-    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_latest_run', mocker.AsyncMock(return_value=failed_run))
-
-    result = await deploy_data_app(ctx=mcp_context_client, action='deploy', configuration_id='cfg-1')
-
-    # The record still shows the start that failed before this deploy; the new one is on its way.
-    assert result.state == 'starting'
-    assert result.deployment_info is not None
-    assert result.deployment_info.last_run is None
 
 
 # ===== Tests for apps on a customer GitHub repository (organization git auth) =====
@@ -4882,7 +4964,6 @@ async def test_deploy_data_app_refuses_dev_mode_and_legacy_drafts(
     """Dev mode and legacy drafts are refused up front: no config version lookup and no deploy call."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
-    keboola_client.storage_client.configuration_version_latest = mocker.AsyncMock(return_value=5)
     data_app = _preview_app(app_kind)
     mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=data_app))
 
@@ -4891,7 +4972,6 @@ async def test_deploy_data_app_refuses_dev_mode_and_legacy_drafts(
             ctx=mcp_context_client, action='deploy', configuration_id=data_app.configuration_id, mode=mode
         )
 
-    keboola_client.storage_client.configuration_version_latest.assert_not_called()
     keboola_client.data_science_client.deploy_data_app_in_mode.assert_not_called()
     keboola_client.data_science_client.deploy_data_app.assert_not_called()
 
@@ -4905,18 +4985,14 @@ async def test_deploy_data_app_switches_organization_git_app_to_production(
     so an external-repo app once deployed in dev mode would otherwise be refused for organization auth."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
-    keboola_client.data_science_client.list_runtimes = mocker.AsyncMock(return_value=_RUNTIMES)
-    keboola_client.storage_client.configuration_version_latest = mocker.AsyncMock(return_value=5)
     mocker.patch(
         'keboola_mcp_server.tools.data_apps._fetch_data_app',
         mocker.AsyncMock(return_value=_make_organization_git_data_app()),
     )
-    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_logs', mocker.AsyncMock(return_value=[]))
-    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_latest_run', mocker.AsyncMock(return_value=None))
 
-    await deploy_data_app(ctx=mcp_context_client, action='deploy', configuration_id='cfg-org-1', mode=mode)
+    await deploy_data_app(ctx=mcp_context_client, action='deploy', configuration_id='cfg-org-1', mode=mode, wait=False)
 
-    keboola_client.data_science_client.deploy_data_app_in_mode.assert_awaited_once_with('app-org-1', '5', 'prod')
+    keboola_client.data_science_client.deploy_data_app_in_mode.assert_awaited_once_with('app-org-1', '1', 'prod')
     keboola_client.data_science_client.deploy_data_app.assert_not_called()
 
 
@@ -4971,7 +5047,6 @@ async def test_deploy_data_app_maps_organization_git_errors(
     # An organization-auth app deploys through the mode endpoint, any other app through /v2 deployments.
     keboola_client.data_science_client.deploy_data_app_in_mode.side_effect = error
     keboola_client.data_science_client.deploy_data_app.side_effect = error
-    keboola_client.storage_client.configuration_version_latest = mocker.AsyncMock(return_value=5)
     data_app = _make_organization_git_data_app() if organization_auth else _make_external_git_data_app()
     mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=data_app))
 
