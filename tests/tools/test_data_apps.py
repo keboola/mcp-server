@@ -872,21 +872,6 @@ class TestFetchDataAppValidation:
     """Tests for _fetch_data_app component_id validation."""
 
     @pytest.mark.asyncio
-    async def test_fetch_data_app_by_data_app_id_validates_component_id(
-        self, mocker, keboola_client: KeboolaClient
-    ) -> None:
-        """When fetching by data_app_id, raises ValueError if component_id doesn't match."""
-        wrong_component_id = 'keboola.sandboxes'
-        data_app_id = 'app-123'
-
-        keboola_client.data_science_client.get_data_app = mocker.AsyncMock(
-            return_value=_make_data_app_response(component_id=wrong_component_id, data_app_id=data_app_id)
-        )
-
-        with pytest.raises(ValueError, match=f'Data app tools only support {DATA_APP_COMPONENT_ID} component'):
-            await _fetch_data_app(keboola_client, data_app_id=data_app_id, configuration_id=None)
-
-    @pytest.mark.asyncio
     async def test_fetch_data_app_by_configuration_id_validates_component_id(
         self, mocker, keboola_client: KeboolaClient
     ) -> None:
@@ -914,12 +899,37 @@ class TestFetchDataAppValidation:
         )
 
         with pytest.raises(ValueError, match=f'Data app tools only support {DATA_APP_COMPONENT_ID} component'):
-            await _fetch_data_app(keboola_client, data_app_id=None, configuration_id=configuration_id)
+            await _fetch_data_app(keboola_client, configuration_id=configuration_id)
 
     @pytest.mark.asyncio
-    async def test_fetch_data_app_by_data_app_id_succeeds_with_correct_component(
-        self, mocker, keboola_client: KeboolaClient
+    @pytest.mark.parametrize(('with_repo', 'repo_url'), [(False, None), (True, 'https://managed.repo/org/app.git')])
+    async def test_fetch_data_app_reads_the_git_repo_only_when_asked(
+        self, mocker, keboola_client: KeboolaClient, with_repo: bool, repo_url: str | None
     ) -> None:
+        """Paths that neither return nor check the repo skip the `git-repo` request."""
+        keboola_client.storage_client.configuration_detail = mocker.AsyncMock(
+            return_value={
+                'id': 'cfg-123',
+                'name': 'test-app',
+                'description': 'test',
+                'configuration': {'parameters': {'id': 'app-123'}},
+                'version': 1,
+            }
+        )
+        keboola_client.data_science_client.get_data_app = mocker.AsyncMock(
+            return_value=_make_python_js_data_app_response()
+        )
+        keboola_client.data_science_client.get_app_git_repo = mocker.AsyncMock(
+            return_value=AppGitRepoResponse(https_url='https://managed.repo/org/app.git', is_managed_git_repo=True)
+        )
+
+        result = await _fetch_data_app(keboola_client, configuration_id='cfg-123', with_repo=with_repo)
+
+        assert keboola_client.data_science_client.get_app_git_repo.await_count == int(with_repo)
+        assert result.repo_url == repo_url
+
+    @pytest.mark.asyncio
+    async def test_fetch_data_app_succeeds_with_correct_component(self, mocker, keboola_client: KeboolaClient) -> None:
         """When component_id matches DATA_APP_COMPONENT_ID, fetch succeeds."""
         data_app_id = 'app-123'
         config_id = 'cfg-123'
@@ -945,7 +955,7 @@ class TestFetchDataAppValidation:
             }
         )
 
-        result = await _fetch_data_app(keboola_client, data_app_id=data_app_id, configuration_id=None)
+        result = await _fetch_data_app(keboola_client, configuration_id=config_id)
 
         assert result.data_app_id == data_app_id
         assert result.component_id == DATA_APP_COMPONENT_ID
@@ -994,15 +1004,9 @@ class TestFetchDataAppValidation:
             }
         )
 
-        result = await _fetch_data_app(keboola_client, data_app_id='app-123', configuration_id=None)
+        result = await _fetch_data_app(keboola_client, configuration_id='cfg-123')
 
         assert result.deployment_url == expected_url
-
-    @pytest.mark.asyncio
-    async def test_fetch_data_app_requires_either_id(self, keboola_client: KeboolaClient) -> None:
-        """When neither data_app_id nor configuration_id is provided, raises ValueError."""
-        with pytest.raises(ValueError, match='Either data_app_id or configuration_id must be provided'):
-            await _fetch_data_app(keboola_client, data_app_id=None, configuration_id=None)
 
 
 # =============================================================================
@@ -1029,7 +1033,8 @@ class TestFetchDataAppValidation:
         # Update path (with configuration_id)
         ('cfg-1', 'Analytics', 0, [], True, False, False),
         ('cfg-1', None, 5, [], False, False, False),
-        ('cfg-1', None, 25, ['Analytics'], False, False, True),
+        # An update without `folder` gives no hint: it would list every data app for nothing.
+        ('cfg-1', None, 25, ['Analytics'], False, False, False),
         ('cfg-1', '', 5, [], False, True, False),  # empty string → delete
     ],
     ids=[
@@ -1039,7 +1044,7 @@ class TestFetchDataAppValidation:
         'create_no_folder_many_with_hint',
         'update_folder_provided',
         'update_no_folder_few',
-        'update_no_folder_many_with_hint',
+        'update_no_folder_many_without_hint',
         'update_folder_empty_deletes',
     ],
 )
@@ -3801,7 +3806,7 @@ async def test_get_data_apps_detail_for_prod_lists_drafts(
 
     keboola_client.storage_client.configuration_list = mocker.AsyncMock(return_value=configs)
 
-    async def fake_fetch(client, *, configuration_id, data_app_id):
+    async def fake_fetch(client, *, configuration_id, with_repo=False):
         if configuration_id == prod_cfg_id:
             return prod
         return drafts[configuration_id]
@@ -3875,7 +3880,7 @@ async def test_get_data_apps_detail_for_prod_counts_unavailable_drafts(
     ]
     keboola_client.storage_client.configuration_list = mocker.AsyncMock(return_value=configs)
 
-    async def fake_fetch(client, *, configuration_id, data_app_id):
+    async def fake_fetch(client, *, configuration_id, with_repo=False):
         if configuration_id == prod_cfg_id:
             return prod
         if configuration_id == failing_cfg_id:

@@ -640,14 +640,6 @@ class DataScienceClient(KeboolaServiceClient):
         """
         await self.post(endpoint=f'v2/apps/{data_app_id}/suspend', data={})
 
-    async def get_data_app_password(self, data_app_id: str) -> str:
-        """
-        Get the password for a data app by its ID.
-        """
-        response = await self.get(endpoint=f'v2/apps/{data_app_id}/password')
-        assert isinstance(response, dict)
-        return cast(str, response['password'])
-
     async def create_app_preview_link(self, data_app_id: str) -> AppPreviewLinkResponse:
         """
         Mint a short-lived preview link for a data app in dev mode.

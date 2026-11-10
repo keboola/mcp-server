@@ -986,10 +986,15 @@ async def modify_streamlit_data_app(
                     configuration_id=configuration_id,
                     configuration_version=int(new_version),
                 )
-            folder_hint = await apply_configuration_folder(
-                client, DATA_APP_COMPONENT_ID, configuration_id, folder, 'data apps', 'modify_streamlit_data_app'
+            # Without `folder`, an update keeps the folder: the hint lists every data app, so only a create gives it.
+            folder_hint = (
+                await apply_configuration_folder(
+                    client, DATA_APP_COMPONENT_ID, configuration_id, folder, 'data apps', 'modify_streamlit_data_app'
+                )
+                if folder is not None
+                else None
             )
-            data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
+            data_app = await _fetch_data_app(client, configuration_id=configuration_id)
             links = links_manager.get_data_app_links(
                 configuration_id=data_app.configuration_id,
                 configuration_name=name,
@@ -1104,7 +1109,7 @@ async def modify_streamlit_data_app_internal(
         workspace_id=str(await workspace_manager.get_data_app_workspace_id()),
         branch_id=str(await workspace_manager.get_data_app_branch_id()),
     )
-    data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
+    data_app = await _fetch_data_app(client, configuration_id=configuration_id)
     existing_config = data_app.configuration
     updated_config = _update_existing_data_app_config(
         existing_config,
@@ -1521,7 +1526,7 @@ async def modify_python_js_data_app(
 
     if configuration_id:
         # Update existing python-js data app
-        data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
+        data_app = await _fetch_data_app(client, configuration_id=configuration_id, with_repo=True)
         if _is_draft_config(data_app.configuration):
             _reject_no_auth_on_draft(authentication_type)
             _reject_oidc_on_draft(authentication_type)
@@ -1571,15 +1576,20 @@ async def modify_python_js_data_app(
             updated_name=name or data_app.name,
             updated_description=description or data_app.description,
         )
-        data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
+        data_app = await _fetch_data_app(client, configuration_id=configuration_id, with_repo=True)
         await set_cfg_update_metadata(
             client=client,
             component_id=DATA_APP_COMPONENT_ID,
             configuration_id=configuration_id,
             configuration_version=int(data_app.config_version),
         )
-        folder_hint = await apply_configuration_folder(
-            client, DATA_APP_COMPONENT_ID, configuration_id, folder, 'data apps', 'modify_python_js_data_app'
+        # Without `folder`, an update keeps the folder: the hint lists every data app, so only a create gives it.
+        folder_hint = (
+            await apply_configuration_folder(
+                client, DATA_APP_COMPONENT_ID, configuration_id, folder, 'data apps', 'modify_python_js_data_app'
+            )
+            if folder is not None
+            else None
         )
         written_authorization = updated_config.get('authorization') or {}
         oidc_callback_url = _oidc_callback_url(client, data_app.data_app_id, updated_config)
@@ -1820,7 +1830,7 @@ async def create_python_js_data_app_git_credential(
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
 
-    data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
+    data_app = await _fetch_data_app(client, configuration_id=configuration_id)
     if data_app.type != 'python-js':
         raise ValueError(
             f'create_python_js_data_app_git_credential only supports python-js data apps, but configuration '
@@ -2260,7 +2270,7 @@ async def deploy_data_app(
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
     if action == 'deploy':
-        data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
+        data_app = await _fetch_data_app(client, configuration_id=configuration_id)
         if _is_draft_config(data_app.configuration):
             raise ValueError(_legacy_draft_convert_message(data_app))
         if mode == 'dev':
@@ -2280,7 +2290,7 @@ async def deploy_data_app(
             DATA_APP_COMPONENT_ID, data_app.configuration_id
         )
         await _trigger_deploy(client, data_app, str(config_version), mode)
-        data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
+        data_app = await _fetch_data_app(client, configuration_id=configuration_id)
         logs, last_run, images = await asyncio.gather(
             _fetch_logs(client, data_app.data_app_id),
             _fetch_latest_run(client, data_app),
@@ -2300,7 +2310,7 @@ async def deploy_data_app(
         )
         return DeploymentDataAppOutput(state=data_app.state, links=links, deployment_info=data_app.deployment_info)
     elif action == 'stop':
-        data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
+        data_app = await _fetch_data_app(client, configuration_id=configuration_id)
         if data_app.state == 'starting':
             raise ValueError('Data app is currently "starting", could not be stopped at the moment.')
         if data_app.state != 'suspended':
@@ -2313,7 +2323,7 @@ async def deploy_data_app(
                         f'(state "{data_app.state}"). API error: {_api_error_text(e.response)}'
                     ) from e
                 raise
-        data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
+        data_app = await _fetch_data_app(client, configuration_id=configuration_id)
         links = links_manager.get_data_app_links(
             configuration_id=data_app.configuration_id,
             configuration_name=data_app.name,
@@ -2394,7 +2404,7 @@ async def create_python_js_data_app_draft(
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
 
-    data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
+    data_app = await _fetch_data_app(client, configuration_id=configuration_id)
     if data_app.type != 'python-js':
         raise ValueError(f'Data app "{configuration_id}" is type "{data_app.type}"; only python-js apps have drafts.')
     if _is_draft_config(data_app.configuration):
@@ -2492,7 +2502,7 @@ async def delete_python_js_data_app_draft(
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
 
-    data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
+    data_app = await _fetch_data_app(client, configuration_id=configuration_id)
     if draft_id is not None:
         try:
             await client.data_science_client.delete_draft(data_app.data_app_id, draft_id)
@@ -2606,7 +2616,7 @@ async def get_data_app_preview_link(
         _validate_draft_id(draft_id)
     client = KeboolaClient.from_state(ctx.session.state)
     try:
-        data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
+        data_app = await _fetch_data_app(client, configuration_id=configuration_id)
     except httpx.HTTPStatusError as e:
         api_error = _api_error_text(e.response)
         if e.response.status_code in (HTTPStatus.BAD_REQUEST, HTTPStatus.FORBIDDEN) and (
@@ -2946,65 +2956,27 @@ def _image_version_hint(image_version: str | None) -> str | None:
     return f'Backend set to {target}. Redeploy the app (deploy_data_app) to run on it.'
 
 
-async def _fetch_data_app(
-    client: KeboolaClient,
-    *,
-    data_app_id: str | None,
-    configuration_id: str | None,
-) -> DataApp:
+async def _fetch_data_app(client: KeboolaClient, *, configuration_id: str, with_repo: bool = False) -> DataApp:
     """
-    Fetches data app from both data-science API and storage API based on the provided data_app_id or
-    configuration_id.
+    Fetches a data app from the Storage API and the data-science API by its configuration ID.
 
-    :param client: The Keboola client
-    :param data_app_id: The ID of the data app
-    :param configuration_id: The ID of the configuration
-    :return: The data app
+    - `with_repo` also reads the managed git repo of a python-js app (`repo_url`, `is_managed_git_repo`);
+      only the paths that return or check those fields pass it.
     """
-
-    if data_app_id:
-        # Fetch data app from science API to get the configuration ID
-        data_app_science = await client.data_science_client.get_data_app(data_app_id)
-        if data_app_science.component_id != DATA_APP_COMPONENT_ID:
-            raise ValueError(
-                f'Data app tools only support {DATA_APP_COMPONENT_ID} component, but the data app '
-                f'"{data_app_id}" has component_id "{data_app_science.component_id}".'
-            )
-        raw_data_app_config = await client.storage_client.configuration_detail(
-            component_id=DATA_APP_COMPONENT_ID, configuration_id=data_app_science.config_id
+    raw_configuration = await client.storage_client.configuration_detail(
+        component_id=DATA_APP_COMPONENT_ID, configuration_id=configuration_id
+    )
+    api_config = ConfigurationAPIResponse.model_validate(raw_configuration | {'component_id': DATA_APP_COMPONENT_ID})
+    data_app_id = cast(str, api_config.configuration['parameters']['id'])
+    data_app_science = await client.data_science_client.get_data_app(data_app_id)
+    if data_app_science.component_id != DATA_APP_COMPONENT_ID:
+        raise ValueError(
+            f'Data app tools only support {DATA_APP_COMPONENT_ID} component, but the data app '
+            f'"{data_app_id}" has component_id "{data_app_science.component_id}".'
         )
-        api_config = ConfigurationAPIResponse.model_validate(
-            raw_data_app_config | {'component_id': DATA_APP_COMPONENT_ID}
-        )
-        return await _build_data_app_with_repo(client, data_app_science, api_config)
-    elif configuration_id:
-        raw_configuration = await client.storage_client.configuration_detail(
-            component_id=DATA_APP_COMPONENT_ID, configuration_id=configuration_id
-        )
-        api_config = ConfigurationAPIResponse.model_validate(
-            raw_configuration | {'component_id': DATA_APP_COMPONENT_ID}
-        )
-        data_app_id = cast(str, api_config.configuration['parameters']['id'])
-        data_app_science = await client.data_science_client.get_data_app(data_app_id)
-        if data_app_science.component_id != DATA_APP_COMPONENT_ID:
-            raise ValueError(
-                f'Data app tools only support {DATA_APP_COMPONENT_ID} component, but the data app '
-                f'"{data_app_id}" has component_id "{data_app_science.component_id}".'
-            )
-        return await _build_data_app_with_repo(client, data_app_science, api_config)
-    else:
-        raise ValueError('Either data_app_id or configuration_id must be provided.')
-
-
-async def _build_data_app_with_repo(
-    client: KeboolaClient,
-    data_app_science: DataAppResponse,
-    api_config: ConfigurationAPIResponse,
-) -> DataApp:
-    """Build a `DataApp` and, for python-js apps, attach the managed git repo URL."""
     data_app = DataApp.from_api_responses(data_app_science, api_config)
     data_app.deployment_url = data_app.deployment_url or _app_url(client, data_app_science.id, api_config.configuration)
-    if data_app_science.type == 'python-js':
+    if with_repo and data_app_science.type == 'python-js':
         try:
             repo_resp = await client.data_science_client.get_app_git_repo(data_app_science.id)
             data_app.repo_url = repo_resp.https_url
@@ -3035,7 +3007,7 @@ async def _fetch_data_app_details_task(
     :return: The data app details or the configuration ID if the data app is not found
     """
     try:
-        data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
+        data_app = await _fetch_data_app(client, configuration_id=configuration_id, with_repo=True)
         links = links_manager.get_data_app_links(
             configuration_id=data_app.configuration_id,
             configuration_name=data_app.name,
@@ -3245,7 +3217,7 @@ async def _fetch_prod_drafts(client: KeboolaClient, *, prod_configuration_id: st
 
     async def fetch_summary(cfg_id: str) -> DataAppSummary | None:
         try:
-            draft = await _fetch_data_app(client, configuration_id=cfg_id, data_app_id=None)
+            draft = await _fetch_data_app(client, configuration_id=cfg_id, with_repo=True)
         except Exception:
             LOG.exception(f'Failed to fetch draft data app by configuration ID: {cfg_id}')
             return None
