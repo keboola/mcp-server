@@ -19,6 +19,7 @@ from keboola_mcp_server.clients.base import NEVER_SENT_ERRORS, InvalidArgumentEr
 from keboola_mcp_server.clients.client import DATA_APP_COMPONENT_ID, KeboolaClient
 from keboola_mcp_server.clients.data_science import (
     ORGANIZATION_GIT_AUTH,
+    AppGitRepoResponse,
     AppRunResponse,
     CodeDataAppConfig,
     DataAppConfig,
@@ -981,22 +982,23 @@ async def modify_streamlit_data_app(
             # Only stamp the UPDATED_BY_MCP version when the new version is actually known. Falling back to the
             # pre-update version would record a misleading version (the write did increment it), so skip the
             # metadata write when the response carried no numeric version.
-            if new_version.isdigit():
-                await set_cfg_update_metadata(
+            # Without `folder`, an update keeps the folder: the hint lists every data app, so only a create gives it.
+            _, folder_hint, data_app = await asyncio.gather(
+                set_cfg_update_metadata(
                     client=client,
                     component_id=DATA_APP_COMPONENT_ID,
                     configuration_id=configuration_id,
                     configuration_version=int(new_version),
                 )
-            # Without `folder`, an update keeps the folder: the hint lists every data app, so only a create gives it.
-            folder_hint = (
-                await apply_configuration_folder(
+                if new_version.isdigit()
+                else _no_op(),
+                apply_configuration_folder(
                     client, DATA_APP_COMPONENT_ID, configuration_id, folder, 'data apps', 'modify_streamlit_data_app'
                 )
                 if folder is not None
-                else None
+                else _no_op(),
+                _fetch_data_app(client, configuration_id=configuration_id),
             )
-            data_app = await _fetch_data_app(client, configuration_id=configuration_id)
             links = links_manager.get_data_app_links(
                 configuration_id=data_app.configuration_id,
                 configuration_name=name,
@@ -1049,19 +1051,22 @@ async def modify_streamlit_data_app(
         )
         # --- app created past this point; response building is strictly best-effort ---
         try:
-            await set_cfg_creation_metadata(
-                client=client,
-                component_id=DATA_APP_COMPONENT_ID,
-                configuration_id=data_app_resp.config_id,
-            )
-            folder_hint = await apply_configuration_folder(
-                client,
-                DATA_APP_COMPONENT_ID,
-                data_app_resp.config_id,
-                folder,
-                'data apps',
-                'modify_streamlit_data_app',
-                is_new=True,
+            _, folder_hint, config_version = await asyncio.gather(
+                set_cfg_creation_metadata(
+                    client=client,
+                    component_id=DATA_APP_COMPONENT_ID,
+                    configuration_id=data_app_resp.config_id,
+                ),
+                apply_configuration_folder(
+                    client,
+                    DATA_APP_COMPONENT_ID,
+                    data_app_resp.config_id,
+                    folder,
+                    'data apps',
+                    'modify_streamlit_data_app',
+                    is_new=True,
+                ),
+                _config_version_or_blank(client, data_app_resp.config_id),
             )
             links = links_manager.get_data_app_links(
                 configuration_id=data_app_resp.config_id,
@@ -1072,9 +1077,7 @@ async def modify_streamlit_data_app(
             return ModifiedDataAppOutput(
                 response='created',
                 change_summary=folder_hint,
-                data_app=DataAppSummary.from_api_response(
-                    data_app_resp, await _config_version_or_blank(client, data_app_resp.config_id)
-                ),
+                data_app=DataAppSummary.from_api_response(data_app_resp, config_version),
                 links=links,
                 oidc_callback_url=_oidc_callback_url(client, data_app_resp.id, config),
             )
@@ -1142,8 +1145,9 @@ def _partial_update_output(
     configuration_id: str,
     name: str,
     new_version: str,
-) -> ModifiedDataAppOutput:
-    """Build a truthful partial-success response after a committed Streamlit update whose response building failed.
+    output_cls: type[ModifiedDataAppOutput] | type[ModifiedPythonJsDataAppOutput] = ModifiedDataAppOutput,
+) -> Any:
+    """Build a truthful partial-success response after a committed update whose response building failed.
 
     The configuration write already landed, so this MUST NOT raise -- it is built entirely from the pre-update
     data app (fetched before the write) plus the new version from the update response. The ``change_summary``
@@ -1179,7 +1183,7 @@ def _partial_update_output(
     # Mirror the success-path wording: the redeploy hint only applies to a deployed app. The pre-update
     # state is a faithful proxy here -- a config write does not change deployment state on its own.
     response = _update_response(data_app_pre)
-    return ModifiedDataAppOutput(
+    return output_cls(
         response=response,
         change_summary=(
             f'The configuration WAS updated (version {new_version or "unknown"}), but loading the full app '
@@ -1189,6 +1193,11 @@ def _partial_update_output(
         data_app=summary,
         links=links,
     )
+
+
+async def _no_op() -> None:
+    """A placeholder for a call `asyncio.gather` skips."""
+    return
 
 
 def _partial_create_output(
@@ -1572,7 +1581,7 @@ async def modify_python_js_data_app(
             slug=new_slug,
             image_version=image_version,
         )
-        await client.storage_client.configuration_update(
+        update_resp = await client.storage_client.configuration_update(
             component_id=DATA_APP_COMPONENT_ID,
             configuration_id=configuration_id,
             configuration=updated_config,
@@ -1580,21 +1589,44 @@ async def modify_python_js_data_app(
             updated_name=name or data_app.name,
             updated_description=description or data_app.description,
         )
-        data_app = await _fetch_data_app(client, configuration_id=configuration_id, with_repo=True)
-        await set_cfg_update_metadata(
-            client=client,
-            component_id=DATA_APP_COMPONENT_ID,
-            configuration_id=configuration_id,
-            configuration_version=int(data_app.config_version),
-        )
+        # --- write committed past this point: nothing below may turn it into an error ---
+        new_version = str(update_resp.get('version') or '') if isinstance(update_resp, dict) else ''
+        data_app_pre = data_app
         # Without `folder`, an update keeps the folder: the hint lists every data app, so only a create gives it.
-        folder_hint = (
-            await apply_configuration_folder(
+        fetched, metadata_error, folder_hint = await asyncio.gather(
+            _fetch_data_app(client, configuration_id=configuration_id, with_repo=True),
+            set_cfg_update_metadata(
+                client=client,
+                component_id=DATA_APP_COMPONENT_ID,
+                configuration_id=configuration_id,
+                configuration_version=int(new_version),
+            )
+            if new_version.isdigit()
+            else _no_op(),
+            apply_configuration_folder(
                 client, DATA_APP_COMPONENT_ID, configuration_id, folder, 'data apps', 'modify_python_js_data_app'
             )
             if folder is not None
-            else None
+            else _no_op(),
+            return_exceptions=True,
         )
+        if isinstance(metadata_error, BaseException):
+            LOG.error(
+                f'Failed to set the update metadata of data app configuration {configuration_id}: {metadata_error}'
+            )
+        if isinstance(folder_hint, BaseException):
+            folder_hint = None
+        if isinstance(fetched, BaseException):
+            LOG.error(f'Data app configuration {configuration_id} was updated but the re-read failed: {fetched}')
+            return _partial_update_output(
+                data_app_pre=data_app_pre,
+                links_manager=links_manager,
+                configuration_id=configuration_id,
+                name=name or data_app_pre.name,
+                new_version=new_version,
+                output_cls=ModifiedPythonJsDataAppOutput,
+            )
+        data_app = fetched
         written_authorization = updated_config.get('authorization') or {}
         oidc_callback_url = _oidc_callback_url(client, data_app.data_app_id, updated_config)
         # Without an explicit `slug`, a new slug is a never-deployed app's slug following its name.
@@ -1729,39 +1761,52 @@ async def modify_python_js_data_app(
             # An app on a customer's repository brings its own git binding; any other gets a managed repo.
             use_managed_git_repo=git_block is None,
         )
+        # --- app created past this point: nothing below may turn it into an error, or a retry duplicates it ---
+        new_config_id = data_app_resp.config_id
+        managed_repo, metadata_error, folder_hint, config_version = await asyncio.gather(
+            client.data_science_client.get_app_git_repo(data_app_resp.id) if git_block is None else _no_op(),
+            set_cfg_creation_metadata(
+                client=client, component_id=DATA_APP_COMPONENT_ID, configuration_id=new_config_id
+            ),
+            apply_configuration_folder(
+                client,
+                DATA_APP_COMPONENT_ID,
+                new_config_id,
+                folder,
+                'data apps',
+                'modify_python_js_data_app',
+                is_new=True,
+            ),
+            _config_version_or_blank(client, new_config_id),
+            return_exceptions=True,
+        )
+        if isinstance(metadata_error, BaseException):
+            LOG.error(
+                f'Failed to set the creation metadata of data app configuration {new_config_id}: {metadata_error}'
+            )
+        if isinstance(folder_hint, BaseException):
+            folder_hint = None
+        if isinstance(config_version, BaseException):
+            config_version = ''
+        repo_hint = None
         if git_block is not None:
             repo_url = git_block.repository
+        elif isinstance(managed_repo, AppGitRepoResponse) and managed_repo.https_url:
+            repo_url = managed_repo.https_url
         else:
-            repo_resp = await client.data_science_client.get_app_git_repo(data_app_resp.id)
-            if repo_resp.https_url is None:
-                raise ValueError(
-                    f'Data app {data_app_resp.id} reports no HTTPS clone URL despite having a managed git repo. '
-                    'This indicates a platform-side bug — retry or contact support.'
-                )
-            repo_url = repo_resp.https_url
-        await set_cfg_creation_metadata(
-            client=client,
-            component_id=DATA_APP_COMPONENT_ID,
-            configuration_id=data_app_resp.config_id,
-        )
-        folder_hint = await apply_configuration_folder(
-            client,
-            DATA_APP_COMPONENT_ID,
-            data_app_resp.config_id,
-            folder,
-            'data apps',
-            'modify_python_js_data_app',
-            is_new=True,
-        )
+            LOG.error(f'Data app {data_app_resp.id} was created but its managed repo URL is unknown: {managed_repo}')
+            repo_url = None
+            repo_hint = (
+                'The app WAS created, but its git repo URL could not be read. Do NOT create it again: read '
+                f'`repo_url` from get_data_apps(configuration_ids=["{new_config_id}"]).'
+            )
         links = links_manager.get_data_app_links(
             configuration_id=data_app_resp.config_id,
             configuration_name=name,
             deployment_link=data_app_resp.url,
             uses_basic_authentication=uses_basic_auth,
         )
-        data_app_summary = DataAppSummary.from_api_response(
-            data_app_resp, await _config_version_or_blank(client, data_app_resp.config_id)
-        )
+        data_app_summary = DataAppSummary.from_api_response(data_app_resp, config_version)
         data_app_summary.repo_url = repo_url
         data_app_summary.storage_access_enabled = wants_storage_access
         app_branch = git_block.branch if git_block is not None else None
@@ -1771,7 +1816,8 @@ async def modify_python_js_data_app(
             _organization_git_hint(git_block, rebound=False) if git_block is not None and git_block.auth_type else None
         )
         change_summary = (
-            '\n'.join(note for note in (folder_hint, organization_hint, legacy_fallback_hint) if note) or None
+            '\n'.join(note for note in (repo_hint, folder_hint, organization_hint, legacy_fallback_hint) if note)
+            or None
         )
         return ModifiedPythonJsDataAppOutput(
             response='created',
@@ -3089,7 +3135,17 @@ async def _fetch_data_app(client: KeboolaClient, *, configuration_id: str, with_
     )
     api_config = ConfigurationAPIResponse.model_validate(raw_configuration | {'component_id': DATA_APP_COMPONENT_ID})
     data_app_id = cast(str, api_config.configuration['parameters']['id'])
-    data_app_science = await client.data_science_client.get_data_app(data_app_id)
+    # The repo read needs only the app ID, so it runs alongside the app read. A Streamlit config (it embeds its
+    # code) has no repo to read; any other non-python-js answer is dropped below.
+    data_app_block = _data_app_block(api_config.configuration)
+    read_repo = with_repo and not _is_draft_config(api_config.configuration) and 'streamlit' not in data_app_block
+    data_app_science, repo_resp = await asyncio.gather(
+        client.data_science_client.get_data_app(data_app_id),
+        client.data_science_client.get_app_git_repo(data_app_id) if read_repo else _no_op(),
+        return_exceptions=True,
+    )
+    if isinstance(data_app_science, BaseException):
+        raise data_app_science
     if data_app_science.component_id != DATA_APP_COMPONENT_ID:
         raise ValueError(
             f'Data app tools only support {DATA_APP_COMPONENT_ID} component, but the data app '
@@ -3097,13 +3153,12 @@ async def _fetch_data_app(client: KeboolaClient, *, configuration_id: str, with_
         )
     data_app = DataApp.from_api_responses(data_app_science, api_config)
     data_app.deployment_url = data_app.deployment_url or _app_url(client, data_app_science.id, api_config.configuration)
-    if with_repo and data_app_science.type == 'python-js' and not _is_draft_config(api_config.configuration):
-        try:
-            repo_resp = await client.data_science_client.get_app_git_repo(data_app_science.id)
+    if read_repo and data_app_science.type == 'python-js':
+        if isinstance(repo_resp, AppGitRepoResponse):
             data_app.repo_url = repo_resp.https_url
             data_app.is_managed_git_repo = repo_resp.is_managed_git_repo
-        except Exception as exc:
-            LOG.warning(f'Could not fetch git repo info for python-js app {data_app_science.id}: {exc}')
+        else:
+            LOG.warning(f'Could not fetch git repo info for python-js app {data_app_science.id}: {repo_resp}')
     return data_app
 
 

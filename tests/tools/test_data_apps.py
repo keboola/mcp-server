@@ -907,6 +907,8 @@ class TestFetchDataApp:
         ('app_type', 'with_repo', 'expected_repo_url'),
         [
             pytest.param('streamlit', False, None, id='streamlit'),
+            # A Streamlit config embeds its code: no repo read even when asked.
+            pytest.param('streamlit', True, None, id='streamlit_with_repo'),
             pytest.param('python-js', False, None, id='python_js_without_repo'),
             pytest.param('python-js', True, 'https://managed.repo/org/app.git', id='python_js_with_repo'),
         ],
@@ -943,7 +945,14 @@ class TestFetchDataApp:
                 'id': config_id,
                 'name': 'test-app',
                 'description': 'test',
-                'configuration': {'parameters': {'id': data_app_id}, 'authorization': {}, 'storage': {}},
+                'configuration': {
+                    'parameters': {
+                        'id': data_app_id,
+                        'dataApp': {'streamlit': {'config.toml': ''}} if app_type == 'streamlit' else {'slug': 'a'},
+                    },
+                    'authorization': {},
+                    'storage': {},
+                },
                 'version': 2,
             }
         )
@@ -2159,17 +2168,23 @@ async def test_modify_streamlit_data_app_update_oidc_output(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(('auto_suspend_after_seconds', 'expected_auto_suspend'), [(600, 600), (None, 3600)])
+@pytest.mark.parametrize(
+    ('auto_suspend_after_seconds', 'expected_auto_suspend', 'post_write_fails'),
+    [(600, 600, False), (None, 3600, False), (None, 3600, True)],
+)
 async def test_modify_python_js_data_app_update_patches_storage_config(
     mocker,
     mcp_context_client: Context,
     workspace_manager,
     auto_suspend_after_seconds: int | None,
     expected_auto_suspend: int,
+    post_write_fails: bool,
 ) -> None:
     """Update path: fetch storage config → merge updates → PATCH via configuration_update.
 
-    An omitted `auto_suspend_after_seconds` keeps the app's value, so a rename leaves it alone.
+    An omitted `auto_suspend_after_seconds` keeps the app's value, so a rename leaves it alone. The metadata
+    takes the new version from the PUT response; a failed re-read or metadata write after the committed PUT
+    still reports success.
     """
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.has_feature = mocker.AsyncMock(return_value=True)
@@ -2193,11 +2208,12 @@ async def test_modify_python_js_data_app_update_patches_storage_config(
     )
     updated_data_app = existing_data_app.model_copy(update={'config_version': '3', 'name': 'New'})
 
+    error = httpx.ConnectError('boom')
     mocker.patch(
         'keboola_mcp_server.tools.data_apps._fetch_data_app',
-        mocker.AsyncMock(side_effect=[existing_data_app, updated_data_app]),
+        mocker.AsyncMock(side_effect=[existing_data_app, error if post_write_fails else updated_data_app]),
     )
-    keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value={})
+    keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value={'version': 3})
     keboola_client.data_science_client = mocker.AsyncMock()
     keboola_client.data_science_client.get_app_git_repo = mocker.AsyncMock(
         return_value=AppGitRepoResponse(
@@ -2206,7 +2222,10 @@ async def test_modify_python_js_data_app_update_patches_storage_config(
             is_managed_git_repo=True,
         )
     )
-    mocker.patch('keboola_mcp_server.tools.data_apps.set_cfg_update_metadata', mocker.AsyncMock())
+    set_metadata = mocker.patch(
+        'keboola_mcp_server.tools.data_apps.set_cfg_update_metadata',
+        mocker.AsyncMock(side_effect=error if post_write_fails else None),
+    )
     mocker.patch('keboola_mcp_server.tools.data_apps.apply_configuration_folder', mocker.AsyncMock(return_value=None))
 
     result = await modify_python_js_data_app(
@@ -2218,7 +2237,12 @@ async def test_modify_python_js_data_app_update_patches_storage_config(
     )
 
     assert isinstance(result, ModifiedPythonJsDataAppOutput)
-    assert result.response == 'updated'
+    assert set_metadata.await_args.kwargs['configuration_version'] == 3
+    if post_write_fails:
+        assert result.data_app.config_version == '3'
+        assert 'WAS updated' in (result.change_summary or '')
+    else:
+        assert result.response == 'updated'
     # The PATCH should carry merged config
     patch_kwargs = keboola_client.storage_client.configuration_update.await_args.kwargs
     new_cfg = patch_kwargs['configuration']
@@ -3486,12 +3510,15 @@ def _make_python_js_parent_data_app(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('post_write_fails', [False, True])
 async def test_modify_python_js_data_app_create_prod_calls_get_app_git_repo_for_url(
     mocker,
     mcp_context_client: Context,
     workspace_manager,
+    post_write_fails: bool,
 ) -> None:
-    """Prod creates always go through get_app_git_repo (no short-circuit branch)."""
+    """Prod creates always go through get_app_git_repo (no short-circuit branch). Once the app exists, a failed
+    repo read or metadata write still reports it created, so a retry cannot duplicate it."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
     keboola_client.has_feature = mocker.AsyncMock(return_value=True)
@@ -3500,19 +3527,29 @@ async def test_modify_python_js_data_app_create_prod_calls_get_app_git_repo_for_
     keboola_client.data_science_client.create_data_app = mocker.AsyncMock(
         return_value=_make_python_js_data_app_response()
     )
+    error = httpx.ConnectError('boom')
     keboola_client.data_science_client.get_app_git_repo = mocker.AsyncMock(
         return_value=AppGitRepoResponse(
             ssh_url=None,
             https_url='https://managed.repo/org/prod.git',
             is_managed_git_repo=True,
-        )
+        ),
+        side_effect=error if post_write_fails else None,
     )
-    mocker.patch('keboola_mcp_server.tools.data_apps.set_cfg_creation_metadata', mocker.AsyncMock())
+    mocker.patch(
+        'keboola_mcp_server.tools.data_apps.set_cfg_creation_metadata',
+        mocker.AsyncMock(side_effect=error if post_write_fails else None),
+    )
     mocker.patch('keboola_mcp_server.tools.data_apps.apply_configuration_folder', mocker.AsyncMock(return_value=None))
 
     result = await modify_python_js_data_app(ctx=mcp_context_client, name='Prod', description='', slug='demo')
 
-    assert result.repo_url == 'https://managed.repo/org/prod.git'
+    assert result.response == 'created'
+    if post_write_fails:
+        assert result.repo_url is None
+        assert 'WAS created' in (result.change_summary or '')
+    else:
+        assert result.repo_url == 'https://managed.repo/org/prod.git'
     keboola_client.data_science_client.get_app_git_repo.assert_awaited_once()
     create_kwargs = keboola_client.data_science_client.create_data_app.await_args.kwargs
     assert create_kwargs['use_managed_git_repo'] is True
