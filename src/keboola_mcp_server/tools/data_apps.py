@@ -3367,14 +3367,15 @@ def _uses_organization_git_auth(configuration: Mapping[str, Any]) -> bool:
 
 
 async def _fetch_prod_drafts(client: KeboolaClient, *, prod_configuration_id: str) -> tuple[list[DataAppSummary], int]:
-    """List the drafts (configs with `parentConfigurationId == prod_configuration_id`) of a python-js
-    prod app. Returns full `DataAppSummary` entries (one extra DSAPI fetch per draft, capped at
-    10 parallel) plus the count of drafts whose detail fetch transiently failed and were omitted —
-    so the caller can tell "temporarily unreachable" from "deleted". Drafts in trash are not returned
-    by `configuration_list` and so do not appear here.
+    """List the legacy drafts (configs with `parentConfigurationId == prod_configuration_id`) of a python-js
+    prod app, built from two listings: the component's configurations and the project's apps.
+
+    - Returns the summaries plus the count of drafts whose app could not be read (missing from the app
+      listing, or the listing failed), so the caller can tell "temporarily unreachable" from "deleted".
+    - Drafts in trash are not returned by `configuration_list` and so do not appear here.
     """
     configs = await client.storage_client.configuration_list(DATA_APP_COMPONENT_ID)
-    draft_cfg_ids: list[str] = []
+    draft_cfgs: list[tuple[str, Mapping[str, Any]]] = []
     for cfg in configs:
         cfg_body = cast(Mapping[str, Any], cfg.get('configuration') or {})
         # A draft must satisfy BOTH halves of the contract: `isDraft=true` AND `parentConfigurationId`
@@ -3382,28 +3383,46 @@ async def _fetch_prod_drafts(client: KeboolaClient, *, prod_configuration_id: st
         # non-draft (e.g. a clone that kept the pointer but lost the flag) as a draft.
         if not _is_draft_config(cfg_body):
             continue
-        data_app_block = cast(Mapping[str, Any], cfg_body.get('parameters') or {}).get('dataApp') or {}
-        if data_app_block.get('parentConfigurationId') == prod_configuration_id:
-            cfg_id = cfg.get('id')
-            if isinstance(cfg_id, str):
-                draft_cfg_ids.append(cfg_id)
+        if _data_app_block(cfg_body).get('parentConfigurationId') == prod_configuration_id:
+            draft_cfgs.append((cast(str, cfg.get('id')), cfg))
 
-    if not draft_cfg_ids:
+    if not draft_cfgs:
         return [], 0
 
-    async def fetch_summary(cfg_id: str) -> DataAppSummary | None:
-        try:
-            draft = await _fetch_data_app(client, configuration_id=cfg_id, with_repo=True)
-        except Exception:
-            LOG.exception(f'Failed to fetch draft data app by configuration ID: {cfg_id}')
-            return None
-        summary = DataAppSummary.model_validate(draft.model_dump())
-        summary.repo_url = draft.repo_url
-        return summary
+    try:
+        apps = {app.id: app for app in await _list_all_data_apps(client)}
+    except Exception:
+        LOG.exception(f'Failed to list the apps of the legacy drafts of {prod_configuration_id}')
+        return [], len(draft_cfgs)
 
-    results = await process_concurrently(draft_cfg_ids, fetch_summary, max_concurrency=10)
-    drafts = [s for s in results if isinstance(s, DataAppSummary)]
-    return drafts, len(draft_cfg_ids) - len(drafts)
+    drafts: list[DataAppSummary] = []
+    for cfg_id, cfg in draft_cfgs:
+        cfg_body = cast(Mapping[str, Any], cfg.get('configuration') or {})
+        app = apps.get(str(_parameters_block(cfg_body).get('id')))
+        if app is None:
+            LOG.warning(f'Legacy draft {cfg_id} has no app in the app listing')
+            continue
+        summary = DataAppSummary.from_api_response(app, str(cfg.get('version', '')))
+        summary.configuration_id = cfg_id
+        summary.deployment_url = app.url or _app_url(client, app.id, cfg_body)
+        summary.auto_suspend_after_seconds = _config_auto_suspend(cfg_body)
+        summary.git_branch = _config_git_branch(cfg_body)
+        summary.git_auth_type = _config_git_auth_type(cfg_body)
+        drafts.append(summary)
+    return drafts, len(draft_cfgs) - len(drafts)
+
+
+_APP_LIST_PAGE = 100
+
+
+async def _list_all_data_apps(client: KeboolaClient) -> list[DataAppResponse]:
+    """Every app of the project, page by page (`GET /v2/apps` takes only `offset` and `limit`)."""
+    apps: list[DataAppResponse] = []
+    while True:
+        page = await client.data_science_client.list_data_apps(limit=_APP_LIST_PAGE, offset=len(apps))
+        apps.extend(page)
+        if len(page) < _APP_LIST_PAGE:
+            return apps
 
 
 async def _list_drafts_or_none(client: KeboolaClient, data_app_id: str) -> list[DraftInfo] | None:

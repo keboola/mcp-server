@@ -6,6 +6,7 @@ from types import ModuleType
 from typing import Any, Literal, cast
 from unittest.mock import MagicMock
 
+import httpx
 import pytest
 from fastmcp import Context
 
@@ -3835,16 +3836,24 @@ def _build_storage_config_entry(*, cfg_id: str, parent_configuration_id: str | N
     data_app_block: dict = {'slug': f'app-{cfg_id}'}
     if parent_configuration_id is not None:
         data_app_block['parentConfigurationId'] = parent_configuration_id
+        data_app_block['git'] = {'repository': 'https://managed.repo/org/prod.git', 'branch': f'branch-{cfg_id}'}
         if is_draft:
             data_app_block['isDraft'] = True
     return {
         'id': cfg_id,
         'name': f'app-{cfg_id}',
         'configuration': {
-            'parameters': {'autoSuspendAfterSeconds': 900, 'dataApp': data_app_block},
+            'parameters': {'id': f'app-{cfg_id}', 'autoSuspendAfterSeconds': 900, 'dataApp': data_app_block},
         },
         'version': 1,
     }
+
+
+def _legacy_draft_app(cfg_id: str) -> DataAppResponse:
+    """The `/v2/apps` listing entry of the legacy draft `_build_storage_config_entry(cfg_id=...)` stores."""
+    return _make_data_app_response(data_app_id=f'app-{cfg_id}', config_id=cfg_id).model_copy(
+        update={'type': 'python-js', 'url': f'https://{cfg_id}.hub.test'}
+    )
 
 
 @pytest.mark.parametrize(
@@ -3893,15 +3902,6 @@ async def test_get_data_apps_detail_for_prod_lists_drafts(
     prod_cfg_id = 'cfg-prod-1'
     prod = _make_python_js_prod_data_app(configuration_id=prod_cfg_id)
     draft_cfg_ids = [f'cfg-draft-{i}' for i in range(n_drafts)]
-    drafts = {
-        cfg_id: _make_python_js_draft_data_app(
-            configuration_id=cfg_id,
-            data_app_id=f'app-{cfg_id}',
-            parent_configuration_id=prod_cfg_id,
-            branch=f'branch-{cfg_id}',
-        )
-        for cfg_id in draft_cfg_ids
-    }
     # Throw in a config that's parented to a DIFFERENT prod to verify we filter properly.
     foreign_cfg = _build_storage_config_entry(cfg_id='cfg-other-draft', parent_configuration_id='cfg-prod-other')
     configs = [
@@ -3909,7 +3909,7 @@ async def test_get_data_apps_detail_for_prod_lists_drafts(
     ]
     configs.append(foreign_cfg)
     # A config that points at THIS prod but lacks `isDraft` is a misconfiguration, not a draft —
-    # it must be excluded (and never even fetched, or fake_fetch below would KeyError).
+    # it must be excluded.
     configs.append(
         _build_storage_config_entry(cfg_id='cfg-non-draft-child', parent_configuration_id=prod_cfg_id, is_draft=False)
     )
@@ -3917,14 +3917,12 @@ async def test_get_data_apps_detail_for_prod_lists_drafts(
     configs.append(_build_storage_config_entry(cfg_id=prod_cfg_id, parent_configuration_id=None))
 
     keboola_client.storage_client.configuration_list = mocker.AsyncMock(return_value=configs)
-
-    async def fake_fetch(client, *, configuration_id, with_repo=False):
-        if configuration_id == prod_cfg_id:
-            return prod
-        return drafts[configuration_id]
-
-    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', side_effect=fake_fetch)
+    fetch = mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=prod))
     mocker.patch('keboola_mcp_server.tools.data_apps._fetch_logs', mocker.AsyncMock(return_value=[]))
+    # One listing of the project's apps covers every legacy draft: no detail read per draft.
+    keboola_client.data_science_client.list_data_apps = mocker.AsyncMock(
+        return_value=[_legacy_draft_app(cfg_id) for cfg_id in [*draft_cfg_ids, 'cfg-other-draft']]
+    )
     v2_drafts = [
         {'id': f'd-{i}', 'url': None, 'gitBranch': f'v2-{i}', 'runState': 'running', 'createdAt': 't'}
         for i in range(n_drafts)
@@ -3943,8 +3941,11 @@ async def test_get_data_apps_detail_for_prod_lists_drafts(
     assert {d.configuration_id: d.git_branch for d in detail.legacy_drafts} == {
         cfg_id: f'branch-{cfg_id}' for cfg_id in draft_cfg_ids
     }
-    # All drafts fetched successfully, so nothing was omitted.
+    assert {d.configuration_id: d.state for d in detail.legacy_drafts} == dict.fromkeys(draft_cfg_ids, 'running')
+    assert {d.deployment_url for d in detail.legacy_drafts} == {f'https://{c}.hub.test' for c in draft_cfg_ids}
     assert detail.legacy_drafts_unavailable == 0
+    fetch.assert_awaited_once()
+    assert keboola_client.data_science_client.list_data_apps.await_count == (1 if n_drafts else 0)
 
 
 @pytest.mark.asyncio
@@ -3971,43 +3972,44 @@ async def test_get_data_apps_detail_for_prod_reports_unlisted_drafts(mocker, mcp
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('listed', 'expected_drafts', 'expected_unavailable'),
+    [
+        # One draft's app is missing from the listing: the other is still returned, the omission counted.
+        pytest.param([_legacy_draft_app('cfg-draft-ok')], ['cfg-draft-ok'], 1, id='one_missing'),
+        pytest.param(httpx.ConnectError('timeout'), [], 2, id='listing_failed'),
+    ],
+)
 async def test_get_data_apps_detail_for_prod_counts_unavailable_drafts(
     mocker,
     mcp_context_client: Context,
+    listed: list[DataAppResponse] | Exception,
+    expected_drafts: list[str],
+    expected_unavailable: int,
 ) -> None:
-    """A transient DSAPI failure on one draft's detail fetch must NOT silently shrink the list:
-    the surviving draft is still returned and `drafts_unavailable` counts the omission so the
-    caller can tell "temporarily unreachable" from "deleted"."""
+    """An unreadable legacy draft must NOT silently shrink the list: `legacy_drafts_unavailable` counts
+    the omission so the caller can tell "temporarily unreachable" from "deleted"."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     prod_cfg_id = 'cfg-prod-1'
     prod = _make_python_js_prod_data_app(configuration_id=prod_cfg_id)
-    ok_cfg_id, failing_cfg_id = 'cfg-draft-ok', 'cfg-draft-fail'
-    ok_draft = _make_python_js_draft_data_app(
-        configuration_id=ok_cfg_id, data_app_id=f'app-{ok_cfg_id}', parent_configuration_id=prod_cfg_id
-    )
     configs = [
-        _build_storage_config_entry(cfg_id=ok_cfg_id, parent_configuration_id=prod_cfg_id),
-        _build_storage_config_entry(cfg_id=failing_cfg_id, parent_configuration_id=prod_cfg_id),
+        _build_storage_config_entry(cfg_id='cfg-draft-ok', parent_configuration_id=prod_cfg_id),
+        _build_storage_config_entry(cfg_id='cfg-draft-fail', parent_configuration_id=prod_cfg_id),
         _build_storage_config_entry(cfg_id=prod_cfg_id, parent_configuration_id=None),
     ]
     keboola_client.storage_client.configuration_list = mocker.AsyncMock(return_value=configs)
-
-    async def fake_fetch(client, *, configuration_id, with_repo=False):
-        if configuration_id == prod_cfg_id:
-            return prod
-        if configuration_id == failing_cfg_id:
-            raise RuntimeError('transient DSAPI failure (timeout)')
-        return ok_draft
-
-    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', side_effect=fake_fetch)
+    keboola_client.data_science_client.list_data_apps = mocker.AsyncMock(
+        **({'side_effect': listed} if isinstance(listed, Exception) else {'return_value': listed})
+    )
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=prod))
     mocker.patch('keboola_mcp_server.tools.data_apps._fetch_logs', mocker.AsyncMock(return_value=[]))
     keboola_client.data_science_client.list_drafts = mocker.AsyncMock(return_value=[])
 
     result = await get_data_apps(ctx=mcp_context_client, configuration_ids=[prod_cfg_id])
     detail = result.data_apps[0]
     assert isinstance(detail, DataApp)
-    assert [d.configuration_id for d in detail.legacy_drafts] == [ok_cfg_id]
-    assert detail.legacy_drafts_unavailable == 1
+    assert [d.configuration_id for d in detail.legacy_drafts] == expected_drafts
+    assert detail.legacy_drafts_unavailable == expected_unavailable
 
 
 @pytest.mark.asyncio
@@ -4330,7 +4332,6 @@ async def test_get_data_apps_detail_includes_last_run_failure(mocker, mcp_contex
 
 import logging  # noqa: E402
 
-import httpx  # noqa: E402
 from pydantic import ValidationError  # noqa: E402
 
 from keboola_mcp_server.clients.base import RawKeboolaClient  # noqa: E402
