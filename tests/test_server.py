@@ -78,6 +78,7 @@ class TestServer:
             'create_merge_request',
             'create_oauth_url',
             'create_project',
+            'create_python_js_data_app_draft',
             'create_python_js_data_app_git_credential',
             'create_sql_transformation',
             'create_stream',
@@ -573,6 +574,7 @@ TOOL_ANNOTATIONS = [
     # data apps
     ('modify_streamlit_data_app', False, True, False, False, {DATA_APP_TOOLS_TAG, CONFIG_DIFF_PREVIEW_TAG}),
     ('modify_python_js_data_app', False, True, False, False, {DATA_APP_TOOLS_TAG}),
+    ('create_python_js_data_app_draft', False, False, False, False, {DATA_APP_TOOLS_TAG}),
     ('create_python_js_data_app_git_credential', False, False, False, False, {DATA_APP_TOOLS_TAG}),
     ('delete_python_js_data_app_draft', False, True, False, False, {DATA_APP_TOOLS_TAG}),
     ('get_data_apps', True, False, True, False, {DATA_APP_TOOLS_TAG}),

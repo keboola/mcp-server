@@ -557,3 +557,46 @@ async def test_delete_data_app_retries_dsapi_500(
 
     assert client.delete.await_args_list == [call(endpoint='v2/apps/app-123')] * len(delete_outcomes)
     assert sleep.await_args_list == [call(delay) for delay in expected_sleeps]
+
+
+@pytest.mark.asyncio
+async def test_draft_endpoints() -> None:
+    """Drafts live under `/v2/apps/{appId}/drafts`; create sends only the git branch."""
+    draft = {'id': 'd-1', 'url': None, 'gitBranch': 'feat', 'runState': 'neverRun', 'createdAt': 't'}
+    client = DataScienceClient.create('https://api.example.com', token=None)
+    link = {'url': 'https://draft-d-1.hub.example.com/_proxy/preview#t=x', 'linkExpiresAt': 't'}
+    client.post = AsyncMock(side_effect=[draft, link])  # type: ignore[assignment]
+    client.get = AsyncMock(side_effect=[[draft], {**draft, 'url': 'https://draft-d-1.hub.example.com'}])  # type: ignore[assignment]
+    client.delete = AsyncMock(return_value=None)  # type: ignore[assignment]
+
+    created = await client.create_draft('app-1', 'feat')
+    preview = await client.create_draft_preview_link('app-1', 'd-1')
+    listed = await client.list_drafts('app-1')
+    fetched = await client.get_draft('app-1', 'd-1')
+    await client.delete_draft('app-1', 'd-1')
+
+    assert client.post.await_args_list == [
+        call(endpoint='v2/apps/app-1/drafts', data={'gitBranch': 'feat'}, retry=False),
+        call(endpoint='v2/apps/app-1/drafts/d-1/preview-link'),
+    ]
+    assert client.get.await_args_list == [
+        call(endpoint='v2/apps/app-1/drafts'),
+        call(endpoint='v2/apps/app-1/drafts/d-1'),
+    ]
+    client.delete.assert_awaited_once_with(endpoint='v2/apps/app-1/drafts/d-1')
+    assert (created.git_branch, created.run_state, created.url) == ('feat', 'neverRun', None)
+    assert [d.id for d in listed] == ['d-1']
+    assert fetched.url == 'https://draft-d-1.hub.example.com'
+    assert preview.url == link['url']
+
+
+@pytest.mark.asyncio
+async def test_list_app_runs_filters_by_deployment() -> None:
+    client = DataScienceClient.create('https://api.example.com', token=None)
+    client.get = AsyncMock(return_value=[])  # type: ignore[assignment]
+
+    await client.list_app_runs('app-1', limit=1, deployment_id='dep-2')
+
+    client.get.assert_awaited_once_with(
+        endpoint='v2/apps/app-1/runs', params={'limit': 1, 'offset': 0, 'deploymentId': 'dep-2'}
+    )
