@@ -1525,8 +1525,10 @@ async def modify_python_js_data_app(
     legacy_fallback_hint: str | None = None
 
     if configuration_id:
-        # Update existing python-js data app
-        data_app = await _fetch_data_app(client, configuration_id=configuration_id, with_repo=True)
+        # Update existing python-js data app; the repo is read only for the rebind and branch checks.
+        data_app = await _fetch_data_app(
+            client, configuration_id=configuration_id, with_repo=bool(git_repository or branch)
+        )
         if _is_draft_config(data_app.configuration):
             _reject_no_auth_on_draft(authentication_type)
             _reject_oidc_on_draft(authentication_type)
@@ -2959,8 +2961,8 @@ async def _fetch_data_app(client: KeboolaClient, *, configuration_id: str, with_
     """
     Fetches a data app from the Storage API and the data-science API by its configuration ID.
 
-    - `with_repo` also reads the managed git repo of a python-js app (`repo_url`, `is_managed_git_repo`);
-      only the paths that return or check those fields pass it.
+    - `with_repo` also reads the git repo of a python-js prod app (`repo_url`, `is_managed_git_repo`);
+      only the paths that return or check those fields pass it. A legacy draft has no repo of its own.
     """
     raw_configuration = await client.storage_client.configuration_detail(
         component_id=DATA_APP_COMPONENT_ID, configuration_id=configuration_id
@@ -2975,7 +2977,7 @@ async def _fetch_data_app(client: KeboolaClient, *, configuration_id: str, with_
         )
     data_app = DataApp.from_api_responses(data_app_science, api_config)
     data_app.deployment_url = data_app.deployment_url or _app_url(client, data_app_science.id, api_config.configuration)
-    if with_repo and data_app_science.type == 'python-js':
+    if with_repo and data_app_science.type == 'python-js' and not _is_draft_config(api_config.configuration):
         try:
             repo_resp = await client.data_science_client.get_app_git_repo(data_app_science.id)
             data_app.repo_url = repo_resp.https_url

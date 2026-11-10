@@ -868,8 +868,8 @@ class TestGetDataAppsFiltering:
         assert len(result.data_apps) == 0
 
 
-class TestFetchDataAppValidation:
-    """Tests for _fetch_data_app component_id validation."""
+class TestFetchDataApp:
+    """Tests for _fetch_data_app."""
 
     @pytest.mark.asyncio
     async def test_fetch_data_app_by_configuration_id_validates_component_id(
@@ -902,35 +902,23 @@ class TestFetchDataAppValidation:
             await _fetch_data_app(keboola_client, configuration_id=configuration_id)
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize(('with_repo', 'repo_url'), [(False, None), (True, 'https://managed.repo/org/app.git')])
-    async def test_fetch_data_app_reads_the_git_repo_only_when_asked(
-        self, mocker, keboola_client: KeboolaClient, with_repo: bool, repo_url: str | None
+    @pytest.mark.parametrize(
+        ('app_type', 'with_repo', 'expected_repo_url'),
+        [
+            pytest.param('streamlit', False, None, id='streamlit'),
+            pytest.param('python-js', False, None, id='python_js_without_repo'),
+            pytest.param('python-js', True, 'https://managed.repo/org/app.git', id='python_js_with_repo'),
+        ],
+    )
+    async def test_fetch_data_app_succeeds_with_correct_component(
+        self,
+        mocker,
+        keboola_client: KeboolaClient,
+        app_type: str,
+        with_repo: bool,
+        expected_repo_url: str | None,
     ) -> None:
-        """Paths that neither return nor check the repo skip the `git-repo` request."""
-        keboola_client.storage_client.configuration_detail = mocker.AsyncMock(
-            return_value={
-                'id': 'cfg-123',
-                'name': 'test-app',
-                'description': 'test',
-                'configuration': {'parameters': {'id': 'app-123'}},
-                'version': 1,
-            }
-        )
-        keboola_client.data_science_client.get_data_app = mocker.AsyncMock(
-            return_value=_make_python_js_data_app_response()
-        )
-        keboola_client.data_science_client.get_app_git_repo = mocker.AsyncMock(
-            return_value=AppGitRepoResponse(https_url='https://managed.repo/org/app.git', is_managed_git_repo=True)
-        )
-
-        result = await _fetch_data_app(keboola_client, configuration_id='cfg-123', with_repo=with_repo)
-
-        assert keboola_client.data_science_client.get_app_git_repo.await_count == int(with_repo)
-        assert result.repo_url == repo_url
-
-    @pytest.mark.asyncio
-    async def test_fetch_data_app_succeeds_with_correct_component(self, mocker, keboola_client: KeboolaClient) -> None:
-        """When component_id matches DATA_APP_COMPONENT_ID, fetch succeeds."""
+        """When component_id matches DATA_APP_COMPONENT_ID, fetch succeeds; the git repo is read only when asked."""
         data_app_id = 'app-123'
         config_id = 'cfg-123'
 
@@ -938,13 +926,17 @@ class TestFetchDataAppValidation:
             component_id=DATA_APP_COMPONENT_ID, data_app_id=data_app_id, config_id=config_id
         ).model_copy(
             update={
+                'type': app_type,
                 'production': AppProductionResponse(
                     desired_deployment_id='dep-2', actual_deployment_id='dep-1', desired_config_version='3'
-                )
+                ),
             }
         )
 
         keboola_client.data_science_client.get_data_app = mocker.AsyncMock(return_value=data_app_response)
+        keboola_client.data_science_client.get_app_git_repo = mocker.AsyncMock(
+            return_value=AppGitRepoResponse(https_url='https://managed.repo/org/app.git', is_managed_git_repo=True)
+        )
         keboola_client.storage_client.configuration_detail = mocker.AsyncMock(
             return_value={
                 'id': config_id,
@@ -955,8 +947,10 @@ class TestFetchDataAppValidation:
             }
         )
 
-        result = await _fetch_data_app(keboola_client, configuration_id=config_id)
+        result = await _fetch_data_app(keboola_client, configuration_id=config_id, with_repo=with_repo)
 
+        assert keboola_client.data_science_client.get_app_git_repo.await_count == int(expected_repo_url is not None)
+        assert result.repo_url == expected_repo_url
         assert result.data_app_id == data_app_id
         assert result.component_id == DATA_APP_COMPONENT_ID
         assert result.config_version == '2'
