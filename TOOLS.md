@@ -2404,13 +2404,15 @@ branch-delete — is yours. This tool only triggers deploys against existing git
 ## Streamlit apps
 Streamlit apps have no managed git repo; deploy them without `mode`.
 
+## Waiting
+- A deploy returns when the new deployment serves production (`state="running"`), when it failed to
+  start (`change_summary` says so; `deployment_info.last_run` and `logs` say why), or after about 4
+  minutes with `state="starting"`. Act on the result; do not sleep or poll before reading it.
+- `wait=False` returns at once with `state="starting"`.
+
 ## General considerations
-- Redeploying a data app takes some time; the app reports `state="starting"` until the new deployment serves
-  production.
 - `state` is `notDeployed` (never deployed), `starting`, `running`, `suspended` (asleep, wakes on the next
   visit) or `disabled` (failed to start; only a deploy brings it back).
-- After deployment, the deployment info includes the app URL and the latest logs to help diagnose in-app
-  errors.
 - To start or restart an app on a schedule or after other jobs, add it to a flow as a `keboola.data-app-control`
   task (see the flow tools) instead of calling this tool.
 
@@ -2447,6 +2449,11 @@ Streamlit apps have no managed git repo; deploy them without `mode`.
       ],
       "default": null,
       "description": "Leave None (default). \"dev\" is rejected: an app never runs in dev mode by a deploy.\nA draft from `create_python_js_data_app_draft` runs in dev mode by itself and needs no deploy."
+    },
+    "wait": {
+      "default": true,
+      "description": "With action=\"deploy\": wait (up to about 4 minutes) until the new deployment runs or fails. False returns at once with state \"starting\".",
+      "type": "boolean"
     },
     "project_id": {
       "anyOf": [

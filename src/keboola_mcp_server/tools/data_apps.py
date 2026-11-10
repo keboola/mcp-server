@@ -4,6 +4,7 @@ import logging
 import re
 import uuid
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from http import HTTPStatus
 from importlib import resources
 from typing import Annotated, Any, Literal, cast
@@ -758,6 +759,7 @@ class DeploymentDataAppOutput(BaseModel):
     deployment_info: DeploymentInfo | None = Field(
         description='Deployment info with a link to the app and logs to diagnose in-app errors.', default=None
     )
+    change_summary: str | None = Field(default=None, description='Notes about the result to act on.')
     links: list[Link] = Field(description='Navigation links for the web interface.')
 
 
@@ -2227,6 +2229,15 @@ async def deploy_data_app(
             ),
         ),
     ] = None,
+    wait: Annotated[
+        bool,
+        Field(
+            description=(
+                'With action="deploy": wait (up to about 4 minutes) until the new deployment runs or fails. '
+                'False returns at once with state "starting".'
+            ),
+        ),
+    ] = True,
     project_id: ProjectIdArg = None,
 ) -> DeploymentDataAppOutput:
     """Deploys/redeploys a data app or stops a running data app in the Keboola environment asynchronously, given the
@@ -2258,13 +2269,15 @@ async def deploy_data_app(
     ## Streamlit apps
     Streamlit apps have no managed git repo; deploy them without `mode`.
 
+    ## Waiting
+    - A deploy returns when the new deployment serves production (`state="running"`), when it failed to
+      start (`change_summary` says so; `deployment_info.last_run` and `logs` say why), or after about 4
+      minutes with `state="starting"`. Act on the result; do not sleep or poll before reading it.
+    - `wait=False` returns at once with `state="starting"`.
+
     ## General considerations
-    - Redeploying a data app takes some time; the app reports `state="starting"` until the new deployment serves
-      production.
     - `state` is `notDeployed` (never deployed), `starting`, `running`, `suspended` (asleep, wakes on the next
       visit) or `disabled` (failed to start; only a deploy brings it back).
-    - After deployment, the deployment info includes the app URL and the latest logs to help diagnose in-app
-      errors.
     - To start or restart an app on a schedule or after other jobs, add it to a flow as a `keboola.data-app-control`
       task (see the flow tools) instead of calling this tool.
     """
@@ -2287,29 +2300,26 @@ async def deploy_data_app(
         # Always pin the latest config version (python-js included): without `configVersion` the data-app
         # service keeps the previously published version, so config-only changes (secrets, Storage access,
         # git branch, ...) would never go live.
-        config_version = await client.storage_client.configuration_version_latest(
-            DATA_APP_COMPONENT_ID, data_app.configuration_id
-        )
-        await _trigger_deploy(client, data_app, str(config_version), mode)
-        data_app = await _fetch_data_app(client, configuration_id=configuration_id)
-        logs, last_run, images = await asyncio.gather(
-            _fetch_logs(client, data_app.data_app_id),
-            _fetch_latest_run(client, data_app),
-            _fetch_app_images(client, data_app),
-        )
-        if data_app.state == 'disabled':
-            # The operator picks the new deployment up a moment later; until then the record and its
-            # latest run still describe the start that failed before this deploy.
-            data_app.state = 'starting'
-            last_run = None
-        data_app = data_app.with_deployment_info(logs, last_run=last_run).with_image(images)
+        # The detail read gives the current (latest) version; pin it (python-js included): without
+        # `configVersion` the data-app service keeps the previously published version, so config-only changes
+        # (secrets, Storage access, git branch, ...) would never go live.
+        deployment_id = await _trigger_deploy(client, data_app, data_app.config_version, mode)
+        # --- deploy committed past this point: waiting and reporting must not turn it into an error ---
+        waited = await _wait_for_deployment(client, data_app, deployment_id, _DEPLOY_WAIT_SECONDS) if wait else None
+        data_app, logs, last_run, change_summary = await _deploy_outcome(client, data_app, waited)
+        data_app = data_app.with_deployment_info(logs, last_run=last_run)
         links = links_manager.get_data_app_links(
             configuration_id=data_app.configuration_id,
             configuration_name=data_app.name,
             deployment_link=data_app.deployment_url,
             uses_basic_authentication=_uses_basic_authentication(data_app.configuration.get('authorization') or {}),
         )
-        return DeploymentDataAppOutput(state=data_app.state, links=links, deployment_info=data_app.deployment_info)
+        return DeploymentDataAppOutput(
+            state=data_app.state,
+            links=links,
+            deployment_info=data_app.deployment_info,
+            change_summary=change_summary,
+        )
     elif action == 'stop':
         data_app = await _fetch_data_app(client, configuration_id=configuration_id)
         if data_app.state == 'starting':
@@ -2338,13 +2348,17 @@ async def deploy_data_app(
 
 async def _trigger_deploy(
     client: KeboolaClient, data_app: DataApp, config_version: str, mode: Literal['production'] | None
-) -> None:
-    """Ask the data-science API to deploy `config_version`, mapping known refusals to actionable errors."""
+) -> str | None:
+    """Ask the data-science API to deploy `config_version`, mapping known refusals to actionable errors.
+
+    :return: The new deployment's ID; None for a `mode` deploy, whose `/v1` endpoint returns none.
+    """
     try:
         if mode is not None:
             await client.data_science_client.deploy_data_app_in_mode(data_app.data_app_id, config_version, 'prod')
-        else:
-            await client.data_science_client.deploy_data_app(data_app.data_app_id, config_version)
+            return None
+        deployment = await client.data_science_client.deploy_data_app(data_app.data_app_id, config_version)
+        return deployment.id
     except httpx.HTTPStatusError as e:
         api_error = _api_error_text(e.response)
         if mode is None and e.response.status_code == HTTPStatus.CONFLICT and _LEGACY_WORKLOAD in api_error:
@@ -2358,6 +2372,112 @@ async def _trigger_deploy(
                 f'{api_error} {hint}'
             ) from e
         raise
+
+
+# A prod deploy is a cold image build (2-4 min). The budget stays under every hard limit on the hosted path
+# (Kai's tool-call limit is 12 min, the platform blocks a promotion after 10 min); the 60 s idle timeout of
+# the ingress never fires because a streamable-HTTP response pings every 15 s while the tool runs.
+_DEPLOY_WAIT_SECONDS = 240
+# (elapsed seconds, poll interval): poll every 2 s for the first 10 s, every 5 s up to a minute, then every 10 s.
+_DEPLOY_POLL_STEPS = ((10, 2), (60, 5))
+_DEPLOY_POLL_MAX_SECONDS = 10
+
+
+def _deploy_poll_interval(elapsed: float) -> float:
+    return next((interval for until, interval in _DEPLOY_POLL_STEPS if elapsed < until), _DEPLOY_POLL_MAX_SECONDS)
+
+
+@dataclass
+class _DeployWait:
+    """What the deploy wait saw last; `record` is None when it never read the app."""
+
+    record: DataAppResponse | None = None
+    failed_run: AppRunResponse | None = None
+    running: bool = False
+    timed_out: bool = False
+
+
+async def _wait_for_deployment(
+    client: KeboolaClient, data_app: DataApp, deployment_id: str | None, budget: float
+) -> _DeployWait:
+    """Poll the app until the new deployment serves production, its run fails, or `budget` runs out.
+
+    - Done when `production.actualDeploymentId` is the new deployment and the app is `running`: during a
+      rollout of a running app, `state` stays `running` while the previous deployment still serves.
+    - Failed when the newest run of the new deployment failed.
+    - A `mode` deploy (`/v1`) returns no ID: the new one is the desired deployment once it differs from the
+      one before the deploy. Without it (an app still on a /v1 workload) there is nothing to wait on.
+    - Never raises: the deploy is committed, so a failed read only ends the wait.
+    """
+    app_id = data_app.data_app_id
+    seen = _DeployWait()
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    try:
+        async with asyncio.timeout(budget):
+            if deployment_id is None:
+                seen.record = await client.data_science_client.get_data_app(app_id)
+                desired = seen.record.production.desired_deployment_id
+                if not desired or desired == data_app.desired_deployment_id:
+                    return seen
+                deployment_id = desired
+            while True:
+                await asyncio.sleep(_deploy_poll_interval(loop.time() - started))
+                seen.record, runs = await asyncio.gather(
+                    client.data_science_client.get_data_app(app_id),
+                    client.data_science_client.list_app_runs(app_id, limit=1, deployment_id=deployment_id),
+                )
+                if seen.record.production.actual_deployment_id == deployment_id and seen.record.state == 'running':
+                    seen.running = True
+                    return seen
+                if runs and runs[0].state == 'failed':
+                    seen.failed_run = runs[0]
+                    return seen
+    except TimeoutError:
+        LOG.info(f'Deployment {deployment_id} of data app {app_id} is not running after {budget} s')
+        seen.timed_out = True
+    except Exception:
+        LOG.exception(f'Failed to read data app {app_id} while waiting for deployment {deployment_id}')
+    return seen
+
+
+async def _deploy_outcome(
+    client: KeboolaClient, data_app: DataApp, waited: _DeployWait | None
+) -> tuple[DataApp, list[str], AppRunInfo | None, str | None]:
+    """The app as the deploy leaves it, with logs and the failed run only when the deployment failed."""
+    configuration_id = data_app.configuration_id
+    record = waited.record if waited else None
+    # The deploy published the latest version; the record says so once it was read.
+    data_app.published_config_version = data_app.config_version
+    if record is not None:
+        data_app.deployment_url = record.url or data_app.deployment_url
+        data_app.published_config_version = record.production.desired_config_version or data_app.config_version
+    check = f'Check it with get_data_apps(configuration_ids=["{configuration_id}"]); do not deploy again.'
+    if waited is not None and waited.running:
+        data_app.state = 'running'
+        return data_app, [], None, None
+    if waited is not None and waited.failed_run is not None:
+        # A failed rollout of a running app reads `starting` (the previous deployment still serves), never
+        # `running`: the new code is not live.
+        data_app.state = record.reported_state if record is not None else 'disabled'
+        serving = (
+            ' Production still serves the previous deployment.'
+            if record is not None and record.production.actual_deployment_id
+            else ''
+        )
+        return (
+            data_app,
+            await _fetch_logs(client, data_app.data_app_id),
+            AppRunInfo.from_api_response(waited.failed_run),
+            (
+                'The new deployment failed to start; `deployment_info.last_run` and `logs` say why.'
+                f'{serving} Fix the cause, then deploy again.'
+            ),
+        )
+    data_app.state = 'starting'
+    if waited is not None and waited.timed_out:
+        return data_app, [], None, f'The app is still starting after {_DEPLOY_WAIT_SECONDS} s. {check}'
+    return data_app, [], None, f'The deploy started. {check}'
 
 
 def _organization_git_dev_mode_message(configuration_id: str) -> str:
