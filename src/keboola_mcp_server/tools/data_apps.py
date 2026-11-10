@@ -3,11 +3,11 @@ import copy
 import logging
 import re
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Mapping, Sequence
 from dataclasses import dataclass
 from http import HTTPStatus
 from importlib import resources
-from typing import Annotated, Any, Literal, cast
+from typing import Annotated, Any, Literal, TypeVar, cast
 from urllib.parse import quote, urlsplit, urlunsplit
 
 import httpx
@@ -19,7 +19,6 @@ from keboola_mcp_server.clients.base import NEVER_SENT_ERRORS, InvalidArgumentEr
 from keboola_mcp_server.clients.client import DATA_APP_COMPONENT_ID, KeboolaClient
 from keboola_mcp_server.clients.data_science import (
     ORGANIZATION_GIT_AUTH,
-    AppGitRepoResponse,
     AppRunResponse,
     CodeDataAppConfig,
     DataAppConfig,
@@ -1121,6 +1120,9 @@ async def modify_streamlit_data_app_internal(
     return data_app, updated_config, folder_preview
 
 
+_PartialOutput = TypeVar('_PartialOutput', ModifiedDataAppOutput, ModifiedPythonJsDataAppOutput)
+
+
 def _partial_update_output(
     *,
     data_app_pre: DataApp,
@@ -1128,8 +1130,8 @@ def _partial_update_output(
     configuration_id: str,
     name: str,
     new_version: str,
-    output_cls: type[ModifiedDataAppOutput] | type[ModifiedPythonJsDataAppOutput] = ModifiedDataAppOutput,
-) -> Any:
+    output_cls: type[_PartialOutput] = ModifiedDataAppOutput,  # type: ignore[assignment]
+) -> _PartialOutput:
     """Build a truthful partial-success response after a committed update whose response building failed.
 
     The configuration write already landed, so this MUST NOT raise -- it is built entirely from the pre-update
@@ -1181,6 +1183,19 @@ def _partial_update_output(
 async def _no_op() -> None:
     """A placeholder for a call `asyncio.gather` skips."""
     return
+
+
+_T = TypeVar('_T')
+_D = TypeVar('_D')
+
+
+async def _best_effort(awaitable: Awaitable[_T], default: _D, what: str) -> _T | _D:
+    """`awaitable`'s result, or `default` when it raises: for calls after a committed write, which must not fail."""
+    try:
+        return await awaitable
+    except Exception:
+        LOG.exception(f'{what} failed')
+        return default
 
 
 def _partial_create_output(
@@ -1455,15 +1470,22 @@ async def modify_python_js_data_app(
         )
         # --- write committed past this point: nothing below may turn it into an error ---
         new_version = str(update_resp.get('version') or '') if isinstance(update_resp, dict) else ''
-        data_app_pre = data_app
         # Without `folder`, an update keeps the folder: the hint lists every data app, so only a create gives it.
-        fetched, metadata_error, folder_hint = await asyncio.gather(
-            _fetch_data_app(client, configuration_id=configuration_id, with_repo=True),
-            set_cfg_update_metadata(
-                client=client,
-                component_id=DATA_APP_COMPONENT_ID,
-                configuration_id=configuration_id,
-                configuration_version=int(new_version),
+        fetched, _, folder_hint = await asyncio.gather(
+            _best_effort(
+                _fetch_data_app(client, configuration_id=configuration_id, with_repo=True),
+                None,
+                f'Re-reading the updated data app {configuration_id}',
+            ),
+            _best_effort(
+                set_cfg_update_metadata(
+                    client=client,
+                    component_id=DATA_APP_COMPONENT_ID,
+                    configuration_id=configuration_id,
+                    configuration_version=int(new_version),
+                ),
+                None,
+                f'Setting the update metadata of data app {configuration_id}',
             )
             if new_version.isdigit()
             else _no_op(),
@@ -1472,21 +1494,13 @@ async def modify_python_js_data_app(
             )
             if folder is not None
             else _no_op(),
-            return_exceptions=True,
         )
-        if isinstance(metadata_error, BaseException):
-            LOG.error(
-                f'Failed to set the update metadata of data app configuration {configuration_id}: {metadata_error}'
-            )
-        if isinstance(folder_hint, BaseException):
-            folder_hint = None
-        if isinstance(fetched, BaseException):
-            LOG.error(f'Data app configuration {configuration_id} was updated but the re-read failed: {fetched}')
+        if fetched is None:
             return _partial_update_output(
-                data_app_pre=data_app_pre,
+                data_app_pre=data_app,
                 links_manager=links_manager,
                 configuration_id=configuration_id,
-                name=name or data_app_pre.name,
+                name=name or data_app.name,
                 new_version=new_version,
                 output_cls=ModifiedPythonJsDataAppOutput,
             )
@@ -1627,10 +1641,20 @@ async def modify_python_js_data_app(
         )
         # --- app created past this point: nothing below may turn it into an error, or a retry duplicates it ---
         new_config_id = data_app_resp.config_id
-        managed_repo, metadata_error, folder_hint, config_version = await asyncio.gather(
-            client.data_science_client.get_app_git_repo(data_app_resp.id) if git_block is None else _no_op(),
-            set_cfg_creation_metadata(
-                client=client, component_id=DATA_APP_COMPONENT_ID, configuration_id=new_config_id
+        managed_repo, _, folder_hint, config_version = await asyncio.gather(
+            _best_effort(
+                client.data_science_client.get_app_git_repo(data_app_resp.id),
+                None,
+                f'Reading the git repo of the created data app {data_app_resp.id}',
+            )
+            if git_block is None
+            else _no_op(),
+            _best_effort(
+                set_cfg_creation_metadata(
+                    client=client, component_id=DATA_APP_COMPONENT_ID, configuration_id=new_config_id
+                ),
+                None,
+                f'Setting the creation metadata of data app {new_config_id}',
             ),
             apply_configuration_folder(
                 client,
@@ -1642,23 +1666,14 @@ async def modify_python_js_data_app(
                 is_new=True,
             ),
             _config_version_or_blank(client, new_config_id),
-            return_exceptions=True,
         )
-        if isinstance(metadata_error, BaseException):
-            LOG.error(
-                f'Failed to set the creation metadata of data app configuration {new_config_id}: {metadata_error}'
-            )
-        if isinstance(folder_hint, BaseException):
-            folder_hint = None
-        if isinstance(config_version, BaseException):
-            config_version = ''
         repo_hint = None
         if git_block is not None:
             repo_url = git_block.repository
-        elif isinstance(managed_repo, AppGitRepoResponse) and managed_repo.https_url:
+        elif managed_repo is not None and managed_repo.https_url:
             repo_url = managed_repo.https_url
         else:
-            LOG.error(f'Data app {data_app_resp.id} was created but its managed repo URL is unknown: {managed_repo}')
+            LOG.error(f'Data app {data_app_resp.id} was created but its managed repo reports no HTTPS URL')
             repo_url = None
             repo_hint = (
                 'The app WAS created, but its git repo URL could not be read. Do NOT create it again: read '
@@ -2132,9 +2147,10 @@ async def deploy_data_app(
     - To start an app on a schedule or after other jobs, add a `keboola.data-app-control` task to a flow.
     """
     client = KeboolaClient.from_state(ctx.session.state)
-    links_manager = await ProjectLinksManager.from_client(client)
     if action == 'deploy':
-        data_app = await _fetch_data_app(client, configuration_id=configuration_id)
+        links_manager, data_app = await asyncio.gather(
+            ProjectLinksManager.from_client(client), _fetch_data_app(client, configuration_id=configuration_id)
+        )
         if _is_draft_config(data_app.configuration):
             raise ValueError(_legacy_draft_convert_message(data_app))
         if mode == 'dev':
@@ -2147,17 +2163,13 @@ async def deploy_data_app(
             # mode: an external-repo app once deployed in dev mode would stay there on a deploy without
             # `mode`, so switch it to production explicitly.
             mode = 'production'
-        # Always pin the latest config version (python-js included): without `configVersion` the data-app
-        # service keeps the previously published version, so config-only changes (secrets, Storage access,
-        # git branch, ...) would never go live.
         # The detail read gives the current (latest) version; pin it (python-js included): without
         # `configVersion` the data-app service keeps the previously published version, so config-only changes
         # (secrets, Storage access, git branch, ...) would never go live.
         deployment_id = await _trigger_deploy(client, data_app, data_app.config_version, mode)
         # --- deploy committed past this point: waiting and reporting must not turn it into an error ---
         waited = await _wait_for_deployment(client, data_app, deployment_id, _DEPLOY_WAIT_SECONDS) if wait else None
-        data_app, logs, last_run, change_summary = await _deploy_outcome(client, data_app, waited)
-        data_app = data_app.with_deployment_info(logs, last_run=last_run)
+        change_summary = await _apply_deploy_outcome(client, data_app, waited)
         links = links_manager.get_data_app_links(
             configuration_id=data_app.configuration_id,
             configuration_name=data_app.name,
@@ -2171,7 +2183,9 @@ async def deploy_data_app(
             change_summary=change_summary,
         )
     elif action == 'stop':
-        data_app = await _fetch_data_app(client, configuration_id=configuration_id)
+        links_manager, data_app = await asyncio.gather(
+            ProjectLinksManager.from_client(client), _fetch_data_app(client, configuration_id=configuration_id)
+        )
         if data_app.state == 'starting':
             raise ValueError('Data app is currently "starting", could not be stopped at the moment.')
         if data_app.state != 'suspended':
@@ -2239,12 +2253,15 @@ def _deploy_poll_interval(elapsed: float) -> float:
 
 @dataclass
 class _DeployWait:
-    """What the deploy wait saw last; `record` is None when it never read the app."""
+    """How the deploy wait ended, and the app record it read last (None when it never read the app).
+
+    - `outcome` is None when there was nothing to wait on or a read failed.
+    - `failed_run` is set only with `outcome='failed'`.
+    """
 
     record: DataAppResponse | None = None
+    outcome: Literal['running', 'failed', 'timeout'] | None = None
     failed_run: AppRunResponse | None = None
-    running: bool = False
-    timed_out: bool = False
 
 
 async def _wait_for_deployment(
@@ -2278,56 +2295,56 @@ async def _wait_for_deployment(
                     client.data_science_client.list_app_runs(app_id, limit=1, deployment_id=deployment_id),
                 )
                 if seen.record.production.actual_deployment_id == deployment_id and seen.record.state == 'running':
-                    seen.running = True
+                    seen.outcome = 'running'
                     return seen
                 if runs and runs[0].state == 'failed':
-                    seen.failed_run = runs[0]
+                    seen.outcome, seen.failed_run = 'failed', runs[0]
                     return seen
     except TimeoutError:
         LOG.info(f'Deployment {deployment_id} of data app {app_id} is not running after {budget} s')
-        seen.timed_out = True
+        seen.outcome = 'timeout'
     except Exception:
         LOG.exception(f'Failed to read data app {app_id} while waiting for deployment {deployment_id}')
     return seen
 
 
-async def _deploy_outcome(
-    client: KeboolaClient, data_app: DataApp, waited: _DeployWait | None
-) -> tuple[DataApp, list[str], AppRunInfo | None, str | None]:
-    """The app as the deploy leaves it, with logs and the failed run only when the deployment failed."""
-    configuration_id = data_app.configuration_id
-    record = waited.record if waited else None
+async def _apply_deploy_outcome(client: KeboolaClient, data_app: DataApp, waited: _DeployWait | None) -> str | None:
+    """Set the app's state and deployment info as the deploy leaves it; return the `change_summary`.
+
+    - Logs and the failed run are read only when the new deployment failed.
+    """
+    waited = waited or _DeployWait()
+    record = waited.record
     # The deploy published the latest version; the record says so once it was read.
     data_app.published_config_version = data_app.config_version
     if record is not None:
         data_app.deployment_url = record.url or data_app.deployment_url
         data_app.published_config_version = record.production.desired_config_version or data_app.config_version
-    check = f'Check it with get_data_apps(configuration_ids=["{configuration_id}"]); do not deploy again.'
-    if waited is not None and waited.running:
+    if waited.outcome == 'running':
         data_app.state = 'running'
-        return data_app, [], None, None
-    if waited is not None and waited.failed_run is not None:
+        data_app.with_deployment_info([])
+        return None
+    if waited.outcome == 'failed' and waited.failed_run is not None:
         # A failed rollout of a running app reads `starting` (the previous deployment still serves), never
         # `running`: the new code is not live.
         data_app.state = record.reported_state if record is not None else 'disabled'
+        logs = await _fetch_logs(client, data_app.data_app_id)
+        data_app.with_deployment_info(logs, last_run=AppRunInfo.from_api_response(waited.failed_run))
         serving = (
             ' Production still serves the previous deployment.'
             if record is not None and record.production.actual_deployment_id
             else ''
         )
         return (
-            data_app,
-            await _fetch_logs(client, data_app.data_app_id),
-            AppRunInfo.from_api_response(waited.failed_run),
-            (
-                'The new deployment failed to start; `deployment_info.last_run` and `logs` say why.'
-                f'{serving} Fix the cause, then deploy again.'
-            ),
+            'The new deployment failed to start; `deployment_info.last_run` and `logs` say why.'
+            f'{serving} Fix the cause, then deploy again.'
         )
     data_app.state = 'starting'
-    if waited is not None and waited.timed_out:
-        return data_app, [], None, f'The app is still starting after {_DEPLOY_WAIT_SECONDS} s. {check}'
-    return data_app, [], None, f'The deploy started. {check}'
+    data_app.with_deployment_info([])
+    check = f'Check it with get_data_apps(configuration_ids=["{data_app.configuration_id}"]); do not deploy again.'
+    if waited.outcome == 'timeout':
+        return f'The app is still starting after {_DEPLOY_WAIT_SECONDS} s. {check}'
+    return f'The deploy started. {check}'
 
 
 def _organization_git_dev_mode_message(configuration_id: str) -> str:
@@ -2927,11 +2944,12 @@ async def _fetch_data_app(client: KeboolaClient, *, configuration_id: str, with_
     read_repo = with_repo and not _is_draft_config(api_config.configuration) and 'streamlit' not in data_app_block
     data_app_science, repo_resp = await asyncio.gather(
         client.data_science_client.get_data_app(data_app_id),
-        client.data_science_client.get_app_git_repo(data_app_id) if read_repo else _no_op(),
-        return_exceptions=True,
+        _best_effort(
+            client.data_science_client.get_app_git_repo(data_app_id), None, f'Reading the git repo of {data_app_id}'
+        )
+        if read_repo
+        else _no_op(),
     )
-    if isinstance(data_app_science, BaseException):
-        raise data_app_science
     if data_app_science.component_id != DATA_APP_COMPONENT_ID:
         raise ValueError(
             f'Data app tools only support {DATA_APP_COMPONENT_ID} component, but the data app '
@@ -2939,12 +2957,9 @@ async def _fetch_data_app(client: KeboolaClient, *, configuration_id: str, with_
         )
     data_app = DataApp.from_api_responses(data_app_science, api_config)
     data_app.deployment_url = data_app.deployment_url or _app_url(client, data_app_science.id, api_config.configuration)
-    if read_repo and data_app_science.type == 'python-js':
-        if isinstance(repo_resp, AppGitRepoResponse):
-            data_app.repo_url = repo_resp.https_url
-            data_app.is_managed_git_repo = repo_resp.is_managed_git_repo
-        else:
-            LOG.warning(f'Could not fetch git repo info for python-js app {data_app_science.id}: {repo_resp}')
+    if repo_resp is not None and data_app_science.type == 'python-js':
+        data_app.repo_url = repo_resp.https_url
+        data_app.is_managed_git_repo = repo_resp.is_managed_git_repo
     return data_app
 
 
@@ -3176,7 +3191,7 @@ async def _fetch_prod_drafts(client: KeboolaClient, *, prod_configuration_id: st
         return [], 0
 
     try:
-        apps = {app.id: app for app in await _list_all_data_apps(client)}
+        apps = {app.id: app for app in await client.data_science_client.list_all_data_apps()}
     except Exception:
         LOG.exception(f'Failed to list the apps of the legacy drafts of {prod_configuration_id}')
         return [], len(draft_cfgs)
@@ -3196,19 +3211,6 @@ async def _fetch_prod_drafts(client: KeboolaClient, *, prod_configuration_id: st
         summary.git_auth_type = _config_git_auth_type(cfg_body)
         drafts.append(summary)
     return drafts, len(draft_cfgs) - len(drafts)
-
-
-_APP_LIST_PAGE = 100
-
-
-async def _list_all_data_apps(client: KeboolaClient) -> list[DataAppResponse]:
-    """Every app of the project, page by page (`GET /v2/apps` takes only `offset` and `limit`)."""
-    apps: list[DataAppResponse] = []
-    while True:
-        page = await client.data_science_client.list_data_apps(limit=_APP_LIST_PAGE, offset=len(apps))
-        apps.extend(page)
-        if len(page) < _APP_LIST_PAGE:
-            return apps
 
 
 async def _list_drafts_or_none(client: KeboolaClient, data_app_id: str) -> list[DraftInfo] | None:

@@ -818,6 +818,17 @@ class DataScienceClient(KeboolaServiceClient):
         response = await self.get(endpoint='v2/apps', params={'limit': limit, 'offset': offset})
         return [DataAppResponse.model_validate(app) for app in response]
 
+    async def list_all_data_apps(self, page_size: int = 100) -> list[DataAppResponse]:
+        """
+        List every data app of the project, page by page (`GET /v2/apps` takes only `offset` and `limit`).
+        """
+        apps: list[DataAppResponse] = []
+        while True:
+            page = await self.list_data_apps(limit=page_size, offset=len(apps))
+            apps.extend(page)
+            if len(page) < page_size:
+                return apps
+
     async def tail_app_logs(
         self,
         app_id: str,

@@ -3236,6 +3236,25 @@ def test_validate_branch_update_rejects_managed_and_unknown(is_managed_git_repo:
 # ===== Tests for deploy_data_app: publishing and waiting for the new deployment =====
 
 
+def _make_failed_app_run(**overrides) -> AppRunResponse:
+    payload = {
+        'id': 'run-1',
+        'appId': 'app-prod-1',
+        'state': 'failed',
+        'createdAt': '2026-06-12T10:36:20+00:00',
+        'startedAt': None,
+        'stoppedAt': '2026-06-12T10:36:21+00:00',
+        'startupLogs': None,
+        'failureReason': {
+            'reason': 'ConfigDecryptionFailed',
+            'message': 'failed to decrypt key "#API_KEY"',
+        },
+        'mode': 'prod',
+    }
+    payload.update(overrides)
+    return AppRunResponse.model_validate(payload)
+
+
 def _deploy_record(
     state: str, actual: str | None, *, desired: str | None = 'dep-new', config_version: str = '5'
 ) -> DataAppResponse:
@@ -3258,14 +3277,13 @@ def _deploy_record(
 _PREVIOUS = _deploy_record('running', 'dep-old', desired='dep-old', config_version='4')
 _ROLLING_OUT = _deploy_record('running', 'dep-old')
 _LIVE = _deploy_record('running', 'dep-new')
-_FAILED_RUN = AppRunResponse(
-    id='run-1', state='failed', failure_reason={'reason': 'StartupProbeFailed', 'message': 'probe failed'}
-)
+_FAILED_RUN = _make_failed_app_run()
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ('app_type', 'polls', 'runs', 'wait', 'expected_state', 'expected_summary', 'expected_polls'),
+    # `polls`/`runs`: what successive reads return; the last reading repeats.
     [
         # A running app keeps `state=running` through the rollout; only `actualDeploymentId` tells it is done.
         pytest.param(
@@ -3321,11 +3339,10 @@ async def test_deploy_data_app_waits_for_the_new_deployment(
     )
     keboola_client.storage_client.configuration_version_latest = mocker.AsyncMock()
     ds = keboola_client.data_science_client
-    previous = _PREVIOUS.model_copy(update={'type': app_type})
-    # The last reading repeats: a timeout keeps reading the same stale record.
-    last = polls[-1] if polls else previous
-    ds.get_data_app = mocker.AsyncMock(side_effect=[previous, *polls, *[last] * 1000])
-    ds.list_app_runs = mocker.AsyncMock(side_effect=[*runs, *[[]] * 1000])
+    records = [_PREVIOUS.model_copy(update={'type': app_type}), *polls]
+    run_pages = [*runs, []]
+    ds.get_data_app = mocker.AsyncMock(side_effect=lambda *_: records.pop(0) if len(records) > 1 else records[0])
+    ds.list_app_runs = mocker.AsyncMock(side_effect=lambda *_, **__: run_pages.pop(0) if len(run_pages) > 1 else [])
     ds.deploy_data_app = mocker.AsyncMock(return_value=DeploymentResponse(id='dep-new', config_version='5'))
     ds.tail_app_logs = mocker.AsyncMock(return_value='boom')
     ds.list_runtimes = mocker.AsyncMock()
@@ -3347,7 +3364,7 @@ async def test_deploy_data_app_waits_for_the_new_deployment(
     assert result.deployment_info is not None
     assert result.deployment_info.version == '5'
     assert result.deployment_info.has_unpublished_changes is False
-    failed = expected_summary is not None and 'failed' in expected_summary
+    failed = expected_summary is not None and expected_summary.startswith('failed')
     assert (result.deployment_info.last_run is not None) is failed
     assert result.deployment_info.logs == (['boom'] if failed else [])
     assert ds.tail_app_logs.await_count == (1 if failed else 0)
@@ -3920,7 +3937,7 @@ async def test_get_data_apps_detail_for_prod_lists_drafts(
     fetch = mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=prod))
     mocker.patch('keboola_mcp_server.tools.data_apps._fetch_logs', mocker.AsyncMock(return_value=[]))
     # One listing of the project's apps covers every legacy draft: no detail read per draft.
-    keboola_client.data_science_client.list_data_apps = mocker.AsyncMock(
+    keboola_client.data_science_client.list_all_data_apps = mocker.AsyncMock(
         return_value=[_legacy_draft_app(cfg_id) for cfg_id in [*draft_cfg_ids, 'cfg-other-draft']]
     )
     v2_drafts = [
@@ -3945,7 +3962,7 @@ async def test_get_data_apps_detail_for_prod_lists_drafts(
     assert {d.deployment_url for d in detail.legacy_drafts} == {f'https://{c}.hub.test' for c in draft_cfg_ids}
     assert detail.legacy_drafts_unavailable == 0
     fetch.assert_awaited_once()
-    assert keboola_client.data_science_client.list_data_apps.await_count == (1 if n_drafts else 0)
+    assert keboola_client.data_science_client.list_all_data_apps.await_count == (1 if n_drafts else 0)
 
 
 @pytest.mark.asyncio
@@ -3998,9 +4015,7 @@ async def test_get_data_apps_detail_for_prod_counts_unavailable_drafts(
         _build_storage_config_entry(cfg_id=prod_cfg_id, parent_configuration_id=None),
     ]
     keboola_client.storage_client.configuration_list = mocker.AsyncMock(return_value=configs)
-    keboola_client.data_science_client.list_data_apps = mocker.AsyncMock(
-        **({'side_effect': listed} if isinstance(listed, Exception) else {'return_value': listed})
-    )
+    keboola_client.data_science_client.list_all_data_apps = mocker.AsyncMock(side_effect=[listed])
     mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=prod))
     mocker.patch('keboola_mcp_server.tools.data_apps._fetch_logs', mocker.AsyncMock(return_value=[]))
     keboola_client.data_science_client.list_drafts = mocker.AsyncMock(return_value=[])
@@ -4185,25 +4200,6 @@ async def test_delete_python_js_data_app_draft_refuses_streamlit(
 
     keboola_client.data_science_client.delete_data_app.assert_not_called()
     keboola_client.storage_client.configuration_delete.assert_not_called()
-
-
-def _make_failed_app_run(**overrides) -> AppRunResponse:
-    payload = {
-        'id': 'run-1',
-        'appId': 'app-prod-1',
-        'state': 'failed',
-        'createdAt': '2026-06-12T10:36:20+00:00',
-        'startedAt': None,
-        'stoppedAt': '2026-06-12T10:36:21+00:00',
-        'startupLogs': None,
-        'failureReason': {
-            'reason': 'ConfigDecryptionFailed',
-            'message': 'failed to decrypt key "#API_KEY"',
-        },
-        'mode': 'prod',
-    }
-    payload.update(overrides)
-    return AppRunResponse.model_validate(payload)
 
 
 def test_app_run_info_flattens_failure_reason() -> None:
