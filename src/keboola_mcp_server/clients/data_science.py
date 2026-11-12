@@ -434,6 +434,31 @@ class AppGitRepoResponse(BaseModel):
             'callers must treat None as "unknown" and fail closed.'
         ),
     )
+    supports_access_token: bool = Field(
+        validation_alias=AliasChoices('supportsAccessToken', 'supports_access_token'),
+        default=False,
+        description=(
+            'Whether `create_app_git_access_token` can issue a token for the repository: an app cloned through '
+            "the Keboola organization's GitHub connection. Always false for a managed repository."
+        ),
+    )
+
+
+class AppGitAccessTokenResponse(BaseModel):
+    """A short-lived token for the Git repository of an app cloned through the organization's GitHub connection.
+
+    - It is not stored, so it cannot be listed or revoked; it expires at `expires_at` (about an hour).
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    username: str = Field(description='The HTTP username to pair with the token, e.g. "x-access-token".')
+    token: str = Field(description='The HTTP token.')
+    expires_at: str | None = Field(
+        validation_alias=AliasChoices('expiresAt', 'expires_at'),
+        default=None,
+        description='When the token expires.',
+    )
 
 
 class AppRunFailureReason(BaseModel):
@@ -741,11 +766,22 @@ class DataScienceClient(KeboolaServiceClient):
         response = await self.post(endpoint=f'v2/apps/{data_app_id}/git-repo/credentials', data=data)
         return CreatedGitCredentialResponse.model_validate(response)
 
+    async def create_app_git_access_token(self, data_app_id: str) -> AppGitAccessTokenResponse:
+        """
+        Issue a short-lived `readWrite` HTTP token for the repository of an app cloned through the organization's
+        GitHub connection (`supports_access_token` in `get_app_git_repo`).
+
+        :param data_app_id: The ID of the data app
+        :return: The token with its username and expiry.
+        """
+        response = await self.post(
+            endpoint=f'v2/apps/{data_app_id}/git-repo/access-token', data={'permissions': 'readWrite'}
+        )
+        return AppGitAccessTokenResponse.model_validate(response)
+
     async def get_app_git_repo(self, data_app_id: str) -> AppGitRepoResponse:
         """
-        Get the managed git repo info (clone URL) for a data app.
-
-        Only meaningful for python-js apps created with `use_managed_git_repo=True`.
+        Get the git repo info of a python-js data app: its clone URL and how a push credential is issued.
 
         :param data_app_id: The ID of the data app
         :return: The git repo info, including the clone URL.
