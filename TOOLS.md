@@ -56,7 +56,7 @@ current production version with the chosen content.
 
 ### Other Tools
 - [create_python_js_data_app_draft](#create_python_js_data_app_draft): Creates a draft of a python-js data app: its own workload on its own host, serving `git_branch`.
-- [create_python_js_data_app_git_credential](#create_python_js_data_app_git_credential): Mints an HTTPS token for the managed git repo of a python-js **prod** data app.
+- [create_python_js_data_app_git_credential](#create_python_js_data_app_git_credential): Mints an HTTPS token for the git repo of a python-js **prod** data app.
 - [delete_python_js_data_app_draft](#delete_python_js_data_app_draft): Deletes a draft of a python-js data app.
 - [deploy_data_app](#deploy_data_app): Deploys (or redeploys) a data app, or stops it.
 - [get_data_app_preview_link](#get_data_app_preview_link): Creates a short-lived link that opens a python-js draft in a browser without the app's login.
@@ -2239,14 +2239,18 @@ Errors:
 
 **Description**:
 
-Mints an HTTPS token for the managed git repo of a python-js **prod** data app.
+Mints an HTTPS token for the git repo of a python-js **prod** data app.
 
 - Returns `git_clone_url` (token embedded) and the raw `secret`.
 
 - Call it after creating a prod app, or when the token you had is gone. Always pass the prod app's
   `configuration_id`: drafts use branches of the prod app's repo.
-- The secret is shown only once. Each call mints another `readWrite` token; existing ones stay valid.
-- Rejected for Streamlit apps and apps on a customer GitHub repository.
+- Keboola-managed repo: the secret is shown only once. Each call mints another `readWrite` token; existing
+  ones stay valid.
+- Customer GitHub repo (organization auth): the token expires at `expires_at`, in about an hour. On a push
+  that fails with 401 or 403, call this tool again and `git remote set-url origin <new git_clone_url>`.
+  Never ask the user for a GitHub token.
+- Rejected for Streamlit apps and for repos connected with a personal token or SSH key.
 
 
 **Input JSON Schema**:
