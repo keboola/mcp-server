@@ -19,6 +19,7 @@ from keboola_mcp_server.clients.base import NEVER_SENT_ERRORS, InvalidArgumentEr
 from keboola_mcp_server.clients.client import DATA_APP_COMPONENT_ID, KeboolaClient
 from keboola_mcp_server.clients.data_science import (
     ORGANIZATION_GIT_AUTH,
+    AppGitAccessTokenResponse,
     AppRunResponse,
     CodeDataAppConfig,
     DataAppConfig,
@@ -734,11 +735,14 @@ class CreatedGitCredentialOutput(BaseModel):
     response: str = Field(description='The response of the action performed.')
     configuration_id: str = Field(description='The Storage configuration ID of the python-js data app.')
     data_app_id: str = Field(description='The ID of the data app the credential was created on.')
-    credential_id: str = Field(description='The ID of the created credential.')
+    credential_id: str | None = Field(
+        default=None,
+        description='The ID of the stored credential. None for a short-lived token, which is not stored.',
+    )
     git_clone_url: str = Field(
         description=(
-            'Ready-to-use HTTPS clone URL with the one-time token embedded (format: '
-            '`https://kai:<secret>@<host>/<path>.git`). Pass directly to `git clone`.'
+            'Ready-to-use HTTPS clone URL with the token embedded (format: '
+            '`https://<username>:<secret>@<host>/<path>.git`). Pass directly to `git clone`.'
         ),
     )
     secret: str = Field(
@@ -749,6 +753,13 @@ class CreatedGitCredentialOutput(BaseModel):
         ),
     )
     permissions: str = Field(description='The permissions of the credential, e.g. "readWrite".')
+    expires_at: str | None = Field(
+        default=None,
+        description=(
+            'When a short-lived token expires (customer GitHub repository). None for a managed repository, '
+            'whose credential stays valid.'
+        ),
+    )
     links: list[Link] = Field(description='Navigation links for the web interface.')
 
 
@@ -1717,14 +1728,18 @@ async def create_python_js_data_app_git_credential(
     configuration_id: Annotated[str, Field(description='Storage configuration ID of the python-js data app.')],
     project_id: ProjectIdArg = None,
 ) -> CreatedGitCredentialOutput:
-    """Mints an HTTPS token for the managed git repo of a python-js **prod** data app.
+    """Mints an HTTPS token for the git repo of a python-js **prod** data app.
 
     - Returns `git_clone_url` (token embedded) and the raw `secret`.
 
     - Call it after creating a prod app, or when the token you had is gone. Always pass the prod app's
       `configuration_id`: drafts use branches of the prod app's repo.
-    - The secret is shown only once. Each call mints another `readWrite` token; existing ones stay valid.
-    - Rejected for Streamlit apps and apps on a customer GitHub repository.
+    - Keboola-managed repo: the secret is shown only once. Each call mints another `readWrite` token; existing
+      ones stay valid.
+    - Customer GitHub repo (organization auth): the token expires at `expires_at`, in about an hour. On a push
+      that fails with 401 or 403, call this tool again and `git remote set-url origin <new git_clone_url>`.
+      Never ask the user for a GitHub token.
+    - Rejected for Streamlit apps and for repos connected with a personal token or SSH key.
     """
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
@@ -1736,40 +1751,54 @@ async def create_python_js_data_app_git_credential(
             f'"{configuration_id}" is type "{data_app.type}".'
         )
     if _is_draft_config(data_app.configuration):
-        # Drafts have no managed repo of their own — they iterate against branches of the parent
-        # prod's repo. Reject early with an actionable message instead of letting get_app_git_repo
-        # return https_url=None below and raising a misleading "platform-side bug" error.
+        # Drafts have no repo of their own — they iterate against branches of the parent prod's repo.
         data_app_block = cast(Mapping[str, Any], data_app.configuration.get('parameters') or {}).get('dataApp') or {}
         parent_cfg_id = data_app_block.get('parentConfigurationId')
         hint = f' (parentConfigurationId="{parent_cfg_id}")' if isinstance(parent_cfg_id, str) else ''
         raise ValueError(
-            f'Configuration "{configuration_id}" is a python-js **draft**, which has no managed git repo '
+            f'Configuration "{configuration_id}" is a python-js **draft**, which has no git repo '
             f'of its own. Mint credentials against the parent prod app instead{hint}.'
-        )
-    if _uses_organization_git_auth(data_app.configuration):
-        raise ValueError(
-            f'Configuration "{configuration_id}" clones a customer GitHub repository through the Keboola '
-            "organization's GitHub connection. It has no managed git repo, and the MCP cannot mint a git "
-            "credential for it: push to that repository with the user's own GitHub access."
         )
 
     repo_resp = await client.data_science_client.get_app_git_repo(data_app.data_app_id)
     if repo_resp.https_url is None:
         raise ValueError(
-            f'Data app {data_app.data_app_id} reports no HTTPS clone URL despite being a python-js managed-repo '
-            f'app. This indicates a platform-side bug — retry or contact support.'
+            f'Data app "{configuration_id}" has no HTTPS clone URL: its repository is connected over SSH, so the MCP '
+            'cannot mint a git credential for it. Push with the user\'s own access to that repository.'
         )
 
-    credential_resp = await client.data_science_client.create_app_git_credential(
-        data_app_id=data_app.data_app_id,
-    )
-    if not credential_resp.secret:
+    expires_at: str | None = None
+    if repo_resp.is_managed_git_repo:
+        credential_resp = await client.data_science_client.create_app_git_credential(
+            data_app_id=data_app.data_app_id,
+        )
+        if not credential_resp.secret:
+            raise ValueError(
+                f'Data app {data_app.data_app_id} credentials endpoint returned no `secret` for an http_token '
+                f'credential. This indicates a platform-side bug — retry or contact support.'
+            )
+        username, secret = _MANAGED_GIT_REPO_USERNAME, credential_resp.secret
+        credential_id, permissions = credential_resp.id, credential_resp.permissions
+    elif repo_resp.supports_access_token:
+        token_resp = await _create_access_token(client, data_app)
+        username, secret = token_resp.username, token_resp.token
+        credential_id, permissions, expires_at = None, 'readWrite', token_resp.expires_at
+    elif _uses_organization_git_auth(data_app.configuration):
         raise ValueError(
-            f'Data app {data_app.data_app_id} credentials endpoint returned no `secret` for an http_token '
-            f'credential. This indicates a platform-side bug — retry or contact support.'
+            f'Data app "{configuration_id}" uses the organization\'s GitHub connection, but this Keboola stack cannot '
+            'issue push tokens for its repository. Tell the user to contact Keboola support; until then, change the '
+            "code through the customer's own process and redeploy prod. " + _NO_GITHUB_APP_HINT
+        )
+    else:
+        raise ValueError(
+            f'Data app "{configuration_id}" deploys from a repository connected with a personal token or with no '
+            "credentials, so the MCP cannot mint a git credential for it. Kai needs the Keboola organization's "
+            'GitHub connection for this repository: switch the app to it with `modify_python_js_data_app` '
+            "(`git_repository`, `git_auth='organization'`), or push with the user's own access. "
+            + _ORGANIZATION_CONNECTION_HINT
         )
 
-    git_clone_url = _build_authenticated_clone_url(repo_resp.https_url, credential_resp.secret)
+    git_clone_url = _build_authenticated_clone_url(repo_resp.https_url, username, secret)
     links = links_manager.get_data_app_links(
         configuration_id=data_app.configuration_id,
         configuration_name=data_app.name,
@@ -1780,18 +1809,52 @@ async def create_python_js_data_app_git_credential(
         response='created',
         configuration_id=data_app.configuration_id,
         data_app_id=data_app.data_app_id,
-        credential_id=credential_resp.id,
+        credential_id=credential_id,
         git_clone_url=git_clone_url,
-        secret=credential_resp.secret,
-        permissions=credential_resp.permissions,
+        secret=secret,
+        permissions=permissions,
+        expires_at=expires_at,
         links=links,
     )
 
 
-def _build_authenticated_clone_url(https_url: str, secret: str) -> str:
-    """Embed the hardcoded git-service username and the one-time `secret` into the bare HTTPS URL
-    so the LLM can pass it straight to `git clone`.
+async def _create_access_token(client: KeboolaClient, data_app: DataApp) -> AppGitAccessTokenResponse:
+    """A `readWrite` token for an app cloned through the organization's GitHub connection.
+
+    - 400 about unapproved permissions: the GitHub organization owner must approve the GitHub App's write access.
+    - 400 otherwise: the caller cannot push (read-only role) or the organization connection is broken.
+    - 502/503: the stack cannot issue write tokens, or GitHub did not confirm write access.
     """
+    try:
+        return await client.data_science_client.create_app_git_access_token(data_app.data_app_id)
+    except httpx.HTTPStatusError as e:
+        api_error = _api_error_text(e.response)
+        status = e.response.status_code
+        cfg = data_app.configuration_id
+        if status == HTTPStatus.BAD_REQUEST:
+            if _WRITE_NOT_APPROVED in api_error.lower():
+                hint = (
+                    "Kai cannot push to it yet: the Keboola GitHub App's write access is waiting for approval. An "
+                    'owner of the GitHub organization approves it in the GitHub organization settings under GitHub Apps.'
+                )
+            else:
+                hint = _organization_git_error_hint(api_error) or (
+                    'The user may lack the permission to change this app: a read-only role cannot push.'
+                )
+            raise InvalidArgumentError(
+                f'Could not get a push token for data app "{cfg}". {hint} Tell the user. API error: {api_error}'
+            ) from e
+        if status >= HTTPStatus.INTERNAL_SERVER_ERROR:
+            hint = _organization_git_error_hint(api_error) or (
+                'This stack may not support pushing to customer GitHub repositories yet. Tell the user to contact '
+                'Keboola support; do not retry in a loop.'
+            )
+            raise ValueError(f'Could not get a push token for data app "{cfg}". {hint} API error: {api_error}') from e
+        raise
+
+
+def _build_authenticated_clone_url(https_url: str, username: str, secret: str) -> str:
+    """Embed `username` and `secret` into the bare HTTPS URL so the LLM can pass it straight to `git clone`."""
     parts = urlsplit(https_url)
     if not parts.scheme or not parts.netloc:
         raise ValueError(f'Could not parse HTTPS clone URL: {https_url!r}')
@@ -1800,7 +1863,7 @@ def _build_authenticated_clone_url(https_url: str, secret: str) -> str:
     host = parts.hostname or ''
     if parts.port is not None:
         host = f'{host}:{parts.port}'
-    netloc = f'{_MANAGED_GIT_REPO_USERNAME}:{quote(secret, safe="")}@{host}'
+    netloc = f'{quote(username, safe="")}:{quote(secret, safe="")}@{host}'
     return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
 
 
@@ -2347,15 +2410,6 @@ async def _apply_deploy_outcome(client: KeboolaClient, data_app: DataApp, waited
     return f'The deploy started. {check}'
 
 
-def _organization_git_dev_mode_message(configuration_id: str) -> str:
-    return (
-        f'Data app "{configuration_id}" clones a customer GitHub repository through the Keboola organization\'s '
-        'GitHub connection, and dev mode and the preview link are not supported for such apps yet. Deploy it in '
-        f'production mode instead: `deploy_data_app` (action="deploy", configuration_id="{configuration_id}") '
-        'without `mode`.'
-    )
-
-
 _DRAFT_URL_WAIT_SECONDS = 30
 _DRAFT_URL_POLL_SECONDS = 2
 _DRAFT_BRANCH_MISSING = 'does not exist'
@@ -2401,11 +2455,6 @@ async def create_python_js_data_app_draft(
         raise ValueError(
             f'Configuration "{configuration_id}" is a legacy draft, not a prod app. Pass the prod app\'s '
             f'configuration_id ("{parent}").'
-        )
-    if _uses_organization_git_auth(data_app.configuration):
-        raise ValueError(
-            f'Data app "{configuration_id}" deploys from a customer GitHub repository, and drafts of such an app are '
-            'not supported yet. Change the prod app itself and deploy it in production mode.'
         )
     branch = _normalize_branch_name(git_branch)
     try:
@@ -2752,8 +2801,6 @@ def _not_in_dev_mode_message(data_app: DataApp) -> str:
             f'Data app "{cfg}" ({data_app.type}) is not in dev mode, so it has no preview link. '
             f'Tell the user; do not change its deploy mode.'
         )
-    if _uses_organization_git_auth(data_app.configuration):
-        return _organization_git_dev_mode_message(cfg)
     if _is_draft_config(data_app.configuration):
         return _legacy_draft_convert_message(data_app)
     return (
@@ -3078,8 +3125,8 @@ def _validate_git_rebind(data_app: 'DataApp', configuration_id: str) -> None:
     """
     if _is_draft_config(data_app.configuration):
         raise ValueError(
-            f'Cannot set git_repository on configuration "{configuration_id}": it is a draft. Drafts of an app '
-            'on a customer GitHub repository are not supported yet.'
+            f'Cannot set git_repository on configuration "{configuration_id}": it is a draft. Set it on the prod app; '
+            "a draft serves a branch of the prod app's repository."
         )
     if data_app.is_managed_git_repo is None:
         raise ValueError(
@@ -3118,9 +3165,9 @@ def _organization_git_hint(git: CodeDataAppConfig.Parameters.DataApp.Git, *, reb
     action = 'Rebound the app to' if rebound else 'The app deploys from'
     return (
         f"{action} {git.repository} (branch '{git.branch}') through the Keboola organization's GitHub "
-        "connection; no credential is stored. Push code there with the user's own GitHub access — the MCP "
-        'mints no git credential for it. Deploy with deploy_data_app in production mode; drafts, dev mode '
-        'and the preview link are not supported for this app yet. ' + _ORGANIZATION_CONNECTION_HINT
+        "connection; no credential is stored. Get a push token with create_python_js_data_app_git_credential and "
+        'work in a draft (create_python_js_data_app_draft) like on a Keboola-managed repo. '
+        + _ORGANIZATION_CONNECTION_HINT
     )
 
 
@@ -3138,6 +3185,7 @@ _NO_GITHUB_APP_HINT = (
     'user to contact Keboola support. Until then the app can only run from a Keboola-managed repository.'
 )
 # Fragments of the platform's refusals to mint an organization git token (see `_organization_git_error_hint`).
+_WRITE_NOT_APPROVED = 'not approved'
 _NO_GITHUB_APP_ERRORS = ('no github app is registered', 'cannot issue git tokens')
 _ORGANIZATION_CONNECTION_ERRORS = (
     'github connection',
