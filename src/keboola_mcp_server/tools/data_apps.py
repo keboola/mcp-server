@@ -999,7 +999,16 @@ async def modify_streamlit_data_app(
                 offer_url(_OIDC_SECRET_PAGE_MESSAGE, config_link)
             return ModifiedDataAppOutput(
                 response=response,
-                change_summary='\n'.join(note for note in (folder_hint, oidc_hint) if note) or None,
+                change_summary='\n'.join(
+                    note
+                    for note in (
+                        folder_hint,
+                        oidc_hint,
+                        await _project_sign_in_hint(client, authentication_type),
+                    )
+                    if note
+                )
+                or None,
                 data_app=DataAppSummary.model_validate(data_app.model_dump()),
                 links=links,
                 oidc_callback_url=_oidc_callback_url(client, data_app_pre.data_app_id, updated_config),
@@ -1058,7 +1067,15 @@ async def modify_streamlit_data_app(
             )
             return ModifiedDataAppOutput(
                 response='created',
-                change_summary=folder_hint,
+                change_summary='\n'.join(
+                    note
+                    for note in (
+                        folder_hint,
+                        await _project_sign_in_hint(client, _created_authentication_type(authentication_type)),
+                    )
+                    if note
+                )
+                or None,
                 data_app=DataAppSummary.from_api_response(data_app_resp, config_version),
                 links=links,
                 oidc_callback_url=_oidc_callback_url(client, data_app_resp.id, config),
@@ -1566,6 +1583,7 @@ async def modify_python_js_data_app(
                     _image_version_hint(image_version),
                     legacy_fallback_hint,
                     oidc_hint,
+                    await _project_sign_in_hint(client, authentication_type),
                 )
                 if note
             )
@@ -1695,7 +1713,17 @@ async def modify_python_js_data_app(
             _organization_git_hint(git_block, rebound=False) if git_block is not None and git_block.auth_type else None
         )
         change_summary = (
-            '\n'.join(note for note in (repo_hint, folder_hint, organization_hint, legacy_fallback_hint) if note)
+            '\n'.join(
+                note
+                for note in (
+                    repo_hint,
+                    folder_hint,
+                    organization_hint,
+                    legacy_fallback_hint,
+                    await _project_sign_in_hint(client, _created_authentication_type(authentication_type)),
+                )
+                if note
+            )
             or None
         )
         return ModifiedPythonJsDataAppOutput(
@@ -3393,6 +3421,42 @@ def _oidc_callback_url(client: KeboolaClient, data_app_id: str, configuration: M
 _OIDC_SECRET_PAGE_MESSAGE = (
     "Open the data app's configuration page, go to the Authentication section, enter the OIDC client secret and save."
 )
+
+
+_PROJECT_SIGN_IN_OIDC_HINT = (
+    'This project forces its own sign-in for every data app (Project settings > Data apps sign-in): '
+    'the `oidc` client_id and issuer_url are ignored and no client secret or callback URL is needed for this app, '
+    'whatever the other notes say. Only `allowed_roles` decide which groups can open the app.'
+)
+_PROJECT_SIGN_IN_HINT = (
+    'This project forces its own sign-in for every data app (Project settings > Data apps sign-in): '
+    'the authentication_type is ignored and every visitor signs in through the project\'s identity provider. '
+    'To limit who can open the app, ask the user to pick the allowed groups in the app\'s App access settings '
+    'in the UI (on the prod app, not a draft).'
+)
+_PROJECT_SIGN_IN_TIMEOUT_SECONDS = 5
+
+
+def _created_authentication_type(authentication_type: AuthenticationType) -> AuthenticationType:
+    """The authentication a create writes: everything but 'no-auth' becomes basic auth."""
+    return 'no-auth' if authentication_type == 'no-auth' else 'basic-auth'
+
+
+async def _project_sign_in_hint(client: KeboolaClient, authentication_type: AuthenticationType) -> str | None:
+    """What a forced project sign-in means for the requested authentication, or None when nothing is forced."""
+    if authentication_type == 'default':
+        return None
+    try:
+        # Runs after a committed write: a slow service must not hold up the tool's answer.
+        settings = await asyncio.wait_for(
+            client.data_science_client.get_project_apps_auth_settings(), _PROJECT_SIGN_IN_TIMEOUT_SECONDS
+        )
+    except Exception:
+        LOG.warning('Cannot read the project data apps sign-in settings', exc_info=True)
+        return None
+    if not isinstance(settings, dict) or settings.get('forceOidc') is not True:
+        return None
+    return _PROJECT_SIGN_IN_OIDC_HINT if authentication_type == 'oidc' else _PROJECT_SIGN_IN_HINT
 
 
 def _oidc_change_summary(authorization: Mapping[str, Any], config_link: str, roles_requested: bool) -> str | None:
