@@ -657,6 +657,16 @@ class DataScienceClient(KeboolaServiceClient):
             )
         raise ValueError(f'Unexpected response from the data-science API preview-link endpoint: {problems}')
 
+    async def get_project_apps_auth_settings(self) -> dict[str, Any] | None:
+        """The sign-in the project forces on its data apps, or None when it has none (404)."""
+        try:
+            response = await self.get(endpoint='projects/apps-auth-settings')
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == HTTPStatus.NOT_FOUND:
+                return None
+            raise
+        return response if isinstance(response, dict) else None
+
     async def create_draft(self, data_app_id: str, git_branch: str) -> DraftResponse:
         """
         Create a draft of a data app on an existing git branch.

@@ -48,6 +48,7 @@ from keboola_mcp_server.tools.data_apps import (
     _inject_query_to_source_code,
     _legacy_draft_convert_message,
     _oidc_setup_required,
+    _project_sign_in_hint,
     _prune_empty_storage_objects,
     _resolve_app_image,
     _update_existing_data_app_config,
@@ -270,6 +271,39 @@ def test_build_authorization(authentication_type, oidc, existing, expected_provi
 )
 def test_oidc_setup_required(provider, expected):
     assert _oidc_setup_required(_stored(provider) if provider else {}) is expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('authentication_type', 'settings', 'expected_phrase'),
+    [
+        ('basic-auth', {'forceOidc': True}, 'the authentication_type is ignored'),
+        ('no-auth', {'forceOidc': True}, 'the authentication_type is ignored'),
+        ('oidc', {'forceOidc': True}, 'Only `allowed_roles` decide'),
+        ('basic-auth', {'forceOidc': False}, None),
+        ('oidc', None, None),
+        ('default', {'forceOidc': True}, None),
+        ('basic-auth', RuntimeError('unavailable'), None),
+        ('basic-auth', ['not', 'a', 'dict'], None),
+    ],
+    ids=['password', 'public', 'oidc', 'not-forced', 'no-settings', 'auth-unchanged', 'read-fails', 'not-a-dict'],
+)
+async def test_project_sign_in_hint(mocker, authentication_type, settings, expected_phrase):
+    client = mocker.MagicMock()
+    client.data_science_client.get_project_apps_auth_settings = mocker.AsyncMock(
+        side_effect=settings if isinstance(settings, Exception) else None, return_value=settings
+    )
+
+    hint = await _project_sign_in_hint(client, authentication_type)
+
+    if expected_phrase is None:
+        assert hint is None
+    else:
+        assert hint is not None and expected_phrase in hint
+    if authentication_type == 'default':
+        client.data_science_client.get_project_apps_auth_settings.assert_not_called()
+    else:
+        client.data_science_client.get_project_apps_auth_settings.assert_awaited_once()
 
 
 def test_is_authorized_behavior():

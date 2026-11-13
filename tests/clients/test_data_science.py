@@ -600,3 +600,30 @@ async def test_list_app_runs_filters_by_deployment() -> None:
     client.get.assert_awaited_once_with(
         endpoint='v2/apps/app-1/runs', params={'limit': 1, 'offset': 0, 'deploymentId': 'dep-2'}
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('response', 'expected'),
+    [
+        ({'forceOidc': True, 'provider': {'type': 'oidc'}}, {'forceOidc': True, 'provider': {'type': 'oidc'}}),
+        (httpx.Response(404), None),
+        (httpx.Response(500), httpx.HTTPStatusError),
+    ],
+    ids=['set', 'not-set', 'server-error'],
+)
+async def test_get_project_apps_auth_settings(response, expected) -> None:
+    client = DataScienceClient.create('https://api.example.com', token=None)
+    if isinstance(response, httpx.Response):
+        request = httpx.Request('GET', 'https://api.example.com/projects/apps-auth-settings')
+        error = httpx.HTTPStatusError(str(response.status_code), request=request, response=response)
+        client.get = AsyncMock(side_effect=error)  # type: ignore[assignment]
+    else:
+        client.get = AsyncMock(return_value=response)  # type: ignore[assignment]
+
+    if expected is httpx.HTTPStatusError:
+        with pytest.raises(httpx.HTTPStatusError):
+            await client.get_project_apps_auth_settings()
+    else:
+        assert await client.get_project_apps_auth_settings() == expected
+    client.get.assert_awaited_once_with(endpoint='projects/apps-auth-settings')
