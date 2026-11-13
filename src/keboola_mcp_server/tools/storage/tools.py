@@ -1060,12 +1060,12 @@ async def _update_table_descriptions(
     Update the description of a table and the descriptions of its columns in one write.
 
     The write target is resolved once per table. The native table definition takes the table and column descriptions
-    in a single Storage job; backends without it take them in a single metadata request.
+    in a single Storage job; backends without the definition update take them in a single metadata request.
     """
     item_ids = ([table_id] if description is not None else []) + [f'{table_id}.{name}' for name in column_updates]
     try:
-        branch_id, native_definition = await _resolve_write_target(client, table_id)
-        if native_definition:
+        branch_id, definition_write = await _resolve_write_target(client, table_id)
+        if definition_write:
             job = await client.storage_client.table_definition_update(
                 table_id=table_id, description=description, column_descriptions=column_updates, branch_id=branch_id
             )
