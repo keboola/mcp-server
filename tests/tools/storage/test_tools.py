@@ -1240,16 +1240,25 @@ def test_bucket_detail_description_fallback(raw_data: dict[str, Any], expected_d
             None,
         ),
         (TableDetail, {'description': '', 'metadata': [], 'bucket': {'backend': 'snowflake'}}, None),
-        # a backend without the native definition keeps the KBC.description metadata
+        # every backend reads the native definition, not the KBC.description metadata
         (
             TableDetail,
             {
                 'description': 'Direct desc',
                 'metadata': [{'key': 'KBC.description', 'value': 'Meta desc'}],
-                'definition': {'description': 'Ignored'},
+                'definition': {'description': 'Native desc'},
                 'bucket': {'backend': 'synapse'},
             },
-            'Meta desc',
+            'Native desc',
+        ),
+        (
+            TableDetail,
+            {
+                'description': 'Direct desc',
+                'metadata': [{'key': 'KBC.description', 'value': 'Meta desc'}],
+                'bucket': {'backend': 'redshift'},
+            },
+            None,
         ),
         # the listing shows the native description of the table list V2 item, never the KBC.description metadata
         # of the table or of its source table
@@ -1413,7 +1422,7 @@ def test_bucket_detail_updated_resolution(raw_data: dict[str, Any], expected_upd
             'NUMBER',
             True,
         ),
-        # typed table without a definition column falls back to the default type
+        # typed table without a definition column takes the type from KBC.datatype.*, no description anywhere
         (
             'snowflake',
             True,
@@ -1422,25 +1431,43 @@ def test_bucket_detail_updated_resolution(raw_data: dict[str, Any], expected_upd
             [],
             None,
             None,
-            'VARCHAR',
+            'NUMBER',
             False,
         ),
-        # a backend without the native definition reads description and types from the metadata
+        # no native and no metadata type falls back to the default type
+        ('snowflake', True, None, [], [], None, None, 'VARCHAR', False),
+        # every backend reads the description from the native definition; types come from it as well when present
         (
             'synapse',
             True,
             {
                 'name': 'col1',
-                'definition': {'type': 'NUMBER', 'nullable': True, 'description': 'Ignored'},
+                'definition': {'type': 'NUMBER', 'nullable': True, 'description': 'Native desc'},
                 'basetype': 'NUMERIC',
             },
             [
-                {'key': 'KBC.description', 'value': 'Meta desc'},
+                {'key': 'KBC.description', 'value': 'Stale desc'},
                 {'key': 'KBC.datatype.basetype', 'value': 'STRING'},
                 {'key': 'KBC.datatype.type', 'value': 'VARCHAR'},
             ],
             [],
-            'Meta desc',
+            'Native desc',
+            'NUMERIC',
+            'NUMBER',
+            True,
+        ),
+        # a typed column without a native type keeps the type from KBC.datatype.*, the description stays native
+        (
+            'redshift',
+            True,
+            {'name': 'col1', 'definition': {'description': 'Native desc'}},
+            [
+                {'key': 'KBC.description', 'value': 'Stale desc'},
+                {'key': 'KBC.datatype.basetype', 'value': 'STRING'},
+                {'key': 'KBC.datatype.type', 'value': 'VARCHAR'},
+            ],
+            [],
+            'Native desc',
             'STRING',
             'VARCHAR',
             False,
@@ -1464,7 +1491,7 @@ def test_bucket_detail_updated_resolution(raw_data: dict[str, Any], expected_upd
         ),
         # non-typed table: types fall back to the source column metadata, no description anywhere
         (
-            'bigquery',
+            'exasol',
             False,
             {'name': 'col1', 'definition': {}},
             [],

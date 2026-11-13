@@ -48,8 +48,9 @@ BUCKET_ID_PARTS = 2
 TABLE_ID_PARTS = 3
 COLUMN_ID_PARTS = 4
 
-# Backends whose tables support the native table definition endpoint; other backends keep KBC.* metadata.
-NATIVE_DEFINITION_BACKENDS = frozenset({'snowflake', 'bigquery'})
+# Backends whose tables accept the native table definition update; other backends take descriptions as KBC.description
+# metadata, which Storage mirrors into the native description fields.
+DEFINITION_WRITE_BACKENDS = frozenset({'snowflake', 'bigquery'})
 
 
 def add_storage_tools(mcp: KeboolaMcpServer) -> None:
@@ -283,20 +284,10 @@ class GetBucketsOutput(BaseModel):
         return self.model_copy(update={'buckets': buckets, 'links': sorted(links, key=lambda x: (x.type, x.title))})
 
 
-def _has_native_definition(raw_table: dict[str, Any]) -> bool:
-    """Whether the table lives on a backend whose descriptions and types are held in the native definition."""
+def _supports_definition_write(raw_table: dict[str, Any]) -> bool:
+    """Whether the table lives on a backend that accepts the native table definition update."""
     backend = get_nested(raw_table, 'bucket.backend')
-    return isinstance(backend, str) and backend.lower() in NATIVE_DEFINITION_BACKENDS
-
-
-def _metadata_table_description(values: dict[str, Any]) -> str | None:
-    """Table description from KBC.description metadata, which must win over the stale legacy `description` field."""
-    return (
-        get_metadata_property(values.get('metadata', []), MetadataField.DESCRIPTION)
-        or get_metadata_property(get_nested(values, 'sourceTable.metadata', default=[]), MetadataField.DESCRIPTION)
-        or values.get('description')
-        or None
-    )
+    return isinstance(backend, str) and backend.lower() in DEFINITION_WRITE_BACKENDS
 
 
 class TableColumnInfo(BaseModel):
@@ -423,11 +414,9 @@ class TableDetail(TableSummary):
     @model_validator(mode='before')
     @classmethod
     def set_description(cls, values: dict[str, Any]) -> dict[str, Any]:
-        if _has_native_definition(values):
-            # The native table definition is the source the UI shows; Storage resolves alias inheritance there.
-            values['description'] = get_nested(values, 'definition.description') or None
-        else:
-            values['description'] = _metadata_table_description(values)
+        # The native table definition is the source the UI shows on every backend; Storage resolves alias
+        # inheritance there.
+        values['description'] = get_nested(values, 'definition.description') or None
         return values
 
     def with_lineage_metadata(self, values: dict[str, Any]) -> 'TableDetail':
@@ -850,7 +839,6 @@ async def _get_table(
     raw_source_column_metadata = cast(
         dict[str, list[dict[str, Any]]], get_nested(raw_table, 'sourceTable.columnMetadata', default={})
     )
-    native_definition = _has_native_definition(raw_table)
     is_typed = bool(raw_table.get('isTyped'))
     definition_columns = {
         cast(str, col['name']): cast(dict[str, Any], col)
@@ -869,20 +857,14 @@ async def _get_table(
         col_meta = raw_column_metadata.get(col_name, [])
         source_col_meta = raw_source_column_metadata.get(col_name, [])
 
-        if native_definition:
-            description: str | None = column_definition.get('description') or None
-        else:
-            description = get_metadata_property(col_meta, MetadataField.DESCRIPTION)
-            if not description:
-                description = get_metadata_property(source_col_meta, MetadataField.DESCRIPTION)
+        description: str | None = column_definition.get('description') or None
 
-        if native_definition and is_typed:
+        if is_typed and column_definition.get('type'):
             base_type: str | None = definition_column.get('basetype')
             native_type: str | None = column_definition.get('type')
             nullable = bool(column_definition.get('nullable', False))
         else:
-            # Non-typed tables and non-native backends carry no types in the native definition, only the
-            # KBC.datatype.* metadata.
+            # Untyped tables and columns without a native type carry the type only in the KBC.datatype.* metadata.
             base_type = get_metadata_property(col_meta, MetadataField.DATATYPE_BASETYPE, preferred_providers=['user'])
             if not base_type:
                 base_type = get_metadata_property(
@@ -1058,7 +1040,8 @@ async def _resolve_write_target(client: KeboolaClient, table_id: str) -> tuple[s
     """
     Resolve where a table description is written.
 
-    Returns the branch ID and whether the native table definition is used (otherwise the KBC.description metadata).
+    Returns the branch ID and whether the native table definition update is used (otherwise the KBC.description
+    metadata, which Storage mirrors into the native fields).
     The dev branch is written only when the table exists in it; legacy dev branches and production-only tables are
     written in the default branch.
     """
@@ -1067,7 +1050,7 @@ async def _resolve_write_target(client: KeboolaClient, table_id: str) -> tuple[s
     if not table:
         raise ValueError(f'Table "{table_id}" not found.')
     branch_id = cast(str, client.branch_id) if dev_table and await has_storage_branches(client) else 'default'
-    return branch_id, _has_native_definition(table)
+    return branch_id, _supports_definition_write(table)
 
 
 async def _update_table_descriptions(
@@ -1077,12 +1060,12 @@ async def _update_table_descriptions(
     Update the description of a table and the descriptions of its columns in one write.
 
     The write target is resolved once per table. The native table definition takes the table and column descriptions
-    in a single Storage job; backends without it take them in a single metadata request.
+    in a single Storage job; backends without the definition update take them in a single metadata request.
     """
     item_ids = ([table_id] if description is not None else []) + [f'{table_id}.{name}' for name in column_updates]
     try:
-        branch_id, native_definition = await _resolve_write_target(client, table_id)
-        if native_definition:
+        branch_id, definition_write = await _resolve_write_target(client, table_id)
+        if definition_write:
             job = await client.storage_client.table_definition_update(
                 table_id=table_id, description=description, column_descriptions=column_updates, branch_id=branch_id
             )
