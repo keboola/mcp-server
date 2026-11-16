@@ -162,7 +162,8 @@ refuses, `query_data` returns as an error.
   programmatic token this server forwards (`kbc_at_` / `kbc_pat_`, including the child PAT of a multi-project scope,
   sent with `X-KBC-ProjectId`) or an administrator's own master Storage token. Any other token (an integration, a data
   app, Kai) names no end user, has no verified identity and reads nothing from a governed table. The administrator's
-  subject is `keboola|<adminId>` and the identity carries no groups, so group rules never match.
+  subject is `keboola|<adminId>` and the identity carries no groups and no IdP attributes, so group rules and attribute rules
+  (policy schema 1.3.0) never match. This server reads no policy, so a policy of schema 1.3.0 needs nothing from it.
 - **Bindings.** Without a binding a workspace gets every policy of the project, and this server never creates one. To
   give a workspace only some policies, bind them to its KID:
   `KID:<stack-id>:project-<project-id>:workspace-<workspace-id>` (a workspace of the default branch; a branch workspace
