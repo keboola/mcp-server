@@ -5217,10 +5217,18 @@ def _draft(url: str | None, run_state: str = 'neverRun') -> DraftResponse:
 
 
 @pytest.mark.asyncio
-async def test_create_python_js_data_app_draft_waits_for_url(mocker, mcp_context_client: Context) -> None:
+@pytest.mark.parametrize(
+    'make_prod',
+    [
+        lambda: _make_python_js_prod_data_app(configuration_id='cfg-prod-1', data_app_id='app-prod-1'),
+        _make_organization_git_data_app,
+    ],
+    ids=['managed_repo', 'organization_repo'],
+)
+async def test_create_python_js_data_app_draft_waits_for_url(mocker, mcp_context_client: Context, make_prod) -> None:
     """The draft is created on the prod app for the normalized branch and returned once it has a URL."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-    prod = _make_python_js_prod_data_app(configuration_id='cfg-prod-1', data_app_id='app-prod-1')
+    prod = make_prod()
     mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=prod))
     mocker.patch('keboola_mcp_server.tools.data_apps.asyncio.sleep', mocker.AsyncMock())
     keboola_client.data_science_client.create_draft = mocker.AsyncMock(return_value=_draft(None))
@@ -5229,10 +5237,10 @@ async def test_create_python_js_data_app_draft_waits_for_url(mocker, mcp_context
     )
 
     result = await create_python_js_data_app_draft(
-        ctx=mcp_context_client, configuration_id='cfg-prod-1', git_branch=' feat '
+        ctx=mcp_context_client, configuration_id=prod.configuration_id, git_branch=' feat '
     )
 
-    keboola_client.data_science_client.create_draft.assert_awaited_once_with('app-prod-1', 'feat')
+    keboola_client.data_science_client.create_draft.assert_awaited_once_with(prod.data_app_id, 'feat')
     assert keboola_client.data_science_client.get_draft.await_count == 2
     assert result.draft.draft_id == 'd-1'
     assert result.draft.url == 'https://draft-1.hub.test'
