@@ -5169,6 +5169,20 @@ async def test_create_python_js_data_app_git_credential_on_organization_repo(
         (False, False, True, (400, 'Your role does not allow this action.'), 'read-only role cannot push'),
         (False, False, True, (502, 'OAuth service did not confirm write'), 'contact Keboola support; do not retry'),
         (False, None, True, None, 'did not say whether its repository is Keboola-managed'),
+        (
+            False,
+            False,
+            True,
+            (400, 'Repository is not covered by this GitHub installation.'),
+            'GitHub App is not installed on the repository owner.*connect-github',
+        ),
+        (
+            False,
+            False,
+            True,
+            (503, 'No GitHub App is registered for host github.com.'),
+            "no GitHub App registered for the repository's host",
+        ),
     ],
     ids=[
         'personal_token',
@@ -5177,6 +5191,8 @@ async def test_create_python_js_data_app_git_credential_on_organization_repo(
         'read_only_role',
         'bad_gateway',
         'unknown_repo',
+        'connection_not_covering_repo',
+        'stack_without_github_app',
     ],
 )
 async def test_create_python_js_data_app_git_credential_refuses_customer_repo(
