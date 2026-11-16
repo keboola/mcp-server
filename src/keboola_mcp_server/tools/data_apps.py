@@ -1767,6 +1767,12 @@ async def create_python_js_data_app_git_credential(
             'cannot mint a git credential for it. Push with the user\'s own access to that repository.'
         )
 
+    if repo_resp.is_managed_git_repo is None:
+        raise ValueError(
+            f'Data app {data_app.data_app_id}: the git-repo endpoint did not say whether its repository is '
+            'Keboola-managed, so the MCP cannot tell which credential to mint. Retry later or contact Keboola support.'
+        )
+
     expires_at: str | None = None
     if repo_resp.is_managed_git_repo:
         credential_resp = await client.data_science_client.create_app_git_credential(

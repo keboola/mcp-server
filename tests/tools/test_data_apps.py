@@ -5112,7 +5112,14 @@ def test_with_deployment_info_hints_at_organization_connection(
         assert failure_message == message
 
 
-def _mock_customer_repo(mocker, ctx: Context, *, configuration: dict | None = None, supports_access_token: bool = True):
+def _mock_customer_repo(
+    mocker,
+    ctx: Context,
+    *,
+    configuration: dict | None = None,
+    supports_access_token: bool = True,
+    is_managed_git_repo: bool | None = False,
+):
     """The data science client of a prod app on a customer GitHub repo; `configuration` overrides the app's."""
     keboola_client = KeboolaClient.from_state(ctx.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
@@ -5122,7 +5129,9 @@ def _mock_customer_repo(mocker, ctx: Context, *, configuration: dict | None = No
     mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=app))
     keboola_client.data_science_client.get_app_git_repo = mocker.AsyncMock(
         return_value=AppGitRepoResponse(
-            https_url=f'{_ORG_REPOSITORY}.git', is_managed_git_repo=False, supports_access_token=supports_access_token
+            https_url=f'{_ORG_REPOSITORY}.git',
+            is_managed_git_repo=is_managed_git_repo,
+            supports_access_token=supports_access_token,
         )
     )
     return keboola_client.data_science_client
@@ -5152,20 +5161,29 @@ async def test_create_python_js_data_app_git_credential_on_organization_repo(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ('personal_token', 'supports_access_token', 'error', 'match'),
+    ('personal_token', 'is_managed_git_repo', 'supports_access_token', 'error', 'match'),
     [
-        (True, False, None, "Kai needs the Keboola organization's GitHub connection"),
-        (False, False, None, 'cannot issue push tokens.*contact Keboola support'),
-        (False, True, (400, 'Write permissions not approved yet.'), 'waiting for approval.*owner of the GitHub'),
-        (False, True, (400, 'Your role does not allow this action.'), 'read-only role cannot push'),
-        (False, True, (502, 'OAuth service did not confirm write access.'), 'contact Keboola support; do not retry'),
+        (True, False, False, None, "Kai needs the Keboola organization's GitHub connection"),
+        (False, False, False, None, 'cannot issue push tokens.*contact Keboola support'),
+        (False, False, True, (400, 'Write permissions not approved yet.'), 'waiting for approval.*owner of the GitHub'),
+        (False, False, True, (400, 'Your role does not allow this action.'), 'read-only role cannot push'),
+        (False, False, True, (502, 'OAuth service did not confirm write'), 'contact Keboola support; do not retry'),
+        (False, None, True, None, 'did not say whether its repository is Keboola-managed'),
     ],
-    ids=['personal_token', 'stack_without_tokens', 'write_not_approved', 'read_only_role', 'bad_gateway'],
+    ids=[
+        'personal_token',
+        'stack_without_tokens',
+        'write_not_approved',
+        'read_only_role',
+        'bad_gateway',
+        'unknown_repo',
+    ],
 )
 async def test_create_python_js_data_app_git_credential_refuses_customer_repo(
     mocker,
     mcp_context_client: Context,
     personal_token: bool,
+    is_managed_git_repo: bool | None,
     supports_access_token: bool,
     error: tuple[int, str] | None,
     match: str,
@@ -5176,7 +5194,11 @@ async def test_create_python_js_data_app_git_credential_refuses_customer_repo(
         else None
     )
     ds_client = _mock_customer_repo(
-        mocker, mcp_context_client, configuration=configuration, supports_access_token=supports_access_token
+        mocker,
+        mcp_context_client,
+        configuration=configuration,
+        supports_access_token=supports_access_token,
+        is_managed_git_repo=is_managed_git_repo,
     )
     if error:
         ds_client.create_app_git_access_token = mocker.AsyncMock(
@@ -5187,6 +5209,7 @@ async def test_create_python_js_data_app_git_credential_refuses_customer_repo(
         await create_python_js_data_app_git_credential(ctx=mcp_context_client, configuration_id='cfg-org-1')
     if not error:
         ds_client.create_app_git_access_token.assert_not_called()
+        ds_client.create_app_git_credential.assert_not_called()
 
 
 def _draft(url: str | None, run_state: str = 'neverRun') -> DraftResponse:
