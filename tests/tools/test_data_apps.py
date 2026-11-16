@@ -1381,6 +1381,7 @@ async def test_modify_streamlit_data_app_update_skips_metadata_when_version_miss
 
 
 from keboola_mcp_server.clients.data_science import (  # noqa: E402
+    AppGitAccessTokenResponse,
     AppGitRepoResponse,
     CreatedGitCredentialResponse,
 )
@@ -4474,8 +4475,8 @@ async def test_get_data_app_preview_link_returns_link_without_leaking_it(
             'organization',
             400,
             _sandboxes_error(400, 'App "app-org-1" is not in dev mode.'),
-            r'"cfg-org-1" clones a customer GitHub repository.*not supported.*without `mode`',
-            'parent_configuration_id',
+            r'"cfg-org-1" is a production app.*create_python_js_data_app_draft',
+            'not supported',
         ),
         (
             'streamlit',
@@ -4822,7 +4823,7 @@ async def test_modify_python_js_data_app_create_prod_on_organization_repo(
     assert result.data_app.git_branch == expected_branch
     assert result.data_app.git_auth_type == 'organization'
     assert result.change_summary is not None
-    assert 'production mode' in result.change_summary
+    assert 'create_python_js_data_app_git_credential' in result.change_summary
     assert '#connect-github' in result.change_summary
 
 
@@ -5111,22 +5112,120 @@ def test_with_deployment_info_hints_at_organization_connection(
         assert failure_message == message
 
 
+def _mock_customer_repo(
+    mocker,
+    ctx: Context,
+    *,
+    configuration: dict | None = None,
+    supports_access_token: bool = True,
+    is_managed_git_repo: bool | None = False,
+):
+    """The data science client of a prod app on a customer GitHub repo; `configuration` overrides the app's."""
+    keboola_client = KeboolaClient.from_state(ctx.session.state)
+    keboola_client.data_science_client = mocker.AsyncMock()
+    app = _make_organization_git_data_app()
+    if configuration is not None:
+        app.configuration = configuration
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=app))
+    keboola_client.data_science_client.get_app_git_repo = mocker.AsyncMock(
+        return_value=AppGitRepoResponse(
+            https_url=f'{_ORG_REPOSITORY}.git',
+            is_managed_git_repo=is_managed_git_repo,
+            supports_access_token=supports_access_token,
+        )
+    )
+    return keboola_client.data_science_client
+
+
 @pytest.mark.asyncio
-async def test_create_python_js_data_app_git_credential_rejects_organization_git_app(
+async def test_create_python_js_data_app_git_credential_on_organization_repo(
     mocker, mcp_context_client: Context
 ) -> None:
-    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-    keboola_client.data_science_client = mocker.AsyncMock()
-    mocker.patch(
-        'keboola_mcp_server.tools.data_apps._fetch_data_app',
-        mocker.AsyncMock(return_value=_make_organization_git_data_app()),
+    """An app on the organization connection gets a short-lived token embedded in a clone URL for its host."""
+    ds_client = _mock_customer_repo(mocker, mcp_context_client)
+    ds_client.create_app_git_access_token = mocker.AsyncMock(
+        return_value=AppGitAccessTokenResponse(
+            username='x-access-token', token='ghs_a/b', expires_at='2026-11-12T12:00:00Z'
+        )
     )
 
-    with pytest.raises(ValueError, match="push to that repository with the user's own GitHub access"):
-        await create_python_js_data_app_git_credential(ctx=mcp_context_client, configuration_id='cfg-org-1')
+    result = await create_python_js_data_app_git_credential(ctx=mcp_context_client, configuration_id='cfg-org-1')
 
-    keboola_client.data_science_client.get_app_git_repo.assert_not_called()
-    keboola_client.data_science_client.create_app_git_credential.assert_not_called()
+    assert result.git_clone_url == 'https://x-access-token:ghs_a%2Fb@github.com/acme/sales-app.git'
+    assert result.secret == 'ghs_a/b'
+    assert result.credential_id is None
+    assert result.expires_at == '2026-11-12T12:00:00Z'
+    ds_client.create_app_git_access_token.assert_awaited_once_with('app-org-1')
+    ds_client.create_app_git_credential.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('personal_token', 'is_managed_git_repo', 'supports_access_token', 'error', 'match'),
+    [
+        (True, False, False, None, "Kai needs the Keboola organization's GitHub connection"),
+        (False, False, False, None, 'cannot issue push tokens.*contact Keboola support'),
+        (False, False, True, (400, 'Write permissions not approved yet.'), 'waiting for approval.*owner of the GitHub'),
+        (False, False, True, (400, 'Your role does not allow this action.'), 'read-only role cannot push'),
+        (False, False, True, (502, 'OAuth service did not confirm write'), 'contact Keboola support; do not retry'),
+        (False, None, True, None, 'did not say whether its repository is Keboola-managed'),
+        (
+            False,
+            False,
+            True,
+            (400, 'Repository is not covered by this GitHub installation.'),
+            'GitHub App is not installed on the repository owner.*connect-github',
+        ),
+        (
+            False,
+            False,
+            True,
+            (503, 'No GitHub App is registered for host github.com.'),
+            "no GitHub App registered for the repository's host",
+        ),
+    ],
+    ids=[
+        'personal_token',
+        'stack_without_tokens',
+        'write_not_approved',
+        'read_only_role',
+        'bad_gateway',
+        'unknown_repo',
+        'connection_not_covering_repo',
+        'stack_without_github_app',
+    ],
+)
+async def test_create_python_js_data_app_git_credential_refuses_customer_repo(
+    mocker,
+    mcp_context_client: Context,
+    personal_token: bool,
+    is_managed_git_repo: bool | None,
+    supports_access_token: bool,
+    error: tuple[int, str] | None,
+    match: str,
+) -> None:
+    configuration = (
+        {'parameters': {'dataApp': {'git': {'repository': _ORG_REPOSITORY, 'username': 'me', '#password': 'x'}}}}
+        if personal_token
+        else None
+    )
+    ds_client = _mock_customer_repo(
+        mocker,
+        mcp_context_client,
+        configuration=configuration,
+        supports_access_token=supports_access_token,
+        is_managed_git_repo=is_managed_git_repo,
+    )
+    if error:
+        ds_client.create_app_git_access_token = mocker.AsyncMock(
+            side_effect=_http_error(error[0], _sandboxes_error(*error))
+        )
+
+    with pytest.raises(ValueError, match=match):
+        await create_python_js_data_app_git_credential(ctx=mcp_context_client, configuration_id='cfg-org-1')
+    if not error:
+        ds_client.create_app_git_access_token.assert_not_called()
+        ds_client.create_app_git_credential.assert_not_called()
 
 
 def _draft(url: str | None, run_state: str = 'neverRun') -> DraftResponse:
@@ -5134,10 +5233,18 @@ def _draft(url: str | None, run_state: str = 'neverRun') -> DraftResponse:
 
 
 @pytest.mark.asyncio
-async def test_create_python_js_data_app_draft_waits_for_url(mocker, mcp_context_client: Context) -> None:
+@pytest.mark.parametrize(
+    'make_prod',
+    [
+        lambda: _make_python_js_prod_data_app(configuration_id='cfg-prod-1', data_app_id='app-prod-1'),
+        _make_organization_git_data_app,
+    ],
+    ids=['managed_repo', 'organization_repo'],
+)
+async def test_create_python_js_data_app_draft_waits_for_url(mocker, mcp_context_client: Context, make_prod) -> None:
     """The draft is created on the prod app for the normalized branch and returned once it has a URL."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-    prod = _make_python_js_prod_data_app(configuration_id='cfg-prod-1', data_app_id='app-prod-1')
+    prod = make_prod()
     mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=prod))
     mocker.patch('keboola_mcp_server.tools.data_apps.asyncio.sleep', mocker.AsyncMock())
     keboola_client.data_science_client.create_draft = mocker.AsyncMock(return_value=_draft(None))
@@ -5146,10 +5253,10 @@ async def test_create_python_js_data_app_draft_waits_for_url(mocker, mcp_context
     )
 
     result = await create_python_js_data_app_draft(
-        ctx=mcp_context_client, configuration_id='cfg-prod-1', git_branch=' feat '
+        ctx=mcp_context_client, configuration_id=prod.configuration_id, git_branch=' feat '
     )
 
-    keboola_client.data_science_client.create_draft.assert_awaited_once_with('app-prod-1', 'feat')
+    keboola_client.data_science_client.create_draft.assert_awaited_once_with(prod.data_app_id, 'feat')
     assert keboola_client.data_science_client.get_draft.await_count == 2
     assert result.draft.draft_id == 'd-1'
     assert result.draft.url == 'https://draft-1.hub.test'
@@ -5211,7 +5318,6 @@ async def test_create_python_js_data_app_draft_reraises_an_unsent_request(
     [
         pytest.param('draft', None, 'is a legacy draft, not a prod app', id='legacy_draft'),
         pytest.param('streamlit', None, 'only python-js apps have drafts', id='streamlit'),
-        pytest.param('organization', None, 'customer GitHub repository.*not supported yet', id='organization'),
         pytest.param('prod', httpx.ReadTimeout('timed out'), 'may exist already.*get_data_apps', id='unanswered'),
         pytest.param(
             'prod', _http_error(502, {'error': 'Bad Gateway'}), 'may exist already.*get_data_apps', id='server_error'

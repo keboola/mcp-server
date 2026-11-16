@@ -313,9 +313,19 @@ A prod app can deploy straight from a customer's GitHub repository instead of a 
        branch='main',            # optional, defaults to 'main'
    )                   ──► { configuration_id: PROD, repo_url: 'https://github.com/acme/sales-app', branch: 'main' }
                             useManagedGitRepo: false, no credential minted
-2. (user) push code to the GitHub repository with their own GitHub access
-3. deploy_data_app(action='deploy', configuration_id=PROD)   # production mode only
+2. create_python_js_data_app_git_credential(configuration_id=PROD)
+                       ──► { git_clone_url: 'https://x-access-token:<token>@github.com/acme/sales-app.git',
+                             credential_id: null, expires_at: '…' }
+3. git push to a work branch, then create_python_js_data_app_draft(configuration_id=PROD, git_branch=...)
+4. deploy_data_app(action='deploy', configuration_id=PROD)   # production mode only
 ```
+
+The push token comes from `POST /v2/apps/{appId}/git-repo/access-token` whenever `GET /v2/apps/{appId}/git-repo` reports `supportsAccessToken: true`:
+
+- It is a write-scoped GitHub App installation token for that one repository. It is not stored, cannot be listed or revoked, and expires in about an hour: on a push that fails with 401/403, mint a new one and `git remote set-url`.
+- Kai pushes the work branch itself, so the draft is created on an existing branch: sandboxes-service never cuts a branch on GitHub for it.
+- `400` "permissions not approved": the GitHub organization owner has not approved the GitHub App's write access yet. `400` otherwise: a read-only role, or the organization connection. `502`/`503`: the stack cannot issue write tokens.
+- A repository connected with a personal token, an SSH key or no credentials (`supportsAccessToken: false`) gets no credential: the tool says to switch the app to organization auth.
 
 The stored `parameters.dataApp.git` block is the same one the Keboola UI writes:
 
@@ -329,7 +339,7 @@ Rules (mirroring sandboxes-service `GitNode` and `OrganizationRepositoryValidato
 - The URL must be `https://<host>/<owner>/<repository>[.git]` on `github.com` or a `*.ghe.com` host — no embedded credentials, port, query, fragment or extra path. The stack's own list of GitHub hosts is authoritative; a host the stack has no GitHub App for fails at deploy time with an actionable message.
 - `authType: organization` and explicit credentials (`username`/`#password`/`#sshKey`) are mutually exclusive.
 - **Rebind**: `modify_python_js_data_app(configuration_id=PROD, git_repository=..., git_auth='organization')` rebinds an app that is already on an external repository (e.g. one bound with a personal access token); the stored credentials are dropped. An app on a Keboola-managed repo cannot be rebound (the managed repo is fixed when the app is created and the platform refuses organization auth on it) — create a new app instead. A `branch`-only update repoints the branch as for any external-git app.
-- **Not supported yet**: drafts (`git_repository` with `parent_configuration_id` is rejected), dev mode (`deploy_data_app(mode='dev')` is rejected before any API call), the preview link, and git credentials (`create_python_js_data_app_git_credential` is rejected — there is no managed repo).
+- Drafts and their preview links work as on a Keboola-managed repo. `deploy_data_app(mode='dev')` is rejected for every app.
 - `get_data_apps` / `modify_python_js_data_app` report such apps with `git_auth_type='organization'`.
 - When the deploy or the app run fails because the organization is not connected, or the GitHub App is not installed on the repository owner, the error carries the hint: someone who is both a Keboola organization admin and an owner of the GitHub organization installs the Keboola GitHub App first, then connects the GitHub organization, following https://help.keboola.com/management/organization/#connect-github (not a menu path, which most customer admins do not see). When the stack has no GitHub App for the repository's host, the error says so.
 

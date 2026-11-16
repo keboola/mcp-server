@@ -8,6 +8,7 @@ import pytest
 
 from keboola_mcp_server.clients.base import RawKeboolaClient
 from keboola_mcp_server.clients.data_science import (
+    AppGitAccessTokenResponse,
     AppGitRepoResponse,
     AppPreviewLinkResponse,
     AppRunResponse,
@@ -265,6 +266,32 @@ async def test_get_app_git_repo_returns_urls() -> None:
     assert result.https_url == 'https://managed.repo/org/app.git'
     assert result.is_managed_git_repo is True
     client.get.assert_awaited_once_with(endpoint='v2/apps/app-123/git-repo')
+
+
+@pytest.mark.asyncio
+async def test_create_app_git_access_token_posts_read_write_and_parses_the_token() -> None:
+    client = DataScienceClient.create('https://api.example.com', token=None)
+    client.post = AsyncMock(  # type: ignore[assignment]
+        return_value={'username': 'x-access-token', 'token': 'ghs_abc', 'expiresAt': '2026-11-16T10:00:00+00:00'}
+    )
+
+    result = await client.create_app_git_access_token('app-123')
+
+    assert result == AppGitAccessTokenResponse(
+        username='x-access-token', token='ghs_abc', expires_at='2026-11-16T10:00:00+00:00'
+    )
+    client.post.assert_awaited_once_with(
+        endpoint='v2/apps/app-123/git-repo/access-token', data={'permissions': 'readWrite'}
+    )
+
+
+@pytest.mark.parametrize(('payload', 'expected'), [({'supportsAccessToken': True}, True), ({}, False)])
+def test_app_git_repo_response_reads_supports_access_token(payload: dict, expected: bool) -> None:
+    """An org-auth repo reports `supportsAccessToken`; a response without it (older service) mints no token."""
+    response = AppGitRepoResponse.model_validate(
+        {'httpsUrl': 'https://github.com/acme/app.git', 'isManagedGitRepo': False, **payload}
+    )
+    assert response.supports_access_token is expected
 
 
 def test_app_git_repo_response_missing_managed_flag_defaults_to_none() -> None:
