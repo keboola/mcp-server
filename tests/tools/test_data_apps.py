@@ -1469,7 +1469,6 @@ async def test_modify_python_js_data_app_create_prod_derives_or_honors_slug(
     clean DNS-label-safe slug (AI-3634)."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
-    keboola_client.has_feature = mocker.AsyncMock(return_value=True)
     workspace_manager.get_data_app_branch_id = mocker.AsyncMock(return_value='branch-1')
 
     keboola_client.data_science_client.create_data_app = mocker.AsyncMock(
@@ -1590,7 +1589,6 @@ async def test_modify_python_js_data_app_update_slug(
     An OIDC app keeps its slug on a rename, because the callback URL registered at the IdP contains it.
     """
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-    keboola_client.has_feature = mocker.AsyncMock(return_value=True)
     data_app_block: dict = {'slug': stored_slug}
     if is_draft:
         data_app_block |= {'isDraft': True, 'parentConfigurationId': 'cfg-prod'}
@@ -1656,7 +1654,6 @@ async def test_modify_python_js_data_app_update_rejects_invalid_slug(
 ) -> None:
     """Update path rejects an explicit slug on a draft and any slug that is not a DNS label."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-    keboola_client.has_feature = mocker.AsyncMock(return_value=True)
     existing = (
         _make_python_js_draft_data_app(configuration_id='cfg-1', data_app_id='app-1', parent_configuration_id='p')
         if is_draft
@@ -1684,7 +1681,6 @@ async def test_modify_python_js_data_app_create_calls_full_provisioning_chain(
     credential creation is now a separate tool — not exercised here."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
-    keboola_client.has_feature = mocker.AsyncMock(return_value=True)
 
     workspace_manager.get_data_app_branch_id = mocker.AsyncMock(return_value='branch-1')
 
@@ -1765,7 +1761,6 @@ async def test_modify_python_js_data_app_create_authentication_type(
     which is skipped here to check that the create path never makes the app public by mistake."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
-    keboola_client.has_feature = mocker.AsyncMock(return_value=True)
 
     workspace_manager.get_data_app_branch_id = mocker.AsyncMock(return_value='branch-1')
 
@@ -1828,7 +1823,6 @@ async def test_modify_python_js_data_app_no_auth_rejected_only_on_drafts(
     public draft would expose Storage-reading/writing endpoints. Prod apps may still be public."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
-    keboola_client.has_feature = mocker.AsyncMock(return_value=True)
     workspace_manager.get_data_app_branch_id = mocker.AsyncMock(return_value='branch-1')
 
     data_app_block: dict = {'slug': 'old-slug'}
@@ -1905,7 +1899,6 @@ async def test_modify_python_js_data_app_oidc_rejected(
 ) -> None:
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
-    keboola_client.has_feature = mocker.AsyncMock(return_value=True)
     workspace_manager.get_data_app_branch_id = mocker.AsyncMock(return_value='branch-1')
     data_app_block: dict = {'slug': 'old-slug'}
     if target_is_draft:
@@ -2041,7 +2034,6 @@ async def test_modify_python_js_data_app_update_oidc_output(
     unexpected_phrases: list[str],
 ) -> None:
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-    keboola_client.has_feature = mocker.AsyncMock(return_value=True)
     existing = _make_python_js_prod_data_app(configuration_id='cfg-1', data_app_id='app-1')
     existing.configuration['authorization'] = _stored_oidc_authorization(stored_secret)
     mocker.patch(
@@ -2189,7 +2181,6 @@ async def test_modify_python_js_data_app_update_patches_storage_config(
     still reports success.
     """
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-    keboola_client.has_feature = mocker.AsyncMock(return_value=True)
 
     workspace_manager.get_data_app_branch_id = mocker.AsyncMock(return_value='branch-1')
 
@@ -2272,7 +2263,6 @@ async def test_modify_python_js_data_app_update_repoints_external_git_branch(
     `parameters.dataApp.git.branch`, the encrypted `#password`/`repository`/`username` are
     preserved, no re-encryption happens, and the change_summary hints at redeploy (CFTL-714)."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-    keboola_client.has_feature = mocker.AsyncMock(return_value=True)
     workspace_manager.get_data_app_branch_id = mocker.AsyncMock(return_value='branch-1')
 
     git_block = {
@@ -2345,7 +2335,6 @@ async def test_modify_python_js_data_app_update_branch_rejected_on_managed_repo_
     git block — it carries one here to prove block-presence is no longer the discriminator. Nothing
     is written (CFTL-714 review)."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-    keboola_client.has_feature = mocker.AsyncMock(return_value=True)
     workspace_manager.get_data_app_branch_id = mocker.AsyncMock(return_value='branch-1')
 
     managed_repo_app = DataApp(
@@ -2386,51 +2375,30 @@ async def test_modify_python_js_data_app_update_branch_rejected_on_managed_repo_
     keboola_client.storage_client.configuration_update.assert_not_called()
 
 
-def _assert_legacy_fallback_hint(change_summary: str | None, *, expected: bool) -> None:
-    """The legacy WORKSPACE_ID fallback is deprecated, so every write through it must tell the
-    agent so -- and nothing else may claim it did."""
-    hint = 'deprecated' in (change_summary or '') and 'data-apps-storage-workspace' in (change_summary or '')
-    assert hint is expected, change_summary
-
-
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ('has_feature', 'storage_access', 'expected_workspace', 'expected_secrets'),
+    ('storage_access', 'expected_workspace'),
     [
-        (True, None, {'enabled': True}, None),
-        (True, True, {'enabled': True}, None),
-        (True, False, None, None),
-        (False, None, None, {'WORKSPACE_ID': 'wid-legacy'}),
-        (False, True, None, {'WORKSPACE_ID': 'wid-legacy'}),
-        (False, False, None, None),
+        (None, {'enabled': True}),
+        (True, {'enabled': True}),
+        (False, None),
     ],
-    ids=[
-        'feature_omitted_defaults_on',
-        'feature_explicit_on',
-        'feature_opted_out',
-        'legacy_omitted_defaults_on',
-        'legacy_explicit_on',
-        'legacy_opted_out',
-    ],
+    ids=['omitted_defaults_on', 'explicit_on', 'opted_out'],
 )
 async def test_modify_python_js_data_app_create_storage_access(
     mocker,
     mcp_context_client: Context,
     workspace_manager,
-    has_feature: bool,
     storage_access: bool | None,
     expected_workspace: JsonDict | None,
-    expected_secrets: JsonDict | None,
 ) -> None:
-    """`storage_access` drives Storage access on create through whichever mechanism the project
-    supports: `runtime.workspace.enabled` when `data-apps-storage-workspace` is on, and the legacy
-    `parameters.dataApp.secrets.WORKSPACE_ID` fallback when it is off. Omitting it keeps the
-    historical create default (Storage access on); `False` opts out on both mechanisms."""
+    """`storage_access` drives Storage access on create through `runtime.workspace.enabled`.
+    Omitting it keeps the historical create default (Storage access on). The MCP never writes a
+    `WORKSPACE_ID` secret, so it never resolves its own workspace for the app."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
-    keboola_client.has_feature = mocker.AsyncMock(return_value=has_feature)
 
-    workspace_manager.get_data_app_workspace_id = mocker.AsyncMock(return_value='wid-legacy')
+    workspace_manager.get_data_app_workspace_id = mocker.AsyncMock(return_value='wid-mcp')
 
     app_response = _make_python_js_data_app_response()
     keboola_client.data_science_client.create_data_app = mocker.AsyncMock(return_value=app_response)
@@ -2458,91 +2426,67 @@ async def test_modify_python_js_data_app_create_storage_access(
     # `exclude_none=True` prunes the whole `runtime` block when the MCP sets no fields in it
     # (image is platform-default, workspace off), hence the `.get` chain rather than indexing.
     assert serialized.get('runtime', {}).get('workspace') == expected_workspace
-    assert serialized['parameters']['dataApp'].get('secrets') == expected_secrets
+    assert serialized['parameters']['dataApp'].get('secrets') is None
     # The agent must be able to verify Storage access rather than assume it.
     assert result.data_app.storage_access_enabled is (storage_access is not False)
-    _assert_legacy_fallback_hint(result.change_summary, expected=expected_secrets is not None)
+    workspace_manager.get_data_app_workspace_id.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    (
-        'has_feature',
-        'storage_access',
-        'existing_workspace',
-        'existing_secrets',
-        'expected_workspace',
-        'expected_secrets',
-        'expect_legacy_fallback',
-    ),
+    ('storage_access', 'existing_workspace', 'existing_secrets', 'expected_workspace', 'expected_secrets'),
     [
-        # Omitting `storage_access` never changes Storage access, on either mechanism — an
-        # unrelated edit (rename, auto-suspend) must not grant or revoke it.
-        (True, None, None, {'KEEP': 'x'}, None, {'KEEP': 'x'}, False),
-        (True, None, {'enabled': True}, {'KEEP': 'x'}, {'enabled': True}, {'KEEP': 'x'}, False),
-        (False, None, None, {'KEEP': 'x'}, None, {'KEEP': 'x'}, False),
-        # Explicit enable — an existing flagless app becomes
-        # Storage-enabled through MCP alone, with no UI step.
-        (True, True, None, {'KEEP': 'x'}, {'enabled': True}, {'KEEP': 'x'}, False),
-        (False, True, None, {'KEEP': 'x'}, None, {'KEEP': 'x', 'WORKSPACE_ID': 'wid-legacy'}, True),
-        # An app that already carries a WORKSPACE_ID keeps it, and the fallback is never resolved:
-        # resolving provisions a workspace the app will not use, and raises outright in a
-        # workspace-pinned session.
+        # Omitting `storage_access` never changes Storage access -- an unrelated edit (rename,
+        # auto-suspend) must not grant or revoke it.
+        (None, None, {'KEEP': 'x'}, None, {'KEEP': 'x'}),
+        (None, {'enabled': True}, {'KEEP': 'x'}, {'enabled': True}, {'KEEP': 'x'}),
+        (None, None, {'KEEP': 'x', 'WORKSPACE_ID': 'wid-old'}, None, {'KEEP': 'x', 'WORKSPACE_ID': 'wid-old'}),
+        # Explicit enable -- an existing flagless app becomes Storage-enabled through MCP alone.
+        (True, None, {'KEEP': 'x'}, {'enabled': True}, {'KEEP': 'x'}),
+        # An older app that already carries a WORKSPACE_ID secret keeps it on enable: it may be a
+        # workspace the user wired up outside the MCP.
         (
-            False,
             True,
             None,
             {'KEEP': 'x', 'WORKSPACE_ID': 'wid-user'},
-            None,
+            {'enabled': True},
             {'KEEP': 'x', 'WORKSPACE_ID': 'wid-user'},
-            False,
         ),
         # Explicit disable.
-        (True, False, {'enabled': True}, {'KEEP': 'x'}, {'enabled': False}, {'KEEP': 'x'}, False),
-        (False, False, None, {'KEEP': 'x', 'WORKSPACE_ID': 'wid-old'}, None, {'KEEP': 'x'}, False),
-        # Disabling must strip a stale legacy secret even on a feature-enabled project: secrets
-        # reach the app as env vars regardless of the feature, so leaving it behind would keep
-        # WORKSPACE_ID flowing into an app we just reported as having no Storage access.
-        (
-            True,
-            False,
-            {'enabled': True},
-            {'KEEP': 'x', 'WORKSPACE_ID': 'wid-stale'},
-            {'enabled': False},
-            {'KEEP': 'x'},
-            False,
-        ),
+        (False, {'enabled': True}, {'KEEP': 'x'}, {'enabled': False}, {'KEEP': 'x'}),
+        # Disabling must strip a legacy secret: secrets reach the app as env vars regardless of
+        # `runtime.workspace`, so leaving it behind would keep WORKSPACE_ID flowing into an app we
+        # just reported as having no Storage access.
+        (False, {'enabled': True}, {'KEEP': 'x', 'WORKSPACE_ID': 'wid-stale'}, {'enabled': False}, {'KEEP': 'x'}),
     ],
     ids=[
-        'feature_omitted_stays_off',
-        'feature_omitted_stays_on',
-        'legacy_omitted_no_backfill',
-        'feature_explicit_enable',
-        'legacy_explicit_enable',
-        'legacy_explicit_enable_preserves_existing_id',
-        'feature_explicit_disable',
-        'legacy_explicit_disable',
-        'feature_explicit_disable_strips_stale_secret',
+        'omitted_stays_off',
+        'omitted_stays_on',
+        'omitted_keeps_legacy_secret',
+        'explicit_enable',
+        'explicit_enable_keeps_legacy_secret',
+        'explicit_disable',
+        'explicit_disable_strips_legacy_secret',
     ],
 )
 async def test_modify_python_js_data_app_update_storage_access(
     mocker,
     mcp_context_client: Context,
     workspace_manager,
-    has_feature: bool,
     storage_access: bool | None,
     existing_workspace: JsonDict | None,
     existing_secrets: JsonDict,
     expected_workspace: JsonDict | None,
     expected_secrets: JsonDict,
-    expect_legacy_fallback: bool,
 ) -> None:
     """On update, `storage_access` is the only thing that moves Storage access. Omitting it leaves
-    the stored config alone — no silent backfill on either mechanism."""
+    the stored config alone -- no silent backfill."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-    keboola_client.has_feature = mocker.AsyncMock(return_value=has_feature)
 
-    workspace_manager.get_data_app_workspace_id = mocker.AsyncMock(return_value='wid-legacy')
+    # A workspace-pinned session has no MCP-managed workspace; the update must not need one.
+    workspace_manager.get_data_app_workspace_id = mocker.AsyncMock(
+        side_effect=ValueError('No MCP-managed workspace exists for this project/branch')
+    )
 
     existing_runtime: JsonDict = {'image': {'version': 'old-version'}}
     if existing_workspace is not None:
@@ -2599,76 +2543,6 @@ async def test_modify_python_js_data_app_update_storage_access(
     assert new_cfg['runtime']['image']['version'] == 'old-version'
     expected_enabled = expected_workspace == {'enabled': True} or 'WORKSPACE_ID' in expected_secrets
     assert result.data_app.storage_access_enabled is expected_enabled
-    # The deprecation hint fires only when the MCP itself writes the legacy secret -- never when it
-    # merely preserves one that is already there.
-    _assert_legacy_fallback_hint(result.change_summary, expected=expect_legacy_fallback)
-    # Resolving the fallback id has side effects (it provisions the shared workspace when the
-    # project has none, and raises in a workspace-pinned session), so it must happen only when the
-    # id is actually going to be written.
-    assert workspace_manager.get_data_app_workspace_id.await_count == (1 if expect_legacy_fallback else 0)
-
-
-@pytest.mark.asyncio
-async def test_modify_python_js_data_app_update_storage_access_survives_unavailable_workspace(
-    mocker,
-    mcp_context_client: Context,
-    workspace_manager,
-) -> None:
-    """A workspace-pinned session (the Data App flow, `X-Workspace-Id`) has no MCP-managed workspace
-    to fall back on -- `get_data_app_workspace_id()` raises rather than provisioning one. Enabling
-    Storage access on an app that already carries a WORKSPACE_ID must still succeed, because nothing
-    needs resolving in the first place."""
-    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-    keboola_client.has_feature = mocker.AsyncMock(return_value=False)
-
-    workspace_manager.get_data_app_workspace_id = mocker.AsyncMock(
-        side_effect=ValueError('No MCP-managed workspace exists for this project/branch')
-    )
-
-    existing_data_app = DataApp(
-        name='Old',
-        component_id=DATA_APP_COMPONENT_ID,
-        configuration_id='cfg-1',
-        data_app_id='app-1',
-        project_id='proj-1',
-        branch_id='branch-1',
-        config_version='2',
-        type='python-js',
-        configuration={
-            'parameters': {
-                'autoSuspendAfterSeconds': 900,
-                'dataApp': {'slug': 'old-slug', 'secrets': {'WORKSPACE_ID': 'wid-pinned'}},
-            },
-        },
-        state='stopped',
-    )
-    mocker.patch(
-        'keboola_mcp_server.tools.data_apps._fetch_data_app',
-        mocker.AsyncMock(side_effect=[existing_data_app, existing_data_app.model_copy(update={'config_version': '3'})]),
-    )
-    keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value={})
-    keboola_client.data_science_client = mocker.AsyncMock()
-    keboola_client.data_science_client.get_app_git_repo = mocker.AsyncMock(
-        return_value=AppGitRepoResponse(
-            ssh_url='git@managed.repo:org/app.git',
-            https_url='https://managed.repo/org/app.git',
-            is_managed_git_repo=True,
-        )
-    )
-    mocker.patch('keboola_mcp_server.tools.data_apps.set_cfg_update_metadata', mocker.AsyncMock())
-    mocker.patch('keboola_mcp_server.tools.data_apps.apply_configuration_folder', mocker.AsyncMock(return_value=None))
-
-    result = await modify_python_js_data_app(
-        ctx=mcp_context_client,
-        name='Old',
-        description='desc',
-        configuration_id='cfg-1',
-        storage_access=True,
-    )
-
-    new_cfg = keboola_client.storage_client.configuration_update.await_args.kwargs['configuration']
-    assert new_cfg['parameters']['dataApp']['secrets'] == {'WORKSPACE_ID': 'wid-pinned'}
-    assert result.data_app.storage_access_enabled is True
     workspace_manager.get_data_app_workspace_id.assert_not_awaited()
 
 
@@ -2902,7 +2776,6 @@ def test_resolve_app_image(configuration: JsonDict, expected_image: RuntimeImage
 def python_js_image_client(mocker, mcp_context_client: Context, workspace_manager) -> KeboolaClient:
     """A client whose python-js create and update paths both succeed against `_RUNTIMES`."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-    keboola_client.has_feature = mocker.AsyncMock(return_value=True)
     workspace_manager.get_data_app_branch_id = mocker.AsyncMock(return_value='branch-1')
     keboola_client.data_science_client = mocker.AsyncMock()
     keboola_client.data_science_client.list_runtimes = mocker.AsyncMock(return_value=_RUNTIMES)
@@ -3540,7 +3413,6 @@ async def test_modify_python_js_data_app_create_prod_calls_get_app_git_repo_for_
     repo read or metadata write still reports it created, so a retry cannot duplicate it."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
-    keboola_client.has_feature = mocker.AsyncMock(return_value=True)
     workspace_manager.get_data_app_branch_id = mocker.AsyncMock(return_value='branch-1')
 
     keboola_client.data_science_client.create_data_app = mocker.AsyncMock(
@@ -4789,7 +4661,6 @@ async def test_modify_python_js_data_app_create_prod_on_organization_repo(
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
     keboola_client.encryption_client = mocker.AsyncMock()
-    keboola_client.has_feature = mocker.AsyncMock(return_value=True)
     workspace_manager.get_data_app_branch_id = mocker.AsyncMock(return_value='branch-1')
     keboola_client.data_science_client.create_data_app = mocker.AsyncMock(
         return_value=_make_python_js_data_app_response()
@@ -4872,7 +4743,6 @@ async def test_modify_python_js_data_app_update_rebinds_to_organization_repo(
     """An app on an external repo with a stored PAT is rebound: the stored credentials are dropped, nothing is
     encrypted, and the change summary points at the repo and the production-only deploy."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-    keboola_client.has_feature = mocker.AsyncMock(return_value=True)
     workspace_manager.get_data_app_branch_id = mocker.AsyncMock(return_value='branch-1')
     existing = _make_external_git_data_app(is_managed_git_repo=False)
     mocker.patch(
@@ -4927,7 +4797,6 @@ async def test_modify_python_js_data_app_update_rebind_rejected(
     mocker, mcp_context_client: Context, workspace_manager, data_app: DataApp, error_match: str
 ) -> None:
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-    keboola_client.has_feature = mocker.AsyncMock(return_value=True)
     workspace_manager.get_data_app_branch_id = mocker.AsyncMock(return_value='branch-1')
     mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=data_app))
     keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value={})

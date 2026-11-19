@@ -262,11 +262,6 @@ def _validate_oidc_args(
 SECRET_WORKSPACE_ID = 'WORKSPACE_ID'
 SECRET_BRANCH_ID = 'BRANCH_ID'
 
-# Project feature that opts python-js data apps into platform-managed per-app workspaces.
-# When enabled, the platform auto-provisions a workspace and injects WORKSPACE_ID at runtime.
-# When disabled, the MCP falls back to passing WORKSPACE_ID via parameters.dataApp.secrets.
-DATA_APPS_STORAGE_WORKSPACE_FEATURE = 'data-apps-storage-workspace'
-
 
 class DataAppSummary(BaseModel):
     """A summary of a data app used for sync operations."""
@@ -294,9 +289,8 @@ class DataAppSummary(BaseModel):
         description=(
             'Whether the data app has read-only Storage access -- i.e. whether a workspace ID '
             'reaches the running app as the WORKSPACE_ID environment variable. True when the stored '
-            'configuration carries `runtime.workspace.enabled = true` (projects with the '
-            '`data-apps-storage-workspace` feature) or a `parameters.dataApp.secrets.WORKSPACE_ID` '
-            'entry (projects without it).\n'
+            'configuration carries `runtime.workspace.enabled = true` or a legacy '
+            '`parameters.dataApp.secrets.WORKSPACE_ID` entry.\n'
             '<!-- directory:omit -->\n'
             'Only populated by `modify_python_js_data_app` responses; '
             'left `None` elsewhere, which means "not determined", not "disabled".\n'
@@ -1415,15 +1409,10 @@ async def modify_python_js_data_app(
     if image_version:
         await _validate_image_version(client, image_version)
 
-    # When the platform-managed workspace feature is off, the data app cannot rely on the
-    # platform to inject WORKSPACE_ID; fall back to passing it via parameters.dataApp.secrets.
-    has_storage_workspace = await client.has_feature(DATA_APPS_STORAGE_WORKSPACE_FEATURE)
     # Create keeps its historical default of Storage access ON; update only ever moves the flag
     # when explicitly asked to, so an unrelated edit (a rename, an auto-suspend change) can neither
     # grant nor revoke Storage access -- on either mechanism.
     wants_storage_access = storage_access is True if configuration_id else storage_access is not False
-    legacy_workspace_id: str | None = None
-    legacy_fallback_hint: str | None = None
 
     if configuration_id:
         # Update existing python-js data app; the repo is read only for the rebind and branch checks.
@@ -1445,26 +1434,12 @@ async def modify_python_js_data_app(
             and _oidc_provider(data_app.configuration.get('authorization') or {}) is not None
         )
         new_slug = _resolve_slug_update(data_app, name=name, explicit_slug=slug, oidc_app=oidc_app)
-        if (
-            not has_storage_workspace
-            and wants_storage_access
-            and not _config_legacy_workspace_id(data_app.configuration)
-        ):
-            # Only resolve once we know the app has no id of its own to keep. Resolving provisions
-            # the shared MCP-managed workspace when the project has none, and raises outright in a
-            # workspace-pinned session -- neither of which should happen when the existing id is
-            # about to be preserved verbatim.
-            legacy_workspace_id, legacy_fallback_hint = await _resolve_legacy_workspace_fallback(
-                ctx, client, configuration_id=configuration_id
-            )
         updated_config = _update_existing_code_data_app_config(
             existing_config=data_app.configuration,
             auto_suspend_after_seconds=auto_suspend_after_seconds,
             authentication_type=authentication_type,
             oidc=oidc,
             storage_access=storage_access,
-            has_storage_workspace=has_storage_workspace,
-            legacy_workspace_id=legacy_workspace_id,
             storage=validated_storage,
             branch=normalized_branch,
             git=git_rebind,
@@ -1575,7 +1550,6 @@ async def modify_python_js_data_app(
                     branch_hint,
                     storage_access_hint,
                     _image_version_hint(image_version),
-                    legacy_fallback_hint,
                     oidc_hint,
                 )
                 if note
@@ -1608,10 +1582,6 @@ async def modify_python_js_data_app(
         # Create a new python-js prod app: a managed repo, or a customer's repository with `git_repository`.
         # Narrowed by the validation block at the top of this function.
         assert slug is not None
-        if not has_storage_workspace and wants_storage_access:
-            legacy_workspace_id, legacy_fallback_hint = await _resolve_legacy_workspace_fallback(
-                ctx, client, configuration_id=None
-            )
         # On create, anything but an explicit 'no-auth' becomes 'basic-auth' (fail closed), to match
         # modify_streamlit_data_app.
         uses_basic_auth = authentication_type != 'no-auth'
@@ -1630,13 +1600,10 @@ async def modify_python_js_data_app(
                 ),
                 data_app=CodeDataAppConfig.Parameters.DataApp(
                     slug=slug,
-                    secrets={SECRET_WORKSPACE_ID: legacy_workspace_id} if legacy_workspace_id else None,
                     git=git_block,
                 ),
             ),
-            runtime=_new_code_data_app_runtime(
-                workspace_enabled=has_storage_workspace and wants_storage_access, image_version=image_version
-            ),
+            runtime=_new_code_data_app_runtime(workspace_enabled=wants_storage_access, image_version=image_version),
             authorization=authorization_model,
             # An empty (or all-empty) storage block prunes to `{}`; omit it entirely rather than
             # persisting an empty object that the backend would store as `[]` (AI-3135).
@@ -1705,10 +1672,7 @@ async def modify_python_js_data_app(
         organization_hint = (
             _organization_git_hint(git_block, rebound=False) if git_block is not None and git_block.auth_type else None
         )
-        change_summary = (
-            '\n'.join(note for note in (repo_hint, folder_hint, organization_hint, legacy_fallback_hint) if note)
-            or None
-        )
+        change_summary = '\n'.join(note for note in (repo_hint, folder_hint, organization_hint) if note) or None
         return ModifiedPythonJsDataAppOutput(
             response='created',
             change_summary=change_summary,
@@ -1956,50 +1920,14 @@ def _config_legacy_workspace_id(config: Mapping[str, Any]) -> str | None:
     return str(workspace_id) if workspace_id else None
 
 
-async def _resolve_legacy_workspace_fallback(
-    ctx: Context, client: KeboolaClient, *, configuration_id: str | None
-) -> tuple[str, str]:
-    """Resolve the shared workspace id for the deprecated secrets fallback, and the hint that goes
-    with it.
-
-    Call this only when the id is actually going to be written. Resolving it provisions the shared
-    MCP-managed workspace when the project has none yet, and raises outright in a workspace-pinned
-    session (see `WorkspaceManager._get_managed_workspace`) -- so a speculative call can both create
-    a workspace nothing will use and fail an update that needed nothing from it.
-    """
-    workspace_manager = WorkspaceManager.from_state(ctx.session.state)
-    workspace_id = str(await workspace_manager.get_data_app_workspace_id())
-    hint = (
-        'Storage access is wired through the deprecated '
-        '`parameters.dataApp.secrets.WORKSPACE_ID` fallback, because this project does not have '
-        f'the `{DATA_APPS_STORAGE_WORKSPACE_FEATURE}` feature. The fallback pins the app to the '
-        'shared MCP-managed workspace rather than one provisioned per app. Ask Keboola support '
-        f'to enable `{DATA_APPS_STORAGE_WORKSPACE_FEATURE}` on this project to move to '
-        'platform-managed per-app workspaces.'
-    )
-    # Logged so the remaining exposure is measurable per project -- the fallback can only be
-    # retired once we know who still depends on it. Worth one extra `tokens/verify` on a
-    # deprecated path that is already doing a workspace lookup.
-    # Deliberately logs no workspace id: `project_id` + `configuration_id` are what the rollout
-    # needs to count, the id is recoverable from the config, and keeping values that reach a
-    # `secrets` map out of the logs avoids clear-text-logging findings entirely.
-    project_id = await client.storage_client.project_id()
-    LOG.warning(
-        f'Data app Storage access is using the deprecated WORKSPACE_ID secret fallback: '
-        f'project_id={project_id}, configuration_id={configuration_id or "<new>"}. '
-        f'The {DATA_APPS_STORAGE_WORKSPACE_FEATURE} feature is not enabled on this project.'
-    )
-    return workspace_id, hint
-
-
 def _code_config_has_storage_access(config: Mapping[str, Any]) -> bool:
     """Whether a python-js data app config grants read-only Storage access.
 
-    Either marker counts, regardless of the project's feature state. `parameters.dataApp.secrets`
-    reach the app as environment variables whatever the feature does, so an app carrying a legacy
-    `WORKSPACE_ID` secret has Storage access even on a feature-enabled project whose
-    `runtime.workspace.enabled` is false. Reporting the union is the safe direction to err: telling
-    a caller Storage access is off while the app can still read Storage is the dangerous answer.
+    Either marker counts. `parameters.dataApp.secrets` reach the app as environment variables
+    regardless of `runtime.workspace`, so an older app still carrying a legacy `WORKSPACE_ID`
+    secret has Storage access even when its `runtime.workspace.enabled` is false. Reporting the union is the safe
+    direction to err: telling a caller Storage access is off while the app can still read Storage is the dangerous
+    answer.
     """
     workspace = (config.get('runtime') or {}).get('workspace') or {}
     return bool(workspace.get('enabled')) or _config_legacy_workspace_id(config) is not None
@@ -2010,8 +1938,6 @@ def _update_existing_code_data_app_config(
     auto_suspend_after_seconds: int | None = None,
     authentication_type: AuthenticationType = 'default',
     storage_access: bool | None = None,
-    has_storage_workspace: bool = True,
-    legacy_workspace_id: str | None = None,
     storage: dict[str, Any] | None = None,
     branch: str | None = None,
     git: CodeDataAppConfig.Parameters.DataApp.Git | None = None,
@@ -2030,11 +1956,10 @@ def _update_existing_code_data_app_config(
     `authentication_type='default'` preserves the existing `authorization` block (including OIDC
     setups configured outside the MCP); 'no-auth' / 'basic-auth' overwrite it; 'oidc' rewrites the
     OIDC provider from `oidc` and keeps the stored client secret.
-    `storage_access` moves the app's read-only Storage access, through whichever mechanism the
-    project supports: `runtime.workspace.enabled` when `has_storage_workspace` is true, and the
-    legacy `parameters.dataApp.secrets.WORKSPACE_ID` entry (taken from `legacy_workspace_id`) when
-    it is false. `None` is the no-op: the stored config keeps whatever it has, so an update that
-    only renames an app never grants or revokes Storage access. Any other pre-existing
+    `storage_access` moves the app's read-only Storage access through `runtime.workspace.enabled`.
+    Disabling also removes a legacy `parameters.dataApp.secrets.WORKSPACE_ID` entry; enabling keeps
+    one that is already there. `None` is the no-op: the stored config keeps whatever it has, so an
+    update that only renames an app never grants or revokes Storage access. Any other pre-existing
     secrets are preserved verbatim by the deepcopy either way.
     `storage` replaces the entire `storage` block when provided (None preserves the existing one;
     an empty dict — or one that prunes down to nothing — is an explicit wipe that removes the
@@ -2071,23 +1996,17 @@ def _update_existing_code_data_app_config(
     if slug is not None:
         new_config['parameters'].setdefault('dataApp', {})['slug'] = slug
     if storage_access is not None:
-        if has_storage_workspace:
-            # Write the flag either way rather than dropping the block on disable: an explicit
-            # `enabled: false` records the decision, where an absent block is indistinguishable
-            # from an app that predates the feature.
-            new_config.setdefault('runtime', {})['workspace'] = {'enabled': storage_access}
+        # Write the flag either way rather than dropping the block on disable: an explicit
+        # `enabled: false` records the decision, where an absent block is indistinguishable
+        # from an app that never set it.
+        new_config.setdefault('runtime', {})['workspace'] = {'enabled': storage_access}
         data_app = new_config['parameters'].setdefault('dataApp', {})
         updated_secrets = dict(data_app.get('secrets') or {})
         if not storage_access:
-            # Strip the legacy secret whatever the project's feature state. `secrets` reach the app
-            # as environment variables regardless of `runtime.workspace`, so leaving a stale entry
-            # behind would keep WORKSPACE_ID flowing into an app we just reported as having no
-            # Storage access -- an app migrated onto the feature still carries one.
+            # `secrets` reach the app as environment variables regardless of `runtime.workspace`, so
+            # an older app's legacy WORKSPACE_ID secret would keep Storage access flowing into an app
+            # we just reported as having none.
             updated_secrets.pop(SECRET_WORKSPACE_ID, None)
-        elif not has_storage_workspace and legacy_workspace_id is not None:
-            # Don't overwrite an id the app is already bound to -- it may be a workspace the user
-            # wired up outside the MCP.
-            updated_secrets.setdefault(SECRET_WORKSPACE_ID, legacy_workspace_id)
         if updated_secrets:
             data_app['secrets'] = updated_secrets
         else:
