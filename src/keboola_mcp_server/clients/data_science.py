@@ -281,9 +281,8 @@ class CodeDataAppConfig(BaseModel):
                 description=(
                     'Runtime secrets exposed to the data app as environment variables. '
                     'KBC_TOKEN/KBC_URL/BRANCH_ID are always injected by the platform and must not be '
-                    'set here. WORKSPACE_ID is set by the platform only when '
-                    '`runtime.workspace.enabled = true`; on projects without the '
-                    '`data-apps-storage-workspace` feature, WORKSPACE_ID must be passed here instead.'
+                    'set here. WORKSPACE_ID is set by the platform when '
+                    '`runtime.workspace.enabled = true`.'
                 ),
                 default=None,
             )
