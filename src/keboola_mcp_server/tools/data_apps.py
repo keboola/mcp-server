@@ -2421,6 +2421,20 @@ _DRAFT_URL_POLL_SECONDS = 2
 _DRAFT_BRANCH_MISSING = 'does not exist'
 
 
+async def _draft_on_branch(client: KeboolaClient, data_app_id: str, branch: str) -> DraftResponse | None:
+    """The app's draft that already serves `branch`, if any.
+
+    - The API accepts several drafts on one branch, so this is the only guard against a duplicate.
+    - A failed listing returns `None`: it must not block creating a draft.
+    """
+    try:
+        drafts = await client.data_science_client.list_drafts(data_app_id)
+    except Exception:
+        LOG.exception(f'Failed to list drafts of data app {data_app_id} before creating one on branch {branch}')
+        return None
+    return next((draft for draft in drafts if draft.git_branch == branch), None)
+
+
 @tool_errors()
 async def create_python_js_data_app_draft(
     ctx: Context,
@@ -2446,6 +2460,7 @@ async def create_python_js_data_app_draft(
 
     Errors:
     - branch "does not exist": push the branch first, then call again.
+    - "already serves branch": continue that draft instead; a closed preview pane never means it is gone.
     - "not available on this Keboola stack": tell the user.
     """
     client = KeboolaClient.from_state(ctx.session.state)
@@ -2463,6 +2478,14 @@ async def create_python_js_data_app_draft(
             f'configuration_id ("{parent}").'
         )
     branch = _normalize_branch_name(git_branch)
+    if existing := await _draft_on_branch(client, data_app.data_app_id, branch):
+        raise ValueError(
+            f'Draft "{existing.id}" already serves branch "{branch}" (run_state: {existing.run_state}), and a second '
+            'draft would serve every push to it as well. Continue that draft: push to the branch and show its `url` '
+            'in the preview; a stopped draft wakes on the next request. To recreate it after a config change, '
+            f'delete it first: delete_python_js_data_app_draft(configuration_id="{configuration_id}", '
+            f'draft_id="{existing.id}").'
+        )
     try:
         draft = await client.data_science_client.create_draft(data_app.data_app_id, branch)
     except NEVER_SENT_ERRORS:

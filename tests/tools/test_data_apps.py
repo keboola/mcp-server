@@ -5228,8 +5228,8 @@ async def test_create_python_js_data_app_git_credential_refuses_customer_repo(
         ds_client.create_app_git_credential.assert_not_called()
 
 
-def _draft(url: str | None, run_state: str = 'neverRun') -> DraftResponse:
-    return DraftResponse(id='d-1', url=url, git_branch='feat', run_state=run_state, created_at='t')
+def _draft(url: str | None, run_state: str = 'neverRun', git_branch: str = 'feat') -> DraftResponse:
+    return DraftResponse(id='d-1', url=url, git_branch=git_branch, run_state=run_state, created_at='t')
 
 
 @pytest.mark.asyncio
@@ -5247,6 +5247,10 @@ async def test_create_python_js_data_app_draft_waits_for_url(mocker, mcp_context
     prod = make_prod()
     mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=prod))
     mocker.patch('keboola_mcp_server.tools.data_apps.asyncio.sleep', mocker.AsyncMock())
+    # A draft on another branch does not block this one.
+    keboola_client.data_science_client.list_drafts = mocker.AsyncMock(
+        return_value=[_draft('https://draft-0.hub.test', 'running', git_branch='other')]
+    )
     keboola_client.data_science_client.create_draft = mocker.AsyncMock(return_value=_draft(None))
     keboola_client.data_science_client.get_draft = mocker.AsyncMock(
         side_effect=[_draft(None, 'pending'), _draft('https://draft-1.hub.test', 'starting')]
@@ -5340,6 +5344,12 @@ async def test_create_python_js_data_app_draft_reraises_an_unsent_request(
             'not available on this Keboola stack',
             id='no_route',
         ),
+        pytest.param(
+            'prod',
+            None,
+            r'Draft "d-1" already serves branch "x" \(run_state: stopped\).*delete_python_js_data_app_draft',
+            id='branch_has_a_draft',
+        ),
     ],
 )
 async def test_create_python_js_data_app_draft_errors(
@@ -5348,6 +5358,10 @@ async def test_create_python_js_data_app_draft_errors(
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     mocker.patch(
         'keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=_preview_app(app_kind))
+    )
+    # Only a prod app with no create error reaches the listing; its branch already has a draft.
+    keboola_client.data_science_client.list_drafts = mocker.AsyncMock(
+        return_value=[_draft('https://draft-1.hub.test', 'stopped', git_branch='x')] if error is None else []
     )
     keboola_client.data_science_client.create_draft = mocker.AsyncMock(side_effect=error)
 

@@ -2193,6 +2193,7 @@ Creates a draft of a python-js data app: its own workload on its own host, servi
 
 Errors:
 - branch "does not exist": push the branch first, then call again.
+- "already serves branch": continue that draft instead; a closed preview pane never means it is gone.
 - "not available on this Keboola stack": tell the user.
 
 
