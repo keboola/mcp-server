@@ -451,20 +451,16 @@ async def test_python_js_data_app_storage_access_can_be_enabled_after_create(
     using MCP tools alone, with no UI step.
 
     Creates an app that explicitly opts out of Storage access, verifies the stored configuration
-    carries neither marker, then enables it through `modify_python_js_data_app(storage_access=True)`
-    and verifies the marker is there. Which marker is used depends on whether the project has the
-    `data-apps-storage-workspace` feature (`runtime.workspace.enabled` if so, the legacy
-    `parameters.dataApp.secrets.WORKSPACE_ID` if not), so the assertions accept either -- what
-    matters is that the app ends up with a workspace id reaching it as WORKSPACE_ID.
+    does not enable the workspace, then enables it through `modify_python_js_data_app(storage_access=True)`
+    and verifies `runtime.workspace.enabled` is set.
 
-    Whether that environment variable actually lands in the running container is a platform
+    Whether WORKSPACE_ID actually lands in the running container is a platform
     concern this test cannot observe; verify it manually on a deployed app.
     """
 
     def has_storage_access(configuration: Mapping[str, Any]) -> bool:
         workspace = (configuration.get('runtime') or {}).get('workspace') or {}
-        secrets = ((configuration.get('parameters') or {}).get('dataApp') or {}).get('secrets') or {}
-        return bool(workspace.get('enabled')) or bool(secrets.get('WORKSPACE_ID'))
+        return bool(workspace.get('enabled'))
 
     async def fetch_configuration(configuration_id: str) -> Mapping[str, Any]:
         detail = await mcp_client.call_tool(name='get_data_apps', arguments={'configuration_ids': [configuration_id]})

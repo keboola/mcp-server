@@ -71,27 +71,24 @@ The data-science platform now picks a default runtime image for python-js apps, 
 
 ### Per-app workspace (Storage access)
 
-A python-js app can read Storage only if a workspace ID reaches it as the `WORKSPACE_ID` environment variable. Two mechanisms deliver it, and which one applies is a **property of the project**, not a choice:
+A python-js app can read Storage only if a workspace ID reaches it as the `WORKSPACE_ID` environment variable. The app opts in through its own configuration: with `runtime.workspace.enabled = true`, the platform provisions a workspace **per data app** and injects its ID. No project feature is needed.
 
-| Project | Mechanism | Where it lives in the config |
-|---|---|---|
-| Has the `data-apps-storage-workspace` feature | The platform auto-provisions a workspace **per data app** and injects its ID | `runtime.workspace.enabled = true` |
-| Lacks the feature (some single-tenant stacks) | The MCP server writes the ID of the **shared MCP-managed** read-only workspace itself | `parameters.dataApp.secrets.WORKSPACE_ID` — **deprecated**, see below |
+Older apps may still carry a `parameters.dataApp.secrets.WORKSPACE_ID` entry, written by earlier MCP versions for projects that could not get a per-app workspace. The MCP server no longer writes this secret, but it still respects one that is there (see below).
 
-The MCP server never writes `BRANCH_ID`, `KBC_TOKEN` or `KBC_URL` into a python-js configuration — the platform surfaces those at runtime regardless. (Streamlit apps still receive the full secret set from the MCP server, because they have no auto-workspace feature and no `runtime` block at all.)
+The MCP server never writes `BRANCH_ID`, `KBC_TOKEN` or `KBC_URL` into a python-js configuration — the platform surfaces those at runtime regardless. (Streamlit apps still receive the full secret set from the MCP server, because they have no `runtime` block at all.)
 
 #### The `storage_access` argument
 
-`modify_python_js_data_app(storage_access=...)` drives whichever of the two mechanisms the project uses, so an agent never has to know which one is in play. `data_app.storage_access_enabled` in the response reports the resulting state.
+`modify_python_js_data_app(storage_access=...)` sets `runtime.workspace.enabled`. `data_app.storage_access_enabled` in the response reports the resulting state.
 
 | Call | `storage_access` | Effect |
 |---|---|---|
 | create | omitted | Storage access **on** — the historical default, unchanged |
 | create | `True` | Storage access on, explicitly |
-| create | `False` | Storage access off: no `runtime` block, no `WORKSPACE_ID` secret |
+| create | `False` | Storage access off: no `runtime.workspace` block |
 | update | omitted | **No-op.** Whatever the app has, it keeps |
-| update | `True` | Turns it on — writes `runtime.workspace.enabled = true`, or merges the `WORKSPACE_ID` secret without overwriting an ID already there |
-| update | `False` | Turns it off — writes `runtime.workspace.enabled = false` **and** removes any `WORKSPACE_ID` secret |
+| update | `True` | Turns it on — writes `runtime.workspace.enabled = true`; a legacy `WORKSPACE_ID` secret already there is kept |
+| update | `False` | Turns it off — writes `runtime.workspace.enabled = false` **and** removes any legacy `WORKSPACE_ID` secret |
 
 A change on the update path only reaches the running app after a redeploy (`deploy_data_app`).
 
@@ -103,29 +100,20 @@ Note the MCP does not currently verify that the platform-provisioned per-app wor
 
 #### Backfill: explicit only
 
-**An update never backfills Storage access.** Omitting `storage_access` leaves the stored config untouched on both mechanisms, so renaming an app or changing its auto-suspend can neither grant nor revoke its Storage access. Repairing an app that fails with `missing required env vars: WORKSPACE_ID` is a deliberate `storage_access=True` call.
+**An update never backfills Storage access.** Omitting `storage_access` leaves the stored config untouched, so renaming an app or changing its auto-suspend can neither grant nor revoke its Storage access. Repairing an app that fails with `missing required env vars: WORKSPACE_ID` is a deliberate `storage_access=True` call.
 
-This is a change in behaviour on **projects without the feature**: the update path previously merged a `WORKSPACE_ID` secret into every app that lacked one, as a side effect of any update. Apps created through the MCP already carry the secret from create time, so the change is a no-op for them; an app created in the UI (or predating that code) now needs the explicit call. The trade-off was taken deliberately — a silent grant is worse than an explicit one, and consistency between the two mechanisms is worth more than the incidental repair.
+#### Legacy `WORKSPACE_ID` secrets
 
-Two details of the disable path are worth spelling out, because the two mechanisms are not as mutually exclusive as the table suggests:
+`parameters.dataApp.secrets` reach the app as environment variables regardless of `runtime.workspace`, so an older app with a legacy `WORKSPACE_ID` secret still has Storage access. Two details follow from that:
 
-- **Disabling removes the `WORKSPACE_ID` secret whatever the project's feature state.** `parameters.dataApp.secrets` reach the app as environment variables regardless of `runtime.workspace`, so an app that was created before the feature was enabled — and therefore carries the legacy secret — would keep receiving `WORKSPACE_ID` if the disable only wrote `runtime.workspace.enabled = false`.
-- **`storage_access_enabled` reports the union of both markers**, not just the one matching the project's feature. Reporting the union is the safe direction to err: telling a caller Storage access is off while the app can still read Storage is the dangerous answer.
+- **Disabling removes the legacy `WORKSPACE_ID` secret.** Writing only `runtime.workspace.enabled = false` would leave the app still receiving `WORKSPACE_ID`.
+- **`storage_access_enabled` reports the union of both markers.** Reporting the union is the safe direction to err: telling a caller Storage access is off while the app can still read Storage is the dangerous answer.
 
 Turning Storage access off does not deprovision an already-provisioned workspace; it only stops `WORKSPACE_ID` reaching the next deploy. Cleanup of the orphan is the platform's.
 
-#### The `WORKSPACE_ID` secret fallback is deprecated
+Writing `parameters.dataApp.secrets.WORKSPACE_ID` by hand — through the UI or a generic config write — is not supported; `update_config` refuses `keboola.data-apps` outright.
 
-The secret fallback is a stopgap for projects that cannot yet get a per-app workspace. It is worse than the platform mechanism in two ways: every app on the project shares **one** MCP-managed workspace rather than getting its own, and the ID is frozen into the stored configuration, so it goes stale if that workspace is ever replaced. The real fix is enabling `data-apps-storage-workspace` on the project.
-
-It keeps working — apps that depend on it are not broken, and an app that already carries a hand-wired `WORKSPACE_ID` keeps it (the update path uses `setdefault`, never overwriting an ID someone set deliberately). What changed is that it is now **loud** rather than silent:
-
-- Every write through the fallback returns a note in `change_summary` naming the feature to enable. Agents are told to pass it on to the user.
-- Every write logs a `WARNING` carrying `project_id`, `configuration_id` and `workspace_id`, so the remaining exposure is measurable and the fallback can eventually be retired on evidence rather than guesswork.
-- `storage_access` is the only supported way to set it. Writing `parameters.dataApp.secrets.WORKSPACE_ID` by hand — through the UI or a generic config write — is not supported; `update_config` refuses `keboola.data-apps` outright.
-- The fallback ID is resolved **only when it is about to be written**, never speculatively. Resolving it provisions the shared workspace if the project has none, and raises outright in a workspace-pinned session (the Data App flow, `X-Workspace-Id`), so enabling Storage access on an app that already carries an ID must not — and does not — touch the workspace manager at all.
-
-Note that the `WORKSPACE_ID` secret is **not** deprecated for Streamlit apps: they have no `runtime` block and no auto-workspace feature, so the full secret set from the MCP server remains their only mechanism (see AJDA-3185).
+Note that the `WORKSPACE_ID` secret is still the mechanism for Streamlit apps: they have no `runtime` block, so the full secret set from the MCP server remains their only way to get Storage access.
 
 ### Authentication: HTTPS tokens
 
@@ -482,7 +470,7 @@ The tool surface maps to the underlying APIs as follows. Confirm field names wit
 | `deploy_data_app(action='deploy')` (any mode) | `PATCH /apps/{id}` | `configVersion: <latest Storage config version>`, `desiredState: 'running'`, `restartIfRunning: true` — publishes the latest config. |
 | `create_python_js_data_app_git_credential` | `POST /apps/{id}/git-repo/credentials` | Request: `{type: 'http_token', permissions: 'readWrite'}`. Response: `{id, type, permissions, secret, ...}`. The one-time `secret` is what we embed (with `kai` as username) into `git_clone_url`. |
 | (clone URL lookup) | `GET /apps/{id}/git-repo` | Response: `{sshUrl, httpsUrl, isManagedGitRepo}`. The MCP server uses `httpsUrl` only. |
-| `storage_access` (create default on; update explicit only) | `POST /apps` / Storage config update | `configuration.runtime.workspace.enabled`, or `configuration.parameters.dataApp.secrets.WORKSPACE_ID` on projects without the `data-apps-storage-workspace` feature |
+| `storage_access` (create default on; update explicit only) | `POST /apps` / Storage config update | `configuration.runtime.workspace.enabled` (disable also removes a legacy `configuration.parameters.dataApp.secrets.WORKSPACE_ID`) |
 | `delete_python_js_data_app_draft` | `DELETE /apps/{id}` + `DELETE /branch/{branch}/components/keboola.data-apps/configs/{cfg}` | Two-call sequence: DSAPI delete first, then Storage delete (without `skip_trash`). |
 | `get_data_app_preview_link` | `POST /apps/{id}/preview-link` | No request body. Response: `{url, linkExpiresAt}`. 400 when the app is not in dev mode or has no URL yet; 503 when the stack has no preview signing keys. |
 | `get_data_apps` drafts lookup | `GET /branch/{branch}/components/keboola.data-apps/configs` | One Storage list call per prod detail fetch; results filtered by `configuration.parameters.dataApp.parentConfigurationId`. |
