@@ -868,7 +868,17 @@ class WorkspaceManager:
         that a read-only user's token would be denied.
         """
         component_id = self.MCP_WORKSPACE_COMPONENT_ID
-        for config in await self._client.storage_client.configuration_list(component_id):
+        try:
+            configs = await self._client.storage_client.configuration_list(component_id)
+        except HTTPStatusError as e:
+            if e.response.status_code != 403:
+                raise
+            # No workspace is created for such a token either: the workspace reads the whole Storage.
+            raise ValueError(
+                f'This Storage API token has no access to the "{component_id}" component, which holds the '
+                f'MCP workspace, so SQL tools are not available. Use a token that can access that component.'
+            ) from e
+        for config in configs:
             config_id = str(config['id'])
             for sapi_wsp_info in await self._client.storage_client.workspace_list_for_config(component_id, config_id):
                 assert isinstance(sapi_wsp_info, dict)

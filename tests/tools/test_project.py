@@ -169,11 +169,14 @@ _DEV_BRANCH = {'id': 456, 'name': 'feature-x', 'isDefault': False}
     ],
 )
 @pytest.mark.parametrize('directory', [False, True])
+# a session that cannot use a workspace still gets the project context, with the dialect from the token
+@pytest.mark.parametrize('workspace_available', [True, False])
 @pytest.mark.asyncio
 async def test_get_project_info(
     mocker: MockerFixture,
     mcp_context_client: Context,
     directory: bool,
+    workspace_available: bool,
     token_role: str | None,
     expected_user_role: str,
     expected_restriction_substrings: list[str],
@@ -187,7 +190,7 @@ async def test_get_project_info(
 ) -> None:
     admin_data = {'role': token_role} if token_role is not None else {}
     token_data = {
-        'owner': {'id': 'proj-123', 'name': 'Test Project'},
+        'owner': {'id': 'proj-123', 'name': 'Test Project', 'defaultBackend': sql_dialect.lower()},
         'organization': {'id': 'org-456'},
         'admin': admin_data,
     }
@@ -201,7 +204,10 @@ async def test_get_project_info(
     keboola_client.storage_client.branch_metadata_get = mocker.AsyncMock(return_value=metadata)
     keboola_client.storage_client.branches_list = mocker.AsyncMock(return_value=[_DEFAULT_BRANCH, _DEV_BRANCH])
     workspace_manager = WorkspaceManager.from_state(mcp_context_client.session.state)
-    workspace_manager.get_sql_dialect = mocker.AsyncMock(return_value=sql_dialect)
+    if workspace_available:
+        workspace_manager.get_sql_dialect = mocker.AsyncMock(return_value=sql_dialect)
+    else:
+        workspace_manager.get_sql_dialect = mocker.AsyncMock(side_effect=ValueError('no access to the component'))
     workspace_manager.get_workspace_id = mocker.AsyncMock(return_value=789)
 
     project_id = 'proj-123'
@@ -226,7 +232,7 @@ async def test_get_project_info(
     assert result.organization_id == 'org-456'
     assert result.project_description == 'A test project.'
     assert result.sql_dialect == sql_dialect
-    assert result.workspace_id == 789
+    assert result.workspace_id == (789 if workspace_available else None)
     assert result.links == links
     assert result.user_role == expected_user_role
     assert expected_fqn_example in result.llm_instruction
