@@ -1073,6 +1073,22 @@ async def test_find_ws_in_branch_returns_none_when_no_mcp_workspace():
 
 
 @pytest.mark.asyncio
+async def test_managed_workspace_refuses_a_token_without_access_to_the_mcp_component():
+    """A token limited to other components gets a clear error, and no workspace is created for it."""
+    mock_client = Mock(spec=KeboolaClient)
+    mock_client.has_feature = AsyncMock(return_value=False)
+    mock_storage_client = AsyncMock()
+    mock_client.storage_client = mock_storage_client
+    mock_storage_client.configuration_list.side_effect = _status_error(403)
+
+    manager = WorkspaceManager(mock_client)
+    with pytest.raises(ValueError, match='no access to the "keboola.mcp-server-tool" component'):
+        await manager._get_managed_workspace()
+
+    mock_storage_client.verify_token.assert_not_called()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ('backend', 'rls_feature', 'expected_login_type'),
     [
