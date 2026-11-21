@@ -89,10 +89,9 @@ def _walk(old: Any, new: Any, path: str, out: dict[str, tuple[Any, Any]]) -> Non
                 out[sub] = (_ABSENT, new[key])
         return
     if isinstance(old, list) and isinstance(new, list):
-        if _ids(old) is not None and _ids(new) is not None:
+        old_by_id, new_by_id = _ids(old), _ids(new)
+        if old_by_id is not None and new_by_id is not None:
             # Rows carry ids: align by id so an insertion does not shift every following row into a "change".
-            old_by_id, new_by_id = _ids(old), _ids(new)
-            assert old_by_id is not None and new_by_id is not None
             for key in sorted(set(old_by_id) | set(new_by_id)):
                 sub = f'{path}/{key}'
                 if key in old_by_id and key in new_by_id:
