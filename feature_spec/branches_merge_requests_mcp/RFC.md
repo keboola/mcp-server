@@ -72,8 +72,9 @@ needed. The kbagent CLI allows the same.
 
 ### The status block
 
-Every tool except the list mode of `get_merge_requests` returns a `DerivedStatus` (`models.py`), built by
-`build_status` in `status.py`:
+The detail mode of `get_merge_requests`, the write tools and the conflict tools return a `DerivedStatus`
+(`models.py`), built by `build_status` in `status.py`. The list mode carries none, and `MergeResult.status`
+is `None` after a successful merge.
 
 | Field | Meaning |
 |---|---|
@@ -121,7 +122,7 @@ and whether the caller can write).
 | 10 | Approvals block, caller cannot write | Waiting for a reviewer's approval. |
 | 11 | The backend just refused with `not_ready` | In `development`: the project requires approvals, request a review. Otherwise a merge lock or another MR in progress: wait, then merge again. |
 | 12 | `rejected` | Changes were requested (with the reason from the activity log); fix the branch, then merge again. |
-| 13 | `merge` allowed, caller not on the MR's branch | From production: merge here with `merge_request_id` (irreversible). From another branch: hand off. |
+| 13 | `merge` allowed, caller not on the MR's branch | From production and the caller can write: merge here with `merge_request_id` (irreversible); without write access it falls through to row 15. From another branch: hand off. |
 | 14 | `merge` allowed, caller on the MR's branch and can write | Ready: merge (irreversible, the branch is deleted afterwards). |
 | 15 | otherwise | Show the MR (read-only). |
 
@@ -134,10 +135,12 @@ so if Kai becomes unavailable there, continue from production with `merge_reques
 
 - The merge `PUT` is sent **without the client retry policy** (`retry=False`): repeating it after a
   timeout would turn a started merge into a misleading "already running" refusal.
-- 409 `notReadyToMerge` → `refusal='not_ready'`. The MR is then re-read, and if it is `in_merge` the
+- 409 with code `storage.mergeRequests.notReadyToMerge` (`MERGE_NOT_READY_CODE`) → `refusal='not_ready'`. The MR is then re-read, and if it is `in_merge` the
   result reports a running merge, not a refusal.
-- Any other 409 → `refusal='conflicts'` with the conflict list from the error body, or from the live
-  `/conflicts` call when the body has none. An empty live list downgrades the refusal to `not_ready`.
+- 409 with code `storage.mergeRequests.validation` (`MERGE_CONFLICT_CODE`) or with no code →
+  `refusal='conflicts'`, with the conflict list from the error body, or from the live `/conflicts` call when
+  the body has none. An empty live list downgrades the refusal to `not_ready`. A 409 with any other code is
+  raised as an error.
 - A transport error or 5xx after the request was sent → the MR is re-read. `in_merge` reports a running
   merge, `published` a success; anything else is an error that tells the agent not to merge again before
   checking.
@@ -218,17 +221,20 @@ DMD-1988 ships.
 
 ## Deviations from the original RFC
 
+Reasons marked *(inferred)* are not recorded in code or the issue; the others cite a code comment or
+docstring.
+
 | Original RFC | As shipped | Why |
 |---|---|---|
-| 8 tools; `update_merge_request` dropped | 9 tools, `update_merge_request` added | Disarming auto-merge and changing reviewers are needed in chat; arming auto-merge has no other control. |
-| `submit_merge_request_for_review`, `reject_merge_request`, `resolve_config_conflict` | `request_merge_request_review`, `request_merge_request_changes`, `resolve_merge_request_conflict` Renamed during review of #699; "reject" is not terminal (the MR returns to `development`), which "request changes" states directly. |
-| Single module `tools/merge_requests.py` | Package `tools/merge_requests/` (`tools`, `status`, `conflicts`, `models`) | Pure decision logic separated from I/O for table tests. |
-| Status: `mergeable`, `blocked_reason`, `action_required`; precedence state → conflicts → approvals; required approvals read from project metadata | `derived_state`, `merge_blockers` (a list, so blockers do not mask each other), `allowed_actions`, `viewer`, and a 15-row `next_step` table; no required-approvals lookup (the `in_review` state carries it) | Mirrors the kbagent CLI and the planned backend fields (DMD-1988), so the clients cannot disagree and the polyfill can be deleted later. |
-| Merge, request-review and the conflict tools are branch-only | Only `create_merge_request` is branch-only; the others also work from production with an explicit `merge_request_id` | kbc-ui switches Kai off on a branch whose MR is `in_review` or `approved`, exactly when merge and conflicts are needed. |
-| Role gate: `admin` / `share` only | `admin` / `share` **or any OAuth session** | Same carve-out as the flow tools. Whether an OAuth session's `verify_token` carries `admin.role` is not verified yet; a live test is open in DMD-2246. |
-| `create_merge_request` and `resolve_config_conflict` plain writes; only merge `destructiveHint` | `resolve_merge_request_conflict` and `update_merge_request` are `destructiveHint=True`; create stays non-destructive | Repo convention: replacing or deleting existing content is destructive. |
-| `resolve_config_conflict` with typed full-content parameters and a `delete` flag | `take` (`ours` / `theirs` / `delete`) or `resolved: dict`, validated strictly | Most resolutions take one side; `take` removes the need to copy content back through the model. |
-| Per-config diff returned raw | Per-path classification (`changes`, `conflicting_paths`, `suggested_take`) | The agent needs to know what actually clashes, not only three blobs. |
-| No `project_id` discussion | `project_id` on the four tools addressed purely by id | Multi-project sessions; the session-bound tools always target the active project. |
-| Merge `PUT` under the default retry policy | `retry=False` and a re-read after an unconfirmed outcome | A retried merge after a timeout reported a running merge as refused. |
-| Happy path create → submit → merge | create → merge (0 required approvals skips review) | The backend allows merging from `development` when no approvals are required. |
+| 8 tools; `update_merge_request` dropped | 9 tools, `update_merge_request` added | Tool docstring: disarming auto-merge (`auto_merge='none'`) and changing reviewers. |
+| `submit_merge_request_for_review`, `reject_merge_request`, `resolve_config_conflict` | `request_merge_request_review`, `request_merge_request_changes`, `resolve_merge_request_conflict` | Reason not recorded. The tool docstring stresses that the reviewer's "reject" is not terminal (the MR returns to `development`). |
+| Single module `tools/merge_requests.py` | Package `tools/merge_requests/` (`tools`, `status`, `conflicts`, `models`) | `status.py` / `conflicts.py` docstrings: pure functions, no I/O. |
+| Status: `mergeable`, `blocked_reason`, `action_required`; precedence state → conflicts → approvals; required approvals read from project metadata | `derived_state`, `merge_blockers` (a list, so blockers do not mask each other), `allowed_actions`, `viewer`, and a 16-row (0–15) `next_step` table; no required-approvals lookup (the `in_review` state carries it) | `status.py` docstring: a port of the kbagent CLI's tables "so the two clients cannot disagree", server-first for DMD-1988. |
+| Merge, request-review and the conflict tools are branch-only | Only `create_merge_request` is branch-only; the others also work from production with an explicit `merge_request_id` | `tools/constants.py` comment: kbc-ui blocks Kai on a branch whose MR is `in_review` or `approved` (K1), exactly when merge and conflicts are needed. |
+| Role gate: `admin` / `share` only | `admin` / `share` **or any OAuth session** | `mcp.py` comment: same carve-out as the flow tools. Whether an OAuth session's `verify_token` carries `admin.role` is not verified yet; a live test is open in DMD-2246. |
+| `create_merge_request` and `resolve_config_conflict` plain writes; only merge `destructiveHint` | `resolve_merge_request_conflict` and `update_merge_request` are `destructiveHint=True`; create stays non-destructive | `add_merge_request_tools` comment: repo convention, replacing or deleting existing content is destructive. |
+| `resolve_config_conflict` with typed full-content parameters and a `delete` flag | `take` (`ours` / `theirs` / `delete`) or `resolved: dict`, validated strictly | *(inferred)* Most resolutions take one side; `take` avoids copying the content back through the model. |
+| Per-config diff returned raw | Per-path classification (`changes`, `conflicting_paths`, `suggested_take`) | *(inferred)* The agent needs to know what actually clashes, not only three blobs. |
+| No `project_id` discussion | `project_id` on the four tools addressed purely by id | `tools/constants.py` comment: the session-bound tools always target the active project. |
+| Not addressed (the client's default retry policy would apply) | Merge `PUT` with `retry=False` and a re-read after an unconfirmed outcome | `clients/base.py` `_create_transport` docstring: a repeat after a timeout turns a started merge into a misleading "already running" error. |
+| Happy path create → submit → merge | create → merge (0 required approvals skips review) | `create_merge_request` docstring: with 0 required approvals the happy path is two calls. |
