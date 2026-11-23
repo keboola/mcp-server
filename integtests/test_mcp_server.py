@@ -219,6 +219,7 @@ async def _assert_basic_setup(client: Client):
         'update_flow',
         'update_project_description',
         'update_sql_transformation',
+        'update_table_clustering',
     }
     expected_tools = expected_tools - exclude
 

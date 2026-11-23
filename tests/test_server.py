@@ -126,6 +126,7 @@ class TestServer:
             'update_merge_request',
             'update_project_description',
             'update_sql_transformation',
+            'update_table_clustering',
             'validate_semantic_query',
         ]
 
@@ -527,6 +528,7 @@ TOOL_ANNOTATIONS = [
     ('get_buckets', True, False, True, False, {STORAGE_TOOLS_TAG}),
     ('get_tables', True, False, True, False, {STORAGE_TOOLS_TAG}),
     ('update_descriptions', False, True, True, False, {STORAGE_TOOLS_TAG}),
+    ('update_table_clustering', False, True, True, False, {STORAGE_TOOLS_TAG}),
     ('get_shared_buckets', True, False, True, False, {STORAGE_TOOLS_TAG}),
     ('link_shared_bucket', False, False, False, False, {STORAGE_TOOLS_TAG}),
     # streams

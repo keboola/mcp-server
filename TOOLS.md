@@ -102,6 +102,7 @@ column definitions, lineage references (created/updated by) and links.
 as a new local bucket, so its tables become directly queryable/joinable like any other
 bucket in the project.
 - [update_descriptions](#update_descriptions): Updates the description for a Keboola storage item.
+- [update_table_clustering](#update_table_clustering): Sets or removes the clustering of one typed BigQuery table.
 
 ---
 
@@ -5979,6 +5980,67 @@ Usage examples (payload uses a list of DescriptionUpdate objects):
   },
   "required": [
     "updates"
+  ],
+  "type": "object"
+}
+```
+
+---
+<a name="update_table_clustering"></a>
+## update_table_clustering
+**Annotations**: `destructive, idempotent`
+
+**Tags**: `storage`
+
+**Description**:
+
+Sets or removes the clustering of one typed BigQuery table.
+
+Runs a Storage job and waits for it to finish. BigQuery applies a new clustering only to data written after the
+change; rows already in the table keep their order until they are rewritten (for example by a full load).
+Storage rejects the change for other backends, aliases, tables in external buckets, unknown or repeated columns
+and more than 4 columns. Read the current clustering with `get_tables` (`table_ids`).
+
+
+**Input JSON Schema**:
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "table_id": {
+      "description": "The ID of the table, e.g. \"in.c-bucket.table\".",
+      "type": "string"
+    },
+    "clustering_fields": {
+      "anyOf": [
+        {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Columns to cluster the table by, 1 to 4 existing column names in clustering order. `null` removes the clustering."
+    },
+    "project_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Target Keboola project id for this write. Required when the session is scoped to 2+ projects; optional (defaults to the single scoped project) otherwise."
+    }
+  },
+  "required": [
+    "table_id",
+    "clustering_fields"
   ],
   "type": "object"
 }

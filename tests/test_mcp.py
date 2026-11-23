@@ -2631,6 +2631,8 @@ class TestDirectoryToolProfile:
         'create_python_js_data_app_draft',
         'delete_python_js_data_app_draft',
         'get_data_app_preview_link',
+        # A new write tool goes into the directory only after its own review (DMD-3043).
+        'update_table_clustering',
     )
     # Generic executors by OpenAI's review: any component, configured with free-form parameters, and their discovery.
     EXCLUDED_GENERIC_CONFIG_TOOLS = (

@@ -1128,21 +1128,31 @@ class AsyncStorageClient(KeboolaServiceClient):
         description: str | None = None,
         column_descriptions: Mapping[str, str] | None = None,
         is_description_system_managed: bool = False,
+        clustering_fields: Sequence[str] | None = None,
+        remove_clustering: bool = False,
         branch_id: str | None = None,
     ) -> JsonDict:
         """
-        Updates the native description of a table and/or its columns and waits for the Storage job to finish.
+        Updates the native description of a table and/or its columns and/or its clustering and waits for the Storage
+        job to finish.
 
         :param table_id: The id of the table
         :param description: The new table description; None leaves it unchanged.
         :param column_descriptions: Mapping of column names to their new descriptions.
         :param is_description_system_managed: Whether the table description is managed by the system. User edits
             keep it False so that Output Mapping never overwrites them.
+        :param clustering_fields: BigQuery only: 1 to 4 existing columns to cluster the table by, in clustering order.
+        :param remove_clustering: Sends `clustering: null`, which removes the clustering of the table.
         :param branch_id: Optional branch ID override (uses client's branch_id if not specified)
         :return: The finished Storage job as a dictionary; empty if the values already matched the stored ones.
         """
-        if description is None and not column_descriptions:
-            raise ValueError('At least one of the `description` or `column_descriptions` arguments must be provided.')
+        if clustering_fields is not None and remove_clustering:
+            raise ValueError('The `clustering_fields` and `remove_clustering` arguments cannot be used together.')
+        if description is None and not column_descriptions and clustering_fields is None and not remove_clustering:
+            raise ValueError(
+                'At least one of the `description`, `column_descriptions`, `clustering_fields` or `remove_clustering` '
+                'arguments must be provided.'
+            )
 
         payload: dict[str, Any] = {}
         if description is not None:
@@ -1150,6 +1160,10 @@ class AsyncStorageClient(KeboolaServiceClient):
             payload['isDescriptionSystemManaged'] = is_description_system_managed
         if column_descriptions:
             payload['columns'] = [{'name': name, 'description': desc} for name, desc in column_descriptions.items()]
+        if clustering_fields is not None:
+            payload['clustering'] = {'fields': list(clustering_fields)}
+        elif remove_clustering:
+            payload['clustering'] = None
 
         bid = branch_id or self._branch_id
         try:
@@ -1157,7 +1171,10 @@ class AsyncStorageClient(KeboolaServiceClient):
         except httpx.HTTPStatusError as e:
             # Storage answers a request whose values equal the stored ones with a validation error that shares its
             # code with other validation failures, so the stored values are compared before treating it as a no-op.
-            if await self._is_unchanged_rejection(e, table_id, bid, description, column_descriptions):
+            # A request with clustering always creates a job in Storage, so its validation error is never a no-op.
+            if 'clustering' not in payload and await self._is_unchanged_rejection(
+                e, table_id, bid, description, column_descriptions
+            ):
                 return {}
             raise
         return await self._wait_for_job(job)

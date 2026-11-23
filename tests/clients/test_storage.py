@@ -391,6 +391,12 @@ class TestTableDefinitionUpdate:
                 {'column_descriptions': {'a': 'A desc', 'b': 'B desc'}},
                 {'columns': [{'name': 'a', 'description': 'A desc'}, {'name': 'b', 'description': 'B desc'}]},
             ),
+            ({'clustering_fields': ['a', 'b']}, {'clustering': {'fields': ['a', 'b']}}),
+            ({'remove_clustering': True}, {'clustering': None}),
+            (
+                {'description': 'd', 'clustering_fields': ['a']},
+                {'description': 'd', 'isDescriptionSystemManaged': False, 'clustering': {'fields': ['a']}},
+            ),
         ],
     )
     @pytest.mark.asyncio
@@ -409,6 +415,40 @@ class TestTableDefinitionUpdate:
             endpoint='branch/123/tables/in.c-b.t/definition', data=expected_payload, params=None
         )
         assert raw_client.get.call_count == 2
+
+    @pytest.mark.parametrize(
+        ('kwargs', 'match'),
+        [
+            ({'clustering_fields': ['a'], 'remove_clustering': True}, 'cannot be used together'),
+            ({}, 'At least one of'),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_invalid_clustering_arguments(
+        self, raw_client: RawKeboolaClient, kwargs: dict[str, Any], match: str
+    ) -> None:
+        client = AsyncStorageClient(raw_client=raw_client)
+
+        with pytest.raises(ValueError, match=match):
+            await client.table_definition_update('in.c-b.t', **kwargs)
+        raw_client.put.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_clustering_validation_error_is_raised(self, raw_client: RawKeboolaClient) -> None:
+        response = httpx.Response(
+            400,
+            json={'error': 'rejected', 'code': 'storage.tables.definitionUpdateValidationFailed', 'exceptionId': 'x'},
+            request=httpx.Request('PUT', 'https://x'),
+        )
+        try:
+            RawKeboolaClient._raise_for_status(response)
+        except httpx.HTTPStatusError as e:
+            raw_client.put.side_effect = e
+        client = AsyncStorageClient(raw_client=raw_client)
+
+        with pytest.raises(httpx.HTTPStatusError):
+            await client.table_definition_update('in.c-b.t', clustering_fields=['a'])
+        raw_client.get.assert_not_called()
 
     @pytest.mark.parametrize('initial_status', ['error', 'processing'])
     @pytest.mark.asyncio

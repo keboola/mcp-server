@@ -5,6 +5,7 @@ from typing import Any, cast
 import pytest
 import toon_format
 from fastmcp import Client, Context
+from fastmcp.exceptions import ToolError
 
 from integtests.conftest import BucketDef, TableDef
 from keboola_mcp_server.clients.client import KeboolaClient, get_metadata_property
@@ -20,6 +21,7 @@ from keboola_mcp_server.tools.storage.tools import (
     TableDetail,
     TableSummary,
     UpdateDescriptionsOutput,
+    UpdateTableClusteringOutput,
     get_buckets,
     get_tables,
     update_descriptions,
@@ -345,3 +347,67 @@ async def test_update_descriptions_invalid_path(mcp_context: Context):
     assert error_result.error is not None
     assert 'Invalid item_id format' in error_result.error
     assert error_result.timestamp is None
+
+
+@pytest.mark.asyncio
+async def test_update_table_clustering_bigquery(
+    mcp_context: Context, mcp_client: Client, require_bigquery: None, buckets: list[BucketDef], unique_id: str
+):
+    """Tests that `update_table_clustering` sets and removes the clustering of a typed BigQuery table."""
+    storage_client = KeboolaClient.from_state(mcp_context.session.state).storage_client
+    bucket_id = buckets[0].bucket_id
+    table_name = f'clustering_{unique_id}'
+    table_id = f'{bucket_id}.{table_name}'
+    # kbcstorage has no typed-table create, so the table definition endpoint is called directly
+    job = await storage_client.post(
+        endpoint=f'buckets/{bucket_id}/tables-definition',
+        data={
+            'name': table_name,
+            'primaryKeysNames': [],
+            'columns': [
+                {'name': 'id', 'definition': {'type': 'STRING'}},
+                {'name': 'country', 'definition': {'type': 'STRING'}},
+                {'name': 'day', 'definition': {'type': 'DATE'}},
+            ],
+        },
+    )
+    await storage_client._wait_for_job(cast(dict[str, Any], job))
+    try:
+        call_result = await mcp_client.call_tool(
+            'update_table_clustering', {'table_id': table_id, 'clustering_fields': ['country', 'id']}
+        )
+        result = UpdateTableClusteringOutput.model_validate(call_result.structured_content)
+        assert result.table_id == table_id
+        assert result.clustering_fields == ['country', 'id']
+        assert result.job_status == 'success'
+        table_detail = await storage_client.table_detail(table_id)
+        assert get_nested(table_detail, 'definition.clustering.fields') == ['country', 'id']
+
+        tables_result = await mcp_client.call_tool('get_tables', {'table_ids': [table_id]})
+        assert tables_result.structured_content['tables'][0]['clustering_fields'] == 'country|id'
+
+        call_result = await mcp_client.call_tool(
+            'update_table_clustering', {'table_id': table_id, 'clustering_fields': None}
+        )
+        result = UpdateTableClusteringOutput.model_validate(call_result.structured_content)
+        assert result.clustering_fields is None
+        table_detail = await storage_client.table_detail(table_id)
+        assert get_nested(table_detail, 'definition.clustering') is None
+
+        with pytest.raises(ToolError, match='does not exist'):
+            await mcp_client.call_tool(
+                'update_table_clustering', {'table_id': table_id, 'clustering_fields': ['no_such_column']}
+            )
+    finally:
+        await storage_client.delete(endpoint=f'tables/{table_id}')
+
+
+@pytest.mark.asyncio
+async def test_update_table_clustering_rejected_on_snowflake(
+    mcp_client: Client, require_snowflake: None, tables: list[TableDef]
+):
+    """Tests that Storage rejects a clustering change on a Snowflake table and the tool reports it as an error."""
+    with pytest.raises(ToolError, match='only on BigQuery tables'):
+        await mcp_client.call_tool(
+            'update_table_clustering', {'table_id': tables[0].table_id, 'clustering_fields': ['id']}
+        )
