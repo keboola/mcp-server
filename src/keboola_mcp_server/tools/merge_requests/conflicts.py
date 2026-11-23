@@ -8,11 +8,15 @@ all (`changes=[]`) — fabricating rows against an empty stand-in would contradi
 from collections.abc import Mapping
 from typing import Any
 
+from fastmcp.exceptions import ToolError
+
 from keboola_mcp_server.tools.merge_requests.models import (
     ConfigConflict,
     ConfigVersionSnapshot,
     ConflictRef,
     PathChange,
+    ResolutionMode,
+    ResolvedConfiguration,
     TakeMode,
 )
 
@@ -201,3 +205,48 @@ def build_config_conflict(ref: ConflictRef, diff: Mapping[str, Any]) -> ConfigCo
         conflicting_paths=conflicting_paths(changes),
         suggested_take=suggest_take(changes),
     )
+
+
+def compose_resolution(
+    take: TakeMode | None, custom: ResolvedConfiguration | None, diff: Mapping[str, Any]
+) -> tuple[dict[str, Any], ResolutionMode]:
+    """
+    The `/rebase` body and the resolution mode for one conflicting configuration.
+
+    `custom` wins when given (the caller's full content); `take='delete'` and taking a deleted side give the empty
+    tombstone body; `take='ours'` / `'theirs'` copy that side's content envelope. A side that is absent, has an
+    envelope hole, a blank name or a non-boolean `isDisabled` is refused rather than guessed at.
+    """
+    if custom is not None:
+        body = {
+            'name': custom.name,
+            'description': custom.description,
+            'isDisabled': custom.is_disabled,
+            'configuration': custom.configuration,
+            'rows': custom.rows,
+        }
+        return body, 'custom'
+    if take == 'delete':
+        return {}, 'delete'
+    side = diff.get('ours') if take == 'ours' else diff.get('theirs')
+    if not isinstance(side, Mapping):
+        # An absent side is not a deletion: never turn it into a tombstone behind the user's back.
+        raise ToolError(
+            f'The diff has no {take} side: the configuration does not exist on that branch. '
+            "Use take='delete' to delete it explicitly, or pass the content as `resolved`."
+        )
+    if side.get('isDeleted'):
+        return {}, 'delete'  # taking a deleted side IS the delete resolution
+    holes = envelope_holes(side)
+    envelope = side.get('diff') or {}
+    if holes or not str(envelope.get('name') or '').strip():
+        raise ToolError(
+            f"The diff's {take} side carries no {', '.join(holes) or 'name'}; cannot compose the content from "
+            'it (backend envelope hole). Pass the resolution as `resolved` instead.'
+        )
+    if not isinstance(envelope.get('isDisabled'), bool):
+        raise ToolError(
+            f"The diff's {take} side carries a non-boolean isDisabled ({envelope.get('isDisabled')!r}). "
+            'Pass the resolution as `resolved` instead.'
+        )
+    return {key: envelope[key] for key in DIFF_CONTENT_KEYS if key in envelope}, take  # type: ignore[return-value]
