@@ -16,6 +16,7 @@ from keboola_mcp_server.auth_login import (
     load_tokens,
     save_tokens,
 )
+from keboola_mcp_server.clients.base import InvalidArgumentError
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config, MetadataField, ServerRuntimeInfo
 from keboola_mcp_server.links import Link, ProjectLinksManager
@@ -207,7 +208,7 @@ async def test_get_project_info(
     if workspace_available:
         workspace_manager.get_sql_dialect = mocker.AsyncMock(return_value=sql_dialect)
     else:
-        workspace_manager.get_sql_dialect = mocker.AsyncMock(side_effect=ValueError('no access to the component'))
+        workspace_manager.get_sql_dialect = mocker.AsyncMock(side_effect=InvalidArgumentError('no component access'))
     workspace_manager.get_workspace_id = mocker.AsyncMock(return_value=789)
 
     project_id = 'proj-123'
@@ -246,6 +247,35 @@ async def test_get_project_info(
         assert result.toolset_restrictions is not None
         for substring in expected_restriction_substrings:
             assert substring in result.toolset_restrictions
+
+
+@pytest.mark.parametrize(
+    ('error', 'default_backend'),
+    [
+        # only a token without component access gets project info without a workspace
+        (ValueError('Failed to initialize Keboola Workspace.'), 'snowflake'),
+        # without a known backend there is no dialect to fall back to
+        (InvalidArgumentError('no component access'), None),
+    ],
+)
+@pytest.mark.asyncio
+async def test_get_project_info_fails_without_a_workspace(
+    mocker: MockerFixture, mcp_context_client: Context, error: ValueError, default_backend: str | None
+) -> None:
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.storage_client.verify_token = mocker.AsyncMock(
+        return_value={'owner': {'id': 'proj-123', 'name': 'Test Project', 'defaultBackend': default_backend}}
+    )
+    keboola_client.storage_client.branch_metadata_get = mocker.AsyncMock(return_value=[])
+    mocker.patch(
+        'keboola_mcp_server.tools.project.ProjectLinksManager.from_client',
+        new=mocker.AsyncMock(return_value=mocker.Mock()),
+    )
+    workspace_manager = WorkspaceManager.from_state(mcp_context_client.session.state)
+    workspace_manager.get_sql_dialect = mocker.AsyncMock(side_effect=error)
+
+    with pytest.raises(type(error), match=str(error)):
+        await get_project_info(mcp_context_client)
 
 
 @pytest.mark.parametrize(

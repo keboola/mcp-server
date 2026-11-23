@@ -14,7 +14,7 @@ from httpx import HTTPStatusError
 from pydantic import Field
 from pydantic.dataclasses import dataclass
 
-from keboola_mcp_server.clients.base import JsonDict
+from keboola_mcp_server.clients.base import InvalidArgumentError, JsonDict
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.clients.query import QueryServiceClient
 from keboola_mcp_server.clients.storage import AsyncStorageClient
@@ -874,7 +874,7 @@ class WorkspaceManager:
             if e.response.status_code != 403:
                 raise
             # No workspace is created for such a token either: the workspace reads the whole Storage.
-            raise ValueError(
+            raise InvalidArgumentError(
                 f'This Storage API token has no access to the "{component_id}" component, which holds the '
                 f'MCP workspace, so SQL tools are not available. Use a token that can access that component.'
             ) from e

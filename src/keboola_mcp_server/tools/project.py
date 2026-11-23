@@ -20,7 +20,7 @@ from keboola_mcp_server.auth_login import (
     save_tokens,
 )
 from keboola_mcp_server.clients.auth_bridge import is_programmatic_token, strip_bearer
-from keboola_mcp_server.clients.base import JsonDict
+from keboola_mcp_server.clients.base import InvalidArgumentError, JsonDict
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import MetadataField, deployed_sa_token_path
 from keboola_mcp_server.errors import tool_errors
@@ -299,7 +299,7 @@ async def get_project_info(
     try:
         sql_dialect = await workspace_manager.get_sql_dialect()
         workspace_id = await workspace_manager.get_workspace_id()
-    except ValueError as e:
+    except InvalidArgumentError as e:
         # The project context is useful without a workspace, e.g. for a token limited to some components.
         token_dialect = _sql_dialect_from_token(token_data)
         if not token_dialect:
