@@ -5,6 +5,7 @@ from urllib.parse import urlparse
 import pytest
 from httpx import HTTPStatusError, Request, Response
 
+from keboola_mcp_server.clients.base import InvalidArgumentError
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.clients.query import QueryServiceClient
 from keboola_mcp_server.workspace import (
@@ -1070,6 +1071,33 @@ async def test_find_ws_in_branch_returns_none_when_no_mcp_workspace():
 
     manager = WorkspaceManager(mock_client)
     assert await manager._find_ws_in_branch() is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('status_code', 'expected_error', 'expected_match'),
+    [
+        # a token limited to other components gets a clear caller error
+        (403, InvalidArgumentError, 'no access to the "keboola.mcp-server-tool" component'),
+        # any other failure keeps its own error
+        (500, HTTPStatusError, 'HTTP 500'),
+    ],
+)
+async def test_managed_workspace_fails_when_the_mcp_component_cannot_be_listed(
+    status_code: int, expected_error: type[Exception], expected_match: str
+):
+    """No workspace is created when the MCP component's configurations cannot be listed."""
+    mock_client = Mock(spec=KeboolaClient)
+    mock_client.has_feature = AsyncMock(return_value=False)
+    mock_storage_client = AsyncMock()
+    mock_client.storage_client = mock_storage_client
+    mock_storage_client.configuration_list.side_effect = _status_error(status_code)
+
+    manager = WorkspaceManager(mock_client)
+    with pytest.raises(expected_error, match=expected_match):
+        await manager._get_managed_workspace()
+
+    mock_storage_client.verify_token.assert_not_called()
 
 
 @pytest.mark.asyncio

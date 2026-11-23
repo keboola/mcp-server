@@ -20,7 +20,7 @@ from keboola_mcp_server.auth_login import (
     save_tokens,
 )
 from keboola_mcp_server.clients.auth_bridge import is_programmatic_token, strip_bearer
-from keboola_mcp_server.clients.base import JsonDict
+from keboola_mcp_server.clients.base import InvalidArgumentError, JsonDict
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import MetadataField, deployed_sa_token_path
 from keboola_mcp_server.errors import tool_errors
@@ -201,14 +201,14 @@ class ProjectInfo(BaseModel):
     )
     organization_id: str | int = Field(description='The ID of the organization this project belongs to.')
     sql_dialect: str = Field(description='The sql dialect used in the project.')
-    workspace_id: int = Field(
+    workspace_id: int | None = Field(
         description=(
             'The ID of the read-only Keboola workspace the MCP server uses to run SQL queries '
             '(via `query_data`). It exposes all production tables, plus the current development '
             "branch's tables when operating on a branch. On legacy projects (without the "
             '`storage-branches` feature) the workspace always lives in the production branch. '
             'Reusable by other RO tooling (e.g. data-app testing) without provisioning a '
-            'private workspace.'
+            'private workspace. None when this session cannot use a workspace; SQL tools then say why.'
         )
     )
     conditional_flows: bool = Field(description='Whether the project supports conditional flows.')
@@ -295,8 +295,17 @@ async def get_project_info(
     )
 
     workspace_manager = WorkspaceManager.from_state(ctx.session.state)
-    sql_dialect = await workspace_manager.get_sql_dialect()
-    workspace_id = await workspace_manager.get_workspace_id()
+    workspace_id: int | None
+    try:
+        sql_dialect = await workspace_manager.get_sql_dialect()
+        workspace_id = await workspace_manager.get_workspace_id()
+    except InvalidArgumentError as e:
+        # The project context is useful without a workspace, e.g. for a token limited to some components.
+        token_dialect = _sql_dialect_from_token(token_data)
+        if not token_dialect:
+            raise
+        LOG.warning(f'Returning project info without a workspace: {e}')
+        sql_dialect, workspace_id = token_dialect, None
     project_features = cast(JsonDict, project_data.get('features', {}))
     conditional_flows = 'hide-conditional-flows' not in project_features
     links = links_manager.get_project_links()
