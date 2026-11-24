@@ -137,17 +137,17 @@ _TASK_STATUS_CONDITION_EXAMPLE = json.dumps(
 )
 
 
-def _find_unknown_operator(condition: Any) -> str | None:
-    """Returns the first operator in the condition tree that is not a known flow operator."""
+def _find_unknown_operators(condition: Any, loc: str = '') -> list[tuple[str, str]]:
+    """Returns (relative JSON path, operator) for every operator in the condition tree that is not a flow operator."""
     if not isinstance(condition, dict):
-        return None
+        return []
+    found = []
     if condition.get('type') == 'operator' and condition.get('operator') not in FLOW_CONDITION_OPERATORS:
-        return str(condition.get('operator'))
+        found.append((loc, str(condition.get('operator'))))
     operands = condition.get('operands')
-    for operand in operands if isinstance(operands, list) else []:
-        if unknown := _find_unknown_operator(operand):
-            return unknown
-    return None
+    for i, operand in enumerate(operands if isinstance(operands, list) else []):
+        found.extend(_find_unknown_operators(operand, f'{loc}.operands.{i}'))
+    return found
 
 
 _UNKNOWN_CONDITION_TYPE_ERRORS = frozenset({'union_tag_not_found', 'union_tag_invalid'})
@@ -181,17 +181,23 @@ def _transition_messages(path: str, condition: Any, errors: list[ErrorDetails]) 
     Messages for one invalid transition condition. An unknown operator or condition type (anywhere in the tree)
     gets a hint with the allowed operators and an example; every other error is passed through with its path.
     """
-    reasons = []
-    if unknown_operator := _find_unknown_operator(condition):
-        reasons.append(f'"{unknown_operator}" is not a flow operator.')
-    unknown_types = [err for err in errors if err['type'] in _UNKNOWN_CONDITION_TYPE_ERRORS]
-    if unknown_types:
-        reasons.append(f'Condition at {path}{_format_loc(unknown_types[0]["loc"][3:])} has an unknown type.')
+    unknown_operators = _find_unknown_operators(condition)
+    reasons = [f'"{operator}" at {path}{loc} is not a flow operator.' for loc, operator in unknown_operators]
+    reasons.extend(
+        f'Condition at {path}{_format_loc(err["loc"][3:])} has an unknown type.'
+        for err in errors
+        if err['type'] in _UNKNOWN_CONDITION_TYPE_ERRORS
+    )
+    unknown_operator_locs = {loc for loc, _ in unknown_operators}
 
     def covered_by_hint(err: ErrorDetails) -> bool:
         if err['type'] in _UNKNOWN_CONDITION_TYPE_ERRORS:
             return True
-        return err['type'] == 'literal_error' and err['loc'][-1] == 'operator' and str(err['input']) == unknown_operator
+        return (
+            err['type'] == 'literal_error'
+            and err['loc'][-1] == 'operator'
+            and _format_loc(err['loc'][3:-1]) in unknown_operator_locs
+        )
 
     messages = [_condition_hint(path, condition, ' '.join(reasons))] if reasons else []
     messages.extend(f'{path}{_format_loc(err["loc"][3:])}: {err["msg"]}' for err in errors if not covered_by_hint(err))

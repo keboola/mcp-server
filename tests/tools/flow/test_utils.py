@@ -384,7 +384,13 @@ class TestConditionalFlowValidation:
             pytest.param(
                 {'type': 'operator', 'operator': 'CONTINUE_ON_FAIL', 'operands': []},
                 'Start',
-                [['phases[0].next[0].condition:', '"CONTINUE_ON_FAIL" is not a flow operator', 'CONTINUE_ON_FAILURE']],
+                [
+                    [
+                        'phases[0].next[0].condition:',
+                        '"CONTINUE_ON_FAIL" at phases[0].next[0].condition is not a flow operator',
+                        'CONTINUE_ON_FAILURE',
+                    ]
+                ],
                 id='unknown-operator',
             ),
             pytest.param(
@@ -394,8 +400,31 @@ class TestConditionalFlowValidation:
                     'operands': [{'type': 'operator', 'operator': 'SUCCEEDED', 'operands': []}],
                 },
                 'Start',
-                [['phases[0].next[0].condition:', '"SUCCEEDED" is not a flow operator']],
+                [['phases[0].next[0].condition:', '"SUCCEEDED" at phases[0].next[0].condition.operands.0 is not']],
                 id='nested-unknown-operator',
+            ),
+            pytest.param(
+                {
+                    'type': 'operator',
+                    'operator': 'AND',
+                    'operands': [
+                        {'type': 'operator', 'operator': 'SUCCEEDED', 'operands': []},
+                        {'type': 'operator', 'operator': 'FAILED', 'operands': []},
+                        {'type': 'status', 'value': 'success'},
+                        {'type': 'state', 'value': 'error'},
+                    ],
+                },
+                'Start',
+                [
+                    [
+                        'phases[0].next[0].condition:',
+                        '"SUCCEEDED" at phases[0].next[0].condition.operands.0 is not',
+                        '"FAILED" at phases[0].next[0].condition.operands.1 is not',
+                        'Condition at phases[0].next[0].condition.operands.2 has an unknown type',
+                        'Condition at phases[0].next[0].condition.operands.3 has an unknown type',
+                    ]
+                ],
+                id='multiple-unknown-operators-and-types',
             ),
             pytest.param(
                 {'type': 'status', 'value': 'success'},
@@ -413,7 +442,10 @@ class TestConditionalFlowValidation:
                 {'type': 'operator', 'operator': 'CONTINUE_ON_FAIL', 'operands': []},
                 '',
                 [
-                    ['phases[0].next[0].condition:', '"CONTINUE_ON_FAIL" is not a flow operator'],
+                    [
+                        'phases[0].next[0].condition:',
+                        '"CONTINUE_ON_FAIL" at phases[0].next[0].condition is not a flow operator',
+                    ],
                     ['phases[0].name:', 'at least 1 character'],
                 ],
                 id='condition-and-phase-errors',
@@ -446,7 +478,7 @@ class TestConditionalFlowValidation:
                 },
                 'Start',
                 [
-                    ['phases[0].next[0].condition:', '"SUCCEEDED" is not a flow operator'],
+                    ['phases[0].next[0].condition:', '"SUCCEEDED" at phases[0].next[0].condition.operands.0 is not'],
                     ['phases[0].next[0].condition.operands.1.task: Field required'],
                 ],
                 id='unknown-operator-and-other-condition-error',
