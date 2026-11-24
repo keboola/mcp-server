@@ -182,6 +182,18 @@ class TestConditionalFlowPhase:
                 'union_tag_not_found',
                 id='unknown-condition-type',
             ),
+            pytest.param(
+                {'type': ['operator'], 'operator': 'EQUALS', 'operands': []},
+                ('next', 0, 'condition'),
+                'union_tag_not_found',
+                id='non-string-type',
+            ),
+            pytest.param(
+                {'type': 'operator', 'operator': ['EQUALS'], 'operands': []},
+                ('next', 0, 'condition', 'OperatorCondition', 'operator'),
+                'literal_error',
+                id='non-string-operator',
+            ),
         ],
     )
     def test_invalid_condition_reports_one_error(

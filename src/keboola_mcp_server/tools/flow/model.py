@@ -297,9 +297,17 @@ FLOW_CONDITION_OPERATORS = tuple(_CONDITION_TAG_BY_OPERATOR)
 
 def _condition_tag(value: Any) -> str | None:
     get = value.get if isinstance(value, dict) else lambda key: getattr(value, key, None)
-    if get('type') == 'operator':
-        return _CONDITION_TAG_BY_OPERATOR.get(get('operator'), OperatorCondition.__name__)
-    return _CONDITION_TAG_BY_TYPE.get(get('type'))
+    type_, operator = get('type'), get('operator')
+    # Untrusted input: a non-string (e.g. list) `type`/`operator` must fail validation, not raise TypeError.
+    if not isinstance(type_, str):
+        return None
+    if type_ == 'operator':
+        return (
+            _CONDITION_TAG_BY_OPERATOR.get(operator, OperatorCondition.__name__)
+            if isinstance(operator, str)
+            else OperatorCondition.__name__
+        )
+    return _CONDITION_TAG_BY_TYPE.get(type_)
 
 
 # NB: keep the members in typing.Union, not `X | Y` -- this is exposed in tool-facing pydantic schemas

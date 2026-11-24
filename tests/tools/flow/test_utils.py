@@ -379,11 +379,12 @@ class TestConditionalFlowValidation:
         }
 
     @pytest.mark.parametrize(
-        ('condition', 'expected_hints'),
+        ('condition', 'phase_name', 'expected_lines'),
         [
             pytest.param(
                 {'type': 'operator', 'operator': 'CONTINUE_ON_FAIL', 'operands': []},
-                ['phases[0].next[0].condition', '"CONTINUE_ON_FAIL" is not a flow operator', 'CONTINUE_ON_FAILURE'],
+                'Start',
+                [['phases[0].next[0].condition:', '"CONTINUE_ON_FAIL" is not a flow operator', 'CONTINUE_ON_FAILURE']],
                 id='unknown-operator',
             ),
             pytest.param(
@@ -392,22 +393,42 @@ class TestConditionalFlowValidation:
                     'operator': 'AND',
                     'operands': [{'type': 'operator', 'operator': 'SUCCEEDED', 'operands': []}],
                 },
-                ['phases[0].next[0].condition', '"SUCCEEDED" is not a flow operator'],
+                'Start',
+                [['phases[0].next[0].condition:', '"SUCCEEDED" is not a flow operator']],
                 id='nested-unknown-operator',
             ),
             pytest.param(
-                {'type': 'operator', 'operator': 'CONTINUE_ON_FAILURE', 'operands': []},
-                ['phases[0].next[0].condition', 'does not match any condition shape', '"value": "status"'],
-                id='known-operator-wrong-shape',
+                {'type': 'status', 'value': 'success'},
+                'Start',
+                [['phases[0].next[0].condition:', 'condition type is not known', '"value": "status"']],
+                id='unknown-condition-type',
+            ),
+            pytest.param(
+                {'type': 'operator', 'operator': 'CONTINUE_ON_FAILURE', 'phase': 'phase1'},
+                'Start',
+                [['phases[0].next[0].condition.ContinueOnFailureCondition.tasks: Field required']],
+                id='known-operator-missing-field',
+            ),
+            pytest.param(
+                {'type': 'operator', 'operator': 'CONTINUE_ON_FAIL', 'operands': []},
+                '',
+                [
+                    ['phases[0].next[0].condition:', '"CONTINUE_ON_FAIL" is not a flow operator'],
+                    ['phases[0].name:', 'at least 1 character'],
+                ],
+                id='condition-and-phase-errors',
             ),
         ],
     )
-    def test_get_flow_configuration_invalid_condition_hint(self, condition: dict[str, Any], expected_hints: list[str]):
-        """An invalid transition condition fails with one short hint instead of the pydantic union cascade."""
+    def test_get_flow_configuration_invalid_condition_hint(
+        self, condition: dict[str, Any], phase_name: str, expected_lines: list[list[str]]
+    ):
+        """An invalid transition condition fails with one short, actionable line, and the phase's other errors
+        are kept in the same message."""
         phases = [
             {
                 'id': 'phase1',
-                'name': 'Start',
+                'name': phase_name,
                 'next': [{'id': 't1', 'condition': condition, 'goto': 'phase2'}, {'id': 't2', 'goto': None}],
             },
             {'id': 'phase2', 'name': 'End', 'next': [{'id': 't3', 'goto': None}]},
@@ -416,10 +437,11 @@ class TestConditionalFlowValidation:
             get_flow_configuration(
                 phases, [_notification_task('task1', 'phase1')], flow_type=CONDITIONAL_FLOW_COMPONENT_ID
             )
-        message = str(exc_info.value)
-        for hint in expected_hints:
-            assert hint in message
-        assert message.count('\n') == 0  # one line for the one invalid transition
+        lines = str(exc_info.value).split('\n')
+        assert len(lines) == len(expected_lines)
+        for line, expected_parts in zip(lines, expected_lines, strict=True):
+            for part in expected_parts:
+                assert part in line
 
     @pytest.mark.parametrize(
         ('phases', 'task_specs', 'error_match'),

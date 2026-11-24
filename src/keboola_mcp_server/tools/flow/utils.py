@@ -10,6 +10,7 @@ from typing import Any
 
 import httpx
 from pydantic import ValidationError
+from pydantic_core import ErrorDetails
 
 from keboola_mcp_server.clients.base import InvalidArgumentError
 from keboola_mcp_server.clients.client import (
@@ -147,18 +148,13 @@ def _find_unknown_operator(condition: Any) -> str | None:
     return None
 
 
-def _condition_hint(path: str, condition: Any) -> str:
+def _condition_hint(path: str, condition: Any, unknown_operator: str | None) -> str:
     received = (
         {key: condition[key] for key in ('type', 'operator') if key in condition}
         if isinstance(condition, dict)
         else condition
     )
-    unknown_operator = _find_unknown_operator(condition)
-    reason = (
-        f'"{unknown_operator}" is not a flow operator.'
-        if unknown_operator
-        else 'The condition does not match any condition shape.'
-    )
+    reason = f'"{unknown_operator}" is not a flow operator.' if unknown_operator else 'The condition type is not known.'
     return (
         f'{path}: invalid condition {json.dumps(received)}. {reason} '
         f'Allowed operators: {", ".join(FLOW_CONDITION_OPERATORS)}. '
@@ -167,25 +163,44 @@ def _condition_hint(path: str, condition: Any) -> str:
     )
 
 
+def _format_loc(loc: tuple[int | str, ...]) -> str:
+    return '.'.join(str(part) for part in loc)
+
+
+def _is_condition_error(error: ErrorDetails) -> bool:
+    return error['loc'][:1] == ('next',) and error['loc'][2:3] == ('condition',)
+
+
 def _validate_conditional_phase(index: int, phase: dict[str, Any]) -> ConditionalFlowPhase:
     """
-    Validates a conditional flow phase. An invalid transition condition fails with one short hint per
-    transition instead of the pydantic error cascade over every member of the condition union.
+    Validates a conditional flow phase and reports an invalid transition condition in a short, actionable form.
+
+    The condition union is discriminated, so pydantic already reports one error on the matching condition model,
+    and that error is passed through with its path. An unknown operator or condition type gets a hint with the
+    allowed operators and an example instead. The phase's other errors are kept in the same message.
     """
     try:
         return ConditionalFlowPhase.model_validate(phase)
     except ValidationError as exc:
-        # Union member errors are located at ('next', j, 'condition', <member>, ...).
-        bad_transitions = sorted(
-            {err['loc'][1] for err in exc.errors() if err['loc'][:1] == ('next',) and err['loc'][2:3] == ('condition',)}
-        )
-        if not bad_transitions:
+        errors = exc.errors()
+        condition_errors = [err for err in errors if _is_condition_error(err)]
+        if not condition_errors:
             raise
-        hints = [
-            _condition_hint(f'phases[{index}].next[{j}].condition', phase['next'][j]['condition'])
-            for j in bad_transitions
-        ]
-        raise InvalidArgumentError('\n'.join(hints)) from None
+        messages = []
+        for j in sorted({err['loc'][1] for err in condition_errors}):
+            path = f'phases[{index}].next[{j}].condition'
+            condition = phase['next'][j]['condition']
+            transition_errors = [err for err in condition_errors if err['loc'][1] == j]
+            unknown_operator = _find_unknown_operator(condition)
+            # A loc that ends at `condition` means the discriminator found no condition model for its `type`.
+            if unknown_operator or any(len(err['loc']) == 3 for err in transition_errors):
+                messages.append(_condition_hint(path, condition, unknown_operator))
+            else:
+                messages.extend(f'{path}.{_format_loc(err["loc"][3:])}: {err["msg"]}' for err in transition_errors)
+        messages.extend(
+            f'phases[{index}].{_format_loc(err["loc"])}: {err["msg"]}' for err in errors if not _is_condition_error(err)
+        )
+        raise InvalidArgumentError('\n'.join(messages)) from None
 
 
 def validate_flow_structure(
