@@ -1108,8 +1108,8 @@ class TestBootstrapServerEndToEnd:
             after = sorted(t.name for t in await client.list_tools())
 
         # `clientId` comes from the MCP client's own clientInfo.name (here the in-process test
-        # client, which calls itself "mcp"), so the provisioning audit event has real attribution.
-        assert provisioning_stack == [{'clientId': 'mcp', 'projectName': 'My project'}]
+        # client, which calls itself "fastmcp"), so the provisioning audit event has real attribution.
+        assert provisioning_stack == [{'clientId': 'fastmcp', 'projectName': 'My project'}]
 
         # The session is signed in from here on: the credential is stored, scoped to the new
         # project. Nothing about the advertised tools changed, so a client that never re-fetches
