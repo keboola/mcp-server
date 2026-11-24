@@ -341,7 +341,8 @@ class TestConditionalFlowValidationResilience:
                         'id': 'task-bad',
                         'name': 'bad',
                         'phase': 'p1',
-                        'task': {'type': 'unknown-future-variant'},
+                        # `componentId` alone would infer `job`; an explicit wrong `type` must still fail.
+                        'task': {'type': 'unknown-future-variant', 'componentId': 'keboola.ex-aws-s3', 'mode': 'run'},
                     }
                 ],
                 flow_type=CONDITIONAL_FLOW_COMPONENT_ID,

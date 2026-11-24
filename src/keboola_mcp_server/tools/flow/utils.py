@@ -6,10 +6,12 @@ from collections import Counter, defaultdict
 from collections.abc import Mapping, Sequence
 from http import HTTPStatus
 from importlib import resources
-from typing import Any
+from typing import Any, get_args
 
 import httpx
+from pydantic import ValidationError
 
+from keboola_mcp_server.clients.base import InvalidArgumentError
 from keboola_mcp_server.clients.client import (
     CONDITIONAL_FLOW_COMPONENT_ID,
     DATA_APP_COMPONENT_ID,
@@ -26,6 +28,7 @@ from keboola_mcp_server.tools.components.utils import fetch_component
 from keboola_mcp_server.tools.flow.model import (
     ConditionalFlowPhase,
     ConditionalFlowTask,
+    ConditionObject,
     FlowPhase,
     FlowSummary,
     FlowTask,
@@ -112,12 +115,83 @@ def get_flow_configuration(
             'tasks': [task.model_dump(by_alias=True) for task in processed_tasks],
         }
     else:
-        processed_phases = [ConditionalFlowPhase.model_validate(phase) for phase in phases or []]
+        processed_phases = [_validate_conditional_phase(i, phase) for i, phase in enumerate(phases or [])]
         processed_tasks = [ConditionalFlowTask.model_validate(task) for task in tasks or []]
         return {
             'phases': [phase.model_dump(exclude_unset=True, by_alias=True) for phase in processed_phases],
             'tasks': [task.model_dump(exclude_unset=True, by_alias=True) for task in processed_tasks],
         }
+
+
+_ALLOWED_OPERATORS = tuple(
+    op
+    for model in get_args(ConditionObject)
+    if 'operator' in model.model_fields
+    for op in get_args(model.model_fields['operator'].annotation)
+)
+_TASK_STATUS_CONDITION_EXAMPLE = json.dumps(
+    {
+        'type': 'operator',
+        'operator': 'EQUALS',
+        'operands': [
+            {'type': 'task', 'task': '<task id>', 'value': 'status'},
+            {'type': 'const', 'value': 'success'},
+        ],
+    }
+)
+
+
+def _find_unknown_operator(condition: Any) -> str | None:
+    """Returns the first operator in the condition tree that is not a known flow operator."""
+    if not isinstance(condition, dict):
+        return None
+    if condition.get('type') == 'operator' and condition.get('operator') not in _ALLOWED_OPERATORS:
+        return str(condition.get('operator'))
+    for operand in condition.get('operands') or []:
+        if unknown := _find_unknown_operator(operand):
+            return unknown
+    return None
+
+
+def _condition_hint(path: str, condition: Any) -> str:
+    received = (
+        {key: condition[key] for key in ('type', 'operator') if key in condition}
+        if isinstance(condition, dict)
+        else condition
+    )
+    unknown_operator = _find_unknown_operator(condition)
+    reason = (
+        f'"{unknown_operator}" is not a flow operator.'
+        if unknown_operator
+        else 'The condition does not match any condition shape.'
+    )
+    return (
+        f'{path}: invalid condition {json.dumps(received)}. {reason} '
+        f'Allowed operators: {", ".join(_ALLOWED_OPERATORS)}. '
+        f'Example of a task status condition: {_TASK_STATUS_CONDITION_EXAMPLE}. '
+        'See `get_flow_schema` for all condition shapes.'
+    )
+
+
+def _validate_conditional_phase(index: int, phase: dict[str, Any]) -> ConditionalFlowPhase:
+    """
+    Validates a conditional flow phase. An invalid transition condition fails with one short hint per
+    transition instead of the pydantic error cascade over every member of the condition union.
+    """
+    try:
+        return ConditionalFlowPhase.model_validate(phase)
+    except ValidationError as exc:
+        # Union member errors are located at ('next', j, 'condition', <member>, ...).
+        bad_transitions = sorted(
+            {err['loc'][1] for err in exc.errors() if err['loc'][:1] == ('next',) and err['loc'][2:3] == ('condition',)}
+        )
+        if not bad_transitions:
+            raise
+        hints = [
+            _condition_hint(f'phases[{index}].next[{j}].condition', phase['next'][j]['condition'])
+            for j in bad_transitions
+        ]
+        raise InvalidArgumentError('\n'.join(hints)) from None
 
 
 def validate_flow_structure(

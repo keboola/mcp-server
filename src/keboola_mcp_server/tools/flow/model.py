@@ -6,7 +6,7 @@ import logging
 from datetime import datetime
 from typing import Annotated, Any, Literal, Union
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, ValidationError
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from keboola_mcp_server.clients.client import ORCHESTRATOR_COMPONENT_ID, FlowType
 from keboola_mcp_server.clients.storage import APIFlowResponse
@@ -219,6 +219,23 @@ class PhaseOperatorCondition(BaseExtraModel):
     operands: list['OperatorCondition'] = Field(description='List of operand conditions')
 
 
+class AnyPhaseOperatorCondition(BaseExtraModel):
+    """Flow-level operator that applies its condition to any finished task in any phase."""
+
+    type: Literal['operator'] = Field(description='Condition type')
+    operator: Literal['ANY_TASKS_IN_ANY_PHASE'] = Field(description='Flow operator type')
+    operands: list['OperatorCondition'] = Field(description='List of operand conditions')
+
+
+class ContinueOnFailureCondition(BaseExtraModel):
+    """Phase-level operator: every task of the phase must succeed, except the listed tasks, which may fail."""
+
+    type: Literal['operator'] = Field(description='Condition type')
+    operator: Literal['CONTINUE_ON_FAILURE'] = Field(description='Continue-on-failure operator; takes no operands')
+    phase: str = Field(description='ID of the phase whose tasks are evaluated')
+    tasks: list[str] = Field(description='IDs of the tasks that are allowed to fail (may be empty)')
+
+
 class FunctionCondition(BaseExtraModel):
     """Function-based condition."""
 
@@ -253,6 +270,8 @@ ConditionObject = Union[  # noqa: UP007
     VariableCondition,
     OperatorCondition,
     PhaseOperatorCondition,
+    AnyPhaseOperatorCondition,
+    ContinueOnFailureCondition,
     FunctionCondition,
     ArrayCondition,
 ]
@@ -343,6 +362,23 @@ class ConditionalFlowTask(BaseExtraModel):
     enabled: bool | None = Field(default=True, description='Whether the task is enabled')
     task: TaskConfiguration = Field(description='Structured task configuration')
 
+    @model_validator(mode='before')
+    @classmethod
+    def _infer_job_task_type(cls, data: Any) -> Any:
+        """Infers ``type: 'job'`` for an inner ``task`` object that has ``componentId`` but no ``type``.
+
+        The backend still returns this older shape (``{componentId, configId, mode, ...}``) for some flows,
+        and agents often write it too. Of the three ``TaskConfiguration`` variants only
+        ``JobTaskConfiguration`` has ``componentId``, so the inference is unambiguous. Only a *missing*
+        ``type`` is filled in; an explicit (even unrecognized) ``type`` is left to fail validation.
+        """
+        inner = data.get('task') if isinstance(data, dict) else None
+        if not isinstance(inner, dict) or 'type' in inner:
+            return data
+        if 'componentId' not in inner and 'component_id' not in inner:
+            return data
+        return {**data, 'task': {**inner, 'type': 'job'}}
+
 
 class ConditionalFlowPhase(BaseExtraModel):
     """Phase model with structured retry configuration."""
@@ -384,28 +420,6 @@ class ConditionalFlowConfiguration(BaseExtraModel):
 _T = ConditionalFlowPhase | ConditionalFlowTask
 
 
-def _with_inferred_job_task_type(raw: dict[str, Any]) -> dict[str, Any]:
-    """Some flows carry a task's inner ``task`` object without a ``type`` discriminator at all —
-    just ``{componentId, configId, mode, ...}`` (observed in production: an older/implicit shape
-    that predates ``type`` being required, still returned by the backend for some flows). Of the
-    three ``TaskConfiguration`` variants, only ``JobTaskConfiguration`` has ``componentId``, so
-    this is unambiguous — inferring ``type: 'job'`` here lets it validate as a proper
-    ``JobTaskConfiguration`` instead of falling all the way back to an untyped raw-dict passthrough
-    (which would also silently drop `type` from a round-trip: an agent that reads this task back
-    and resubmits it verbatim to ``modify_flow`` would then fail write-path validation, since that
-    path requires `type` — see ``get_flow_configuration``).
-
-    Only fills in a *missing* discriminator; a task with an explicit (even unrecognized) `type`
-    is left untouched, still handled by ``_safe_validate``'s own model_construct fallback below.
-    """
-    inner = raw.get('task')
-    if not isinstance(inner, dict) or 'type' in inner:
-        return raw
-    if 'componentId' not in inner and 'component_id' not in inner:
-        return raw
-    return {**raw, 'task': {**inner, 'type': 'job'}}
-
-
 def _safe_validate(model_cls: type[_T], raw: dict[str, Any], flow_id: str, kind: str) -> _T:
     """Validate a flow element; on failure log and fall back to ``model_construct``.
 
@@ -415,8 +429,6 @@ def _safe_validate(model_cls: type[_T], raw: dict[str, Any], flow_id: str, kind:
     raw dicts on the typed field; this is safe for display/serialization but is intentionally
     NOT used on the WRITE paths (``utils.get_flow_configuration``), which must remain strict.
     """
-    if model_cls is ConditionalFlowTask:
-        raw = _with_inferred_job_task_type(raw)
     try:
         return model_cls.model_validate(raw)
     except ValidationError as exc:
