@@ -9,7 +9,10 @@ from importlib import resources
 from typing import Any
 
 import httpx
+from pydantic import ValidationError
+from pydantic_core import ErrorDetails
 
+from keboola_mcp_server.clients.base import InvalidArgumentError
 from keboola_mcp_server.clients.client import (
     CONDITIONAL_FLOW_COMPONENT_ID,
     DATA_APP_COMPONENT_ID,
@@ -24,6 +27,8 @@ from keboola_mcp_server.errors import NotFoundError, is_caller_error
 from keboola_mcp_server.mcp import process_concurrently
 from keboola_mcp_server.tools.components.utils import fetch_component
 from keboola_mcp_server.tools.flow.model import (
+    CONDITION_MODEL_TAGS,
+    FLOW_CONDITION_OPERATORS,
     ConditionalFlowPhase,
     ConditionalFlowTask,
     FlowPhase,
@@ -112,12 +117,116 @@ def get_flow_configuration(
             'tasks': [task.model_dump(by_alias=True) for task in processed_tasks],
         }
     else:
-        processed_phases = [ConditionalFlowPhase.model_validate(phase) for phase in phases or []]
+        processed_phases = [_validate_conditional_phase(i, phase) for i, phase in enumerate(phases or [])]
         processed_tasks = [ConditionalFlowTask.model_validate(task) for task in tasks or []]
         return {
             'phases': [phase.model_dump(exclude_unset=True, by_alias=True) for phase in processed_phases],
             'tasks': [task.model_dump(exclude_unset=True, by_alias=True) for task in processed_tasks],
         }
+
+
+_TASK_STATUS_CONDITION_EXAMPLE = json.dumps(
+    {
+        'type': 'operator',
+        'operator': 'EQUALS',
+        'operands': [
+            {'type': 'task', 'task': '<task id>', 'value': 'status'},
+            {'type': 'const', 'value': 'success'},
+        ],
+    }
+)
+
+
+def _find_unknown_operators(condition: Any, loc: str = '') -> list[tuple[str, str]]:
+    """Returns (relative JSON path, operator) for every operator in the condition tree that is not a flow operator."""
+    if not isinstance(condition, dict):
+        return []
+    found = []
+    if condition.get('type') == 'operator' and condition.get('operator') not in FLOW_CONDITION_OPERATORS:
+        found.append((loc, str(condition.get('operator'))))
+    operands = condition.get('operands')
+    for i, operand in enumerate(operands if isinstance(operands, list) else []):
+        found.extend(_find_unknown_operators(operand, f'{loc}.operands.{i}'))
+    return found
+
+
+_UNKNOWN_CONDITION_TYPE_ERRORS = frozenset({'union_tag_not_found', 'union_tag_invalid'})
+
+
+def _condition_hint(path: str, condition: Any, reason: str) -> str:
+    received = (
+        {key: condition[key] for key in ('type', 'operator') if key in condition}
+        if isinstance(condition, dict)
+        else condition
+    )
+    return (
+        f'{path}: invalid condition {json.dumps(received)}. {reason} '
+        f'Allowed operators: {", ".join(FLOW_CONDITION_OPERATORS)}. '
+        f'Example of a task status condition: {_TASK_STATUS_CONDITION_EXAMPLE}. '
+        'See `get_flow_schema` for all condition shapes.'
+    )
+
+
+def _format_loc(loc: tuple[int | str, ...]) -> str:
+    """Formats an error location as a JSON path, without the condition union tags (they are not JSON keys)."""
+    return ''.join(f'.{part}' for part in loc if part not in CONDITION_MODEL_TAGS)
+
+
+def _is_condition_error(error: ErrorDetails) -> bool:
+    return error['loc'][:1] == ('next',) and error['loc'][2:3] == ('condition',)
+
+
+def _transition_messages(path: str, condition: Any, errors: list[ErrorDetails]) -> list[str]:
+    """
+    Messages for one invalid transition condition. An unknown operator or condition type (anywhere in the tree)
+    gets a hint with the allowed operators and an example; every other error is passed through with its path.
+    """
+    unknown_operators = _find_unknown_operators(condition)
+    reasons = [f'"{operator}" at {path}{loc} is not a flow operator.' for loc, operator in unknown_operators]
+    reasons.extend(
+        f'Condition at {path}{_format_loc(err["loc"][3:])} has an unknown type.'
+        for err in errors
+        if err['type'] in _UNKNOWN_CONDITION_TYPE_ERRORS
+    )
+    unknown_operator_locs = {loc for loc, _ in unknown_operators}
+
+    def covered_by_hint(err: ErrorDetails) -> bool:
+        if err['type'] in _UNKNOWN_CONDITION_TYPE_ERRORS:
+            return True
+        return (
+            err['type'] == 'literal_error'
+            and err['loc'][-1] == 'operator'
+            and _format_loc(err['loc'][3:-1]) in unknown_operator_locs
+        )
+
+    messages = [_condition_hint(path, condition, ' '.join(reasons))] if reasons else []
+    messages.extend(f'{path}{_format_loc(err["loc"][3:])}: {err["msg"]}' for err in errors if not covered_by_hint(err))
+    return messages
+
+
+def _validate_conditional_phase(index: int, phase: dict[str, Any]) -> ConditionalFlowPhase:
+    """
+    Validates a conditional flow phase. When a transition condition is invalid, every error of the phase is
+    reported as one short line with its JSON path; otherwise the original validation error is raised.
+
+    The condition union is discriminated, so pydantic already reports one error on the matching condition model.
+    An unknown operator or condition type also gets a hint with the allowed operators and an example.
+    """
+    try:
+        return ConditionalFlowPhase.model_validate(phase)
+    except ValidationError as exc:
+        errors = exc.errors()
+        if not any(_is_condition_error(err) for err in errors):
+            raise  # no condition error, keep the standard validation error format
+        messages = []
+        for j in sorted({err['loc'][1] for err in errors if _is_condition_error(err)}):
+            transition_errors = [err for err in errors if _is_condition_error(err) and err['loc'][1] == j]
+            path = f'phases[{index}].next[{j}].condition'
+            messages.extend(_transition_messages(path, phase['next'][j]['condition'], transition_errors))
+        messages.extend(
+            f'phases[{index}]{_format_loc(err["loc"])}: {err["msg"]}' for err in errors if not _is_condition_error(err)
+        )
+        raise InvalidArgumentError('\n'.join(messages)) from None
 
 
 def validate_flow_structure(

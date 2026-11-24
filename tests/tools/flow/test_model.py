@@ -151,6 +151,62 @@ class TestConditionalFlowPhase:
         assert serialized_excluding_unset['next'][0]['goto'] == 'phase-2'
         assert serialized_excluding_unset['next'][1]['goto'] is None
 
+    @pytest.mark.parametrize(
+        ('condition', 'expected_loc', 'expected_type'),
+        [
+            pytest.param(
+                {'type': 'operator', 'operator': 'CONTINUE_ON_FAIL', 'operands': []},
+                ('next', 0, 'condition', 'OperatorCondition', 'operator'),
+                'literal_error',
+                id='unknown-operator',
+            ),
+            pytest.param(
+                {
+                    'type': 'operator',
+                    'operator': 'AND',
+                    'operands': [{'type': 'operator', 'operator': 'SUCCEEDED', 'operands': []}],
+                },
+                ('next', 0, 'condition', 'OperatorCondition', 'operands', 0, 'OperatorCondition', 'operator'),
+                'literal_error',
+                id='nested-unknown-operator',
+            ),
+            pytest.param(
+                {'type': 'operator', 'operator': 'CONTINUE_ON_FAILURE', 'phase': 'p1'},
+                ('next', 0, 'condition', 'ContinueOnFailureCondition', 'tasks'),
+                'missing',
+                id='continue-on-failure-without-tasks',
+            ),
+            pytest.param(
+                {'type': 'status', 'value': 'success'},
+                ('next', 0, 'condition'),
+                'union_tag_not_found',
+                id='unknown-condition-type',
+            ),
+            pytest.param(
+                {'type': ['operator'], 'operator': 'EQUALS', 'operands': []},
+                ('next', 0, 'condition'),
+                'union_tag_not_found',
+                id='non-string-type',
+            ),
+            pytest.param(
+                {'type': 'operator', 'operator': ['EQUALS'], 'operands': []},
+                ('next', 0, 'condition', 'OperatorCondition', 'operator'),
+                'literal_error',
+                id='non-string-operator',
+            ),
+        ],
+    )
+    def test_invalid_condition_reports_one_error(
+        self, condition: dict[str, Any], expected_loc: tuple[str | int, ...], expected_type: str
+    ):
+        """The condition union is discriminated by `type` and `operator`, so an invalid condition yields one
+        targeted error on the matching model instead of one error per union member (formerly 18 to 43)."""
+        with pytest.raises(ValidationError) as exc_info:
+            ConditionalFlowPhase.model_validate(
+                {'id': 'p1', 'name': 'Phase 1', 'next': [{'id': 't1', 'condition': condition, 'goto': None}]}
+            )
+        assert [(err['loc'], err['type']) for err in exc_info.value.errors()] == [(expected_loc, expected_type)]
+
 
 class TestConditionalFlowValidationResilience:
     """Regression tests for AI-3216 — `get_flows` should not crash on unknown variants.
@@ -259,7 +315,17 @@ class TestConditionalFlowValidationResilience:
         assert bad.id == 'task-bad'
         assert any('failed strict validation' in m for m in caplog.messages)
 
-    def test_missing_task_type_is_inferred_as_job_in_read_path(self, caplog: pytest.LogCaptureFixture):
+    @pytest.mark.parametrize(
+        ('enabled', 'falls_back'),
+        [
+            pytest.param(True, False, id='validates'),
+            # Fails validation for an unrelated reason: the model_construct fallback must keep the inferred type.
+            pytest.param('not-a-bool', True, id='permissive-fallback'),
+        ],
+    )
+    def test_missing_task_type_is_inferred_as_job_in_read_path(
+        self, caplog: pytest.LogCaptureFixture, enabled: Any, falls_back: bool
+    ):
         """Some flows carry a task's inner `task` object with no `type` discriminator at all --
         just `{componentId, mode}` (observed in production). Of the three TaskConfiguration
         variants only JobTaskConfiguration has componentId, so this must validate as a proper
@@ -279,6 +345,7 @@ class TestConditionalFlowValidationResilience:
                         'id': 'task-legacy',
                         'name': 'legacy',
                         'phase': 'p1',
+                        'enabled': enabled,
                         'task': {'componentId': 'keboola.ex-aws-s3', 'mode': 'run'},
                     },
                 ],
@@ -292,10 +359,12 @@ class TestConditionalFlowValidationResilience:
 
         assert isinstance(flow.configuration, ConditionalFlowConfiguration)
         task = flow.configuration.tasks[0].task
-        assert isinstance(task, JobTaskConfiguration)
-        assert task.component_id == 'keboola.ex-aws-s3'
-        # No fallback warning: this is inferred and validated strictly, not model_construct'ed.
-        assert not any('failed strict validation' in m for m in caplog.messages)
+        assert any('failed strict validation' in m for m in caplog.messages) == falls_back
+        if falls_back:
+            assert task == {'componentId': 'keboola.ex-aws-s3', 'mode': 'run', 'type': 'job'}
+        else:
+            assert isinstance(task, JobTaskConfiguration)
+            assert task.component_id == 'keboola.ex-aws-s3'
 
     def test_missing_task_type_without_component_id_still_falls_back(self, caplog: pytest.LogCaptureFixture):
         """The type inference is scoped to the unambiguous componentId+no-type shape; a task
@@ -341,7 +410,8 @@ class TestConditionalFlowValidationResilience:
                         'id': 'task-bad',
                         'name': 'bad',
                         'phase': 'p1',
-                        'task': {'type': 'unknown-future-variant'},
+                        # `componentId` alone would infer `job`; an explicit wrong `type` must still fail.
+                        'task': {'type': 'unknown-future-variant', 'componentId': 'keboola.ex-aws-s3', 'mode': 'run'},
                     }
                 ],
                 flow_type=CONDITIONAL_FLOW_COMPONENT_ID,
