@@ -1243,7 +1243,7 @@ requires-dist = [
     { name = "pyyaml", specifier = "~=6.0" },
     { name = "requests", marker = "extra == 'integtests'", specifier = "~=2.34" },
     { name = "ruff", marker = "extra == 'codestyle'", specifier = "~=0.16" },
-    { name = "sqlglot", specifier = "~=30.18" },
+    { name = "sqlglot", specifier = ">=30.18,!=30.34.0,<31" },
     { name = "toon-format", specifier = "~=1.1" },
     { name = "tox", marker = "extra == 'dev'", specifier = "~=4.35" },
 ]
