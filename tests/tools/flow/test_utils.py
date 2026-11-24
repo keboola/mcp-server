@@ -400,13 +400,13 @@ class TestConditionalFlowValidation:
             pytest.param(
                 {'type': 'status', 'value': 'success'},
                 'Start',
-                [['phases[0].next[0].condition:', 'condition type is not known', '"value": "status"']],
+                [['phases[0].next[0].condition:', 'has an unknown type', '"value": "status"']],
                 id='unknown-condition-type',
             ),
             pytest.param(
                 {'type': 'operator', 'operator': 'CONTINUE_ON_FAILURE', 'phase': 'phase1'},
                 'Start',
-                [['phases[0].next[0].condition.ContinueOnFailureCondition.tasks: Field required']],
+                [['phases[0].next[0].condition.tasks: Field required']],
                 id='known-operator-missing-field',
             ),
             pytest.param(
@@ -417,6 +417,45 @@ class TestConditionalFlowValidation:
                     ['phases[0].name:', 'at least 1 character'],
                 ],
                 id='condition-and-phase-errors',
+            ),
+            pytest.param(
+                {'type': 'operator', 'operator': 'AND', 'operands': 5},
+                'Start',
+                [['phases[0].next[0].condition.operands: Input should be a valid list']],
+                id='non-list-operands',
+            ),
+            pytest.param(
+                {'type': 'operator', 'operator': 'AND', 'operands': [{'type': 'status', 'value': 'success'}]},
+                'Start',
+                [
+                    [
+                        'phases[0].next[0].condition:',
+                        'Condition at phases[0].next[0].condition.operands.0 has an unknown type',
+                    ]
+                ],
+                id='nested-unknown-condition-type',
+            ),
+            pytest.param(
+                {
+                    'type': 'operator',
+                    'operator': 'AND',
+                    'operands': [
+                        {'type': 'operator', 'operator': 'SUCCEEDED', 'operands': []},
+                        {'type': 'task', 'value': 'status'},
+                    ],
+                },
+                'Start',
+                [
+                    ['phases[0].next[0].condition:', '"SUCCEEDED" is not a flow operator'],
+                    ['phases[0].next[0].condition.operands.1.task: Field required'],
+                ],
+                id='unknown-operator-and-other-condition-error',
+            ),
+            pytest.param(
+                {'type': 'const', 'value': True},
+                '',
+                [['phases[0].name:', 'at least 1 character']],
+                id='phase-error-only',
             ),
         ],
     )

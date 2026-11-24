@@ -293,6 +293,7 @@ _CONDITION_TAG_BY_TYPE = {
     type_: model.__name__ for model in _OTHER_CONDITIONS for type_ in get_args(model.model_fields['type'].annotation)
 }
 FLOW_CONDITION_OPERATORS = tuple(_CONDITION_TAG_BY_OPERATOR)
+CONDITION_MODEL_TAGS = frozenset(model.__name__ for model in _OTHER_CONDITIONS + _OPERATOR_CONDITIONS)
 
 
 def _condition_tag(value: Any) -> str | None:
@@ -395,6 +396,23 @@ class ConditionalFlowTransition(BaseExtraModel):
     goto: str | None = Field(description='Target phase ID to transition to, or null to end the flow')
 
 
+def with_inferred_job_task_type(data: Any) -> Any:
+    """Infers ``type: 'job'`` for an inner ``task`` object that has ``componentId`` but no ``type``.
+
+    The backend still returns this older shape (``{componentId, configId, mode, ...}``) for some flows,
+    and agents often write it too. Of the three ``TaskConfiguration`` variants only
+    ``JobTaskConfiguration`` has ``componentId``, so the inference is unambiguous. Only a *missing*
+    ``type`` is filled in; an explicit (even unrecognized) ``type`` is left to fail validation.
+    Used by ``ConditionalFlowTask`` validation and by the read path's ``model_construct`` fallback.
+    """
+    inner = data.get('task') if isinstance(data, dict) else None
+    if not isinstance(inner, dict) or 'type' in inner:
+        return data
+    if 'componentId' not in inner and 'component_id' not in inner:
+        return data
+    return {**data, 'task': {**inner, 'type': 'job'}}
+
+
 class ConditionalFlowTask(BaseExtraModel):
     """Task model with structured configuration."""
 
@@ -407,19 +425,7 @@ class ConditionalFlowTask(BaseExtraModel):
     @model_validator(mode='before')
     @classmethod
     def _infer_job_task_type(cls, data: Any) -> Any:
-        """Infers ``type: 'job'`` for an inner ``task`` object that has ``componentId`` but no ``type``.
-
-        The backend still returns this older shape (``{componentId, configId, mode, ...}``) for some flows,
-        and agents often write it too. Of the three ``TaskConfiguration`` variants only
-        ``JobTaskConfiguration`` has ``componentId``, so the inference is unambiguous. Only a *missing*
-        ``type`` is filled in; an explicit (even unrecognized) ``type`` is left to fail validation.
-        """
-        inner = data.get('task') if isinstance(data, dict) else None
-        if not isinstance(inner, dict) or 'type' in inner:
-            return data
-        if 'componentId' not in inner and 'component_id' not in inner:
-            return data
-        return {**data, 'task': {**inner, 'type': 'job'}}
+        return with_inferred_job_task_type(data)
 
 
 class ConditionalFlowPhase(BaseExtraModel):
@@ -481,6 +487,9 @@ def _safe_validate(model_cls: type[_T], raw: dict[str, Any], flow_id: str, kind:
             raw.get('id'),
             exc,
         )
+        if model_cls is ConditionalFlowTask:
+            # model_construct skips validators, so keep the inferred task type on the fallback too.
+            raw = with_inferred_job_task_type(raw)
         return model_cls.model_construct(**raw)
 
 

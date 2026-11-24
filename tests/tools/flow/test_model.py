@@ -315,7 +315,17 @@ class TestConditionalFlowValidationResilience:
         assert bad.id == 'task-bad'
         assert any('failed strict validation' in m for m in caplog.messages)
 
-    def test_missing_task_type_is_inferred_as_job_in_read_path(self, caplog: pytest.LogCaptureFixture):
+    @pytest.mark.parametrize(
+        ('enabled', 'falls_back'),
+        [
+            pytest.param(True, False, id='validates'),
+            # Fails validation for an unrelated reason: the model_construct fallback must keep the inferred type.
+            pytest.param('not-a-bool', True, id='permissive-fallback'),
+        ],
+    )
+    def test_missing_task_type_is_inferred_as_job_in_read_path(
+        self, caplog: pytest.LogCaptureFixture, enabled: Any, falls_back: bool
+    ):
         """Some flows carry a task's inner `task` object with no `type` discriminator at all --
         just `{componentId, mode}` (observed in production). Of the three TaskConfiguration
         variants only JobTaskConfiguration has componentId, so this must validate as a proper
@@ -335,6 +345,7 @@ class TestConditionalFlowValidationResilience:
                         'id': 'task-legacy',
                         'name': 'legacy',
                         'phase': 'p1',
+                        'enabled': enabled,
                         'task': {'componentId': 'keboola.ex-aws-s3', 'mode': 'run'},
                     },
                 ],
@@ -348,10 +359,12 @@ class TestConditionalFlowValidationResilience:
 
         assert isinstance(flow.configuration, ConditionalFlowConfiguration)
         task = flow.configuration.tasks[0].task
-        assert isinstance(task, JobTaskConfiguration)
-        assert task.component_id == 'keboola.ex-aws-s3'
-        # No fallback warning: this is inferred and validated strictly, not model_construct'ed.
-        assert not any('failed strict validation' in m for m in caplog.messages)
+        assert any('failed strict validation' in m for m in caplog.messages) == falls_back
+        if falls_back:
+            assert task == {'componentId': 'keboola.ex-aws-s3', 'mode': 'run', 'type': 'job'}
+        else:
+            assert isinstance(task, JobTaskConfiguration)
+            assert task.component_id == 'keboola.ex-aws-s3'
 
     def test_missing_task_type_without_component_id_still_falls_back(self, caplog: pytest.LogCaptureFixture):
         """The type inference is scoped to the unambiguous componentId+no-type shape; a task
