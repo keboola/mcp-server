@@ -483,12 +483,6 @@ class TestConditionalFlowValidation:
                 ],
                 id='unknown-operator-and-other-condition-error',
             ),
-            pytest.param(
-                {'type': 'const', 'value': True},
-                '',
-                [['phases[0].name:', 'at least 1 character']],
-                id='phase-error-only',
-            ),
         ],
     )
     def test_get_flow_configuration_invalid_condition_hint(

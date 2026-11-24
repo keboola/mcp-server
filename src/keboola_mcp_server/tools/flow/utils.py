@@ -206,7 +206,8 @@ def _transition_messages(path: str, condition: Any, errors: list[ErrorDetails]) 
 
 def _validate_conditional_phase(index: int, phase: dict[str, Any]) -> ConditionalFlowPhase:
     """
-    Validates a conditional flow phase and reports every error as one short line with its JSON path.
+    Validates a conditional flow phase. When a transition condition is invalid, every error of the phase is
+    reported as one short line with its JSON path; otherwise the original validation error is raised.
 
     The condition union is discriminated, so pydantic already reports one error on the matching condition model.
     An unknown operator or condition type also gets a hint with the allowed operators and an example.
@@ -215,6 +216,8 @@ def _validate_conditional_phase(index: int, phase: dict[str, Any]) -> Conditiona
         return ConditionalFlowPhase.model_validate(phase)
     except ValidationError as exc:
         errors = exc.errors()
+        if not any(_is_condition_error(err) for err in errors):
+            raise  # no condition error, keep the standard validation error format
         messages = []
         for j in sorted({err['loc'][1] for err in errors if _is_condition_error(err)}):
             transition_errors = [err for err in errors if _is_condition_error(err) and err['loc'][1] == j]
