@@ -4,9 +4,18 @@ Flow models for Keboola MCP server.
 
 import logging
 from datetime import datetime
-from typing import Annotated, Any, Literal, Union
+from typing import Annotated, Any, Literal, Union, get_args
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    Discriminator,
+    Field,
+    Tag,
+    ValidationError,
+    model_validator,
+)
 
 from keboola_mcp_server.clients.client import ORCHESTRATOR_COMPONENT_ID, FlowType
 from keboola_mcp_server.clients.storage import APIFlowResponse
@@ -259,21 +268,46 @@ class ArrayCondition(BaseExtraModel):
     operands: list['VariableSourceObject'] = Field(description='List of operand conditions')
 
 
-# Union type for all condition types
-# NB: keep as typing.Union, not `X | Y` -- this is exposed in tool-facing pydantic schemas, and
-# `types.UnionType` has been observed to change pydantic's generated JSON Schema in ways that alter
-# jsonschema validation error paths (see ConfigParamUpdate/TfParamUpdate above).
-ConditionObject = Union[  # noqa: UP007
-    TaskCondition,
-    PhaseCondition,
-    ConstantCondition,
-    VariableCondition,
+# Several condition models share `type: 'operator'`, so the union is discriminated by `type` and, for
+# operators, by `operator`. Pydantic then validates only the matching model and reports one targeted error
+# instead of one per union member. An unknown operator is routed to `OperatorCondition`, whose `operator`
+# error lists the expected values.
+_OPERATOR_CONDITIONS = (
     OperatorCondition,
     PhaseOperatorCondition,
     AnyPhaseOperatorCondition,
     ContinueOnFailureCondition,
+)
+_OTHER_CONDITIONS = (
+    TaskCondition,
+    PhaseCondition,
+    ConstantCondition,
+    VariableCondition,
     FunctionCondition,
     ArrayCondition,
+)
+_CONDITION_TAG_BY_OPERATOR = {
+    op: model.__name__ for model in _OPERATOR_CONDITIONS for op in get_args(model.model_fields['operator'].annotation)
+}
+_CONDITION_TAG_BY_TYPE = {
+    type_: model.__name__ for model in _OTHER_CONDITIONS for type_ in get_args(model.model_fields['type'].annotation)
+}
+FLOW_CONDITION_OPERATORS = tuple(_CONDITION_TAG_BY_OPERATOR)
+
+
+def _condition_tag(value: Any) -> str | None:
+    get = value.get if isinstance(value, dict) else lambda key: getattr(value, key, None)
+    if get('type') == 'operator':
+        return _CONDITION_TAG_BY_OPERATOR.get(get('operator'), OperatorCondition.__name__)
+    return _CONDITION_TAG_BY_TYPE.get(get('type'))
+
+
+# NB: keep the members in typing.Union, not `X | Y` -- this is exposed in tool-facing pydantic schemas
+# (the `get_flows` output), and `types.UnionType` has been observed to change pydantic's generated JSON
+# Schema in ways that alter jsonschema validation error paths (see ConfigParamUpdate/TfParamUpdate above).
+ConditionObject = Annotated[
+    Union[tuple(Annotated[model, Tag(model.__name__)] for model in _OTHER_CONDITIONS + _OPERATOR_CONDITIONS)],  # noqa: UP007
+    Discriminator(_condition_tag),
 ]
 
 

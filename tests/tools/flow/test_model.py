@@ -151,6 +151,50 @@ class TestConditionalFlowPhase:
         assert serialized_excluding_unset['next'][0]['goto'] == 'phase-2'
         assert serialized_excluding_unset['next'][1]['goto'] is None
 
+    @pytest.mark.parametrize(
+        ('condition', 'expected_loc', 'expected_type'),
+        [
+            pytest.param(
+                {'type': 'operator', 'operator': 'CONTINUE_ON_FAIL', 'operands': []},
+                ('next', 0, 'condition', 'OperatorCondition', 'operator'),
+                'literal_error',
+                id='unknown-operator',
+            ),
+            pytest.param(
+                {
+                    'type': 'operator',
+                    'operator': 'AND',
+                    'operands': [{'type': 'operator', 'operator': 'SUCCEEDED', 'operands': []}],
+                },
+                ('next', 0, 'condition', 'OperatorCondition', 'operands', 0, 'OperatorCondition', 'operator'),
+                'literal_error',
+                id='nested-unknown-operator',
+            ),
+            pytest.param(
+                {'type': 'operator', 'operator': 'CONTINUE_ON_FAILURE', 'phase': 'p1'},
+                ('next', 0, 'condition', 'ContinueOnFailureCondition', 'tasks'),
+                'missing',
+                id='continue-on-failure-without-tasks',
+            ),
+            pytest.param(
+                {'type': 'status', 'value': 'success'},
+                ('next', 0, 'condition'),
+                'union_tag_not_found',
+                id='unknown-condition-type',
+            ),
+        ],
+    )
+    def test_invalid_condition_reports_one_error(
+        self, condition: dict[str, Any], expected_loc: tuple[str | int, ...], expected_type: str
+    ):
+        """The condition union is discriminated by `type` and `operator`, so an invalid condition yields one
+        targeted error on the matching model instead of one error per union member (formerly 18 to 43)."""
+        with pytest.raises(ValidationError) as exc_info:
+            ConditionalFlowPhase.model_validate(
+                {'id': 'p1', 'name': 'Phase 1', 'next': [{'id': 't1', 'condition': condition, 'goto': None}]}
+            )
+        assert [(err['loc'], err['type']) for err in exc_info.value.errors()] == [(expected_loc, expected_type)]
+
 
 class TestConditionalFlowValidationResilience:
     """Regression tests for AI-3216 — `get_flows` should not crash on unknown variants.

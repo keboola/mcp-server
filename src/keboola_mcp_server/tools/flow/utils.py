@@ -6,7 +6,7 @@ from collections import Counter, defaultdict
 from collections.abc import Mapping, Sequence
 from http import HTTPStatus
 from importlib import resources
-from typing import Any, get_args
+from typing import Any
 
 import httpx
 from pydantic import ValidationError
@@ -26,9 +26,9 @@ from keboola_mcp_server.errors import NotFoundError, is_caller_error
 from keboola_mcp_server.mcp import process_concurrently
 from keboola_mcp_server.tools.components.utils import fetch_component
 from keboola_mcp_server.tools.flow.model import (
+    FLOW_CONDITION_OPERATORS,
     ConditionalFlowPhase,
     ConditionalFlowTask,
-    ConditionObject,
     FlowPhase,
     FlowSummary,
     FlowTask,
@@ -123,12 +123,6 @@ def get_flow_configuration(
         }
 
 
-_ALLOWED_OPERATORS = tuple(
-    op
-    for model in get_args(ConditionObject)
-    if 'operator' in model.model_fields
-    for op in get_args(model.model_fields['operator'].annotation)
-)
 _TASK_STATUS_CONDITION_EXAMPLE = json.dumps(
     {
         'type': 'operator',
@@ -145,7 +139,7 @@ def _find_unknown_operator(condition: Any) -> str | None:
     """Returns the first operator in the condition tree that is not a known flow operator."""
     if not isinstance(condition, dict):
         return None
-    if condition.get('type') == 'operator' and condition.get('operator') not in _ALLOWED_OPERATORS:
+    if condition.get('type') == 'operator' and condition.get('operator') not in FLOW_CONDITION_OPERATORS:
         return str(condition.get('operator'))
     for operand in condition.get('operands') or []:
         if unknown := _find_unknown_operator(operand):
@@ -167,7 +161,7 @@ def _condition_hint(path: str, condition: Any) -> str:
     )
     return (
         f'{path}: invalid condition {json.dumps(received)}. {reason} '
-        f'Allowed operators: {", ".join(_ALLOWED_OPERATORS)}. '
+        f'Allowed operators: {", ".join(FLOW_CONDITION_OPERATORS)}. '
         f'Example of a task status condition: {_TASK_STATUS_CONDITION_EXAMPLE}. '
         'See `get_flow_schema` for all condition shapes.'
     )
