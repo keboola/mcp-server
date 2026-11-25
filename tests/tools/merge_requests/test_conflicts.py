@@ -318,52 +318,81 @@ def test_subtree_vs_leaf_edit_is_a_conflict() -> None:
             ['/configuration/tables/5/query'],
             id='id_keyed_on_both_pairs_finds_the_clash',
         ),
-        # KNOWN GAP (DMD-2246): keying is decided per pair (base->ours, base->theirs), not once per list. When one
-        # side breaks the id rule, the same edited row lands under an id path on one side and an index path on the
-        # other: the real clash on `query` is reported as two one-sided rows (each showing the other side unchanged)
-        # and `conflicting_paths` comes back empty. Pinned here so a fix is a deliberate, visible behaviour change.
+        # Keying is decided once per list across base, ours and theirs: one side breaking the id rule makes both
+        # pairs walk by index, so the same edited row always lands under the same path.
         pytest.param(
             [{'id': 5, 'query': 'a'}],
             [{'id': 5, 'query': 'b'}],
             [{'id': 5, 'query': 'c'}, {'query': 'z'}],
             {
-                '/configuration/tables/0/query': ('theirs', 'a', 'c'),
+                '/configuration/tables/0/query': ('both', 'b', 'c'),
                 '/configuration/tables/1': ('theirs', None, {'query': 'z'}),
-                '/configuration/tables/5/query': ('ours', 'b', 'a'),
             },
-            [],
-            id='known_gap_one_side_adds_item_without_id',
+            ['/configuration/tables/0/query'],
+            id='one_side_adds_item_without_id',
+        ),
+        pytest.param(
+            [{'id': 5, 'query': 'a'}],
+            [{'id': 5, 'query': 'b'}, {'query': 'z'}],
+            [{'id': 5, 'query': 'c'}],
+            {
+                '/configuration/tables/0/query': ('both', 'b', 'c'),
+                '/configuration/tables/1': ('ours', {'query': 'z'}, None),
+            },
+            ['/configuration/tables/0/query'],
+            id='ours_adds_item_without_id',
         ),
         pytest.param(
             [{'id': 5, 'query': 'a'}],
             [{'id': 5, 'query': 'b'}],
             [{'id': 5, 'query': 'c'}, {'id': 5, 'query': 'z'}],
             {
-                '/configuration/tables/0/query': ('theirs', 'a', 'c'),
+                '/configuration/tables/0/query': ('both', 'b', 'c'),
                 '/configuration/tables/1': ('theirs', None, {'id': 5, 'query': 'z'}),
-                '/configuration/tables/5/query': ('ours', 'b', 'a'),
             },
-            [],
-            id='known_gap_one_side_duplicates_an_id',
+            ['/configuration/tables/0/query'],
+            id='one_side_duplicates_an_id',
         ),
-        # The other face of the same gap: an id path and an index path of different rows can share a segment.
         pytest.param(
             [{'id': 1, 'query': 'a'}, {'id': 2, 'query': 'b'}],
             [{'id': 1, 'query': 'a'}, {'id': 2, 'query': 'x'}],
             [{'id': 1, 'query': 'a'}, {'id': 2, 'query': 'b'}, {'query': 'new'}],
             {
+                '/configuration/tables/1/query': ('ours', 'x', 'b'),
                 '/configuration/tables/2': ('theirs', None, {'query': 'new'}),
-                '/configuration/tables/2/query': ('ours', 'x', 'b'),
             },
-            ['/configuration/tables/2', '/configuration/tables/2/query'],
-            id='known_gap_id_path_collides_with_index_path',
+            [],
+            id='different_rows_do_not_collide',
+        ),
+        pytest.param(
+            [{'id': 7, 'cols': [{'id': 5, 'n': 'a'}]}],
+            [{'id': 7, 'cols': [{'id': 5, 'n': 'b'}]}],
+            [{'id': 6, 'cols': []}, {'id': 7, 'cols': [{'id': 5, 'n': 'c'}, {'n': 'z'}]}],
+            {
+                '/configuration/tables/6': ('theirs', None, {'id': 6, 'cols': []}),
+                '/configuration/tables/7/cols/0/n': ('both', 'b', 'c'),
+                '/configuration/tables/7/cols/1': ('theirs', None, {'n': 'z'}),
+            },
+            ['/configuration/tables/7/cols/0/n'],
+            id='nested_list_decides_on_its_own',
+        ),
+        pytest.param(
+            [{'id': 5, 'query': 'a'}],
+            [{'id': 5, 'query': 'b'}],
+            None,
+            {
+                '/configuration/tables': ('theirs', [{'id': 5, 'query': 'a'}], None),
+                '/configuration/tables/5/query': ('ours', 'b', 'a'),
+            },
+            ['/configuration/tables', '/configuration/tables/5/query'],
+            id='list_replaced_by_non_list_does_not_vote',
         ),
     ],
 )
 def test_list_keying_across_sides(
     base_items: list,
     ours_items: list,
-    theirs_items: list,
+    theirs_items: list | None,
     expected_changes: dict[str, tuple[str, Any, Any]],
     expected_conflicting: list[str],
 ) -> None:
