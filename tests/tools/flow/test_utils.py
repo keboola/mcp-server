@@ -4,6 +4,7 @@ from typing import Any
 import pytest
 from httpx import ConnectError, HTTPStatusError, Request, Response
 
+from keboola_mcp_server.clients.base import InvalidArgumentError
 from keboola_mcp_server.clients.client import CONDITIONAL_FLOW_COMPONENT_ID, ORCHESTRATOR_COMPONENT_ID
 from keboola_mcp_server.clients.storage import APIFlowResponse
 from keboola_mcp_server.errors import NotFoundError
@@ -290,14 +291,222 @@ class TestConditionalFlowValidation:
                 ],
                 id='complex-branched',
             ),
+            pytest.param(
+                [
+                    {
+                        'id': 'phase0',
+                        'name': 'Start',
+                        'next': [
+                            {
+                                'id': 't0',
+                                'condition': {
+                                    'type': 'operator',
+                                    'operator': 'CONTINUE_ON_FAILURE',
+                                    'phase': 'phase0',
+                                    'tasks': ['task0'],
+                                },
+                                'goto': 'phase1',
+                            },
+                            {'id': 't1', 'goto': None},
+                        ],
+                    },
+                    {'id': 'phase1', 'name': 'End', 'next': [{'id': 't2', 'goto': None}]},
+                ],
+                id='continue-on-failure-condition',
+            ),
+            pytest.param(
+                [
+                    {
+                        'id': 'phase0',
+                        'name': 'Start',
+                        'next': [
+                            {
+                                'id': 't0',
+                                'condition': {
+                                    'type': 'operator',
+                                    'operator': 'ANY_TASKS_IN_ANY_PHASE',
+                                    'operands': [
+                                        {
+                                            'type': 'operator',
+                                            'operator': 'EQUALS',
+                                            'operands': [
+                                                {'type': 'task', 'task': '*', 'value': 'job.status'},
+                                                {'type': 'const', 'value': 'error'},
+                                            ],
+                                        }
+                                    ],
+                                },
+                                'goto': 'phase1',
+                            },
+                            {'id': 't1', 'goto': None},
+                        ],
+                    },
+                    {'id': 'phase1', 'name': 'End', 'next': [{'id': 't2', 'goto': None}]},
+                ],
+                id='any-tasks-in-any-phase-condition',
+            ),
         ],
     )
     def test_validate_conditional_flow_valid_cases(self, phases: list[dict[str, Any]]):
         """Test valid conditional flow dependency structures (includes both simple and complex cases)."""
         tasks = [_notification_task(f'task{i}', phase['id']) for i, phase in enumerate(phases)]
+        flow_configuration = get_flow_configuration(phases, tasks, flow_type=CONDITIONAL_FLOW_COMPONENT_ID)
         # Should not raise any errors
-        ret = validate_flow_structure({'phases': phases, 'tasks': tasks}, flow_type=CONDITIONAL_FLOW_COMPONENT_ID)
+        ret = validate_flow_structure(flow_configuration, flow_type=CONDITIONAL_FLOW_COMPONENT_ID)
         assert ret is None
+        # The entry phase's first transition (and its condition, if any) is carried over unchanged.
+        assert flow_configuration['phases'][0]['next'][0].get('condition') == phases[0]['next'][0].get('condition')
+
+    def test_get_flow_configuration_infers_missing_job_task_type(self):
+        """A task with `componentId` but no `type` is written as a `job` task, as the read path reads it."""
+        flow_configuration = get_flow_configuration(
+            phases=[{'id': 'phase1', 'name': 'Start', 'next': [{'id': 't1', 'goto': None}]}],
+            tasks=[
+                {
+                    'id': 'task1',
+                    'name': 'Extract',
+                    'phase': 'phase1',
+                    'task': {'componentId': 'keboola.ex-aws-s3', 'configId': '123', 'mode': 'run'},
+                }
+            ],
+            flow_type=CONDITIONAL_FLOW_COMPONENT_ID,
+        )
+        assert flow_configuration['tasks'][0]['task'] == {
+            'type': 'job',
+            'componentId': 'keboola.ex-aws-s3',
+            'configId': '123',
+            'mode': 'run',
+        }
+
+    @pytest.mark.parametrize(
+        ('condition', 'phase_name', 'expected_lines'),
+        [
+            pytest.param(
+                {'type': 'operator', 'operator': 'CONTINUE_ON_FAIL', 'operands': []},
+                'Start',
+                [
+                    [
+                        'phases[0].next[0].condition:',
+                        '"CONTINUE_ON_FAIL" at phases[0].next[0].condition is not a flow operator',
+                        'CONTINUE_ON_FAILURE',
+                    ]
+                ],
+                id='unknown-operator',
+            ),
+            pytest.param(
+                {
+                    'type': 'operator',
+                    'operator': 'AND',
+                    'operands': [{'type': 'operator', 'operator': 'SUCCEEDED', 'operands': []}],
+                },
+                'Start',
+                [['phases[0].next[0].condition:', '"SUCCEEDED" at phases[0].next[0].condition.operands.0 is not']],
+                id='nested-unknown-operator',
+            ),
+            pytest.param(
+                {
+                    'type': 'operator',
+                    'operator': 'AND',
+                    'operands': [
+                        {'type': 'operator', 'operator': 'SUCCEEDED', 'operands': []},
+                        {'type': 'operator', 'operator': 'FAILED', 'operands': []},
+                        {'type': 'status', 'value': 'success'},
+                        {'type': 'state', 'value': 'error'},
+                    ],
+                },
+                'Start',
+                [
+                    [
+                        'phases[0].next[0].condition:',
+                        '"SUCCEEDED" at phases[0].next[0].condition.operands.0 is not',
+                        '"FAILED" at phases[0].next[0].condition.operands.1 is not',
+                        'Condition at phases[0].next[0].condition.operands.2 has an unknown type',
+                        'Condition at phases[0].next[0].condition.operands.3 has an unknown type',
+                    ]
+                ],
+                id='multiple-unknown-operators-and-types',
+            ),
+            pytest.param(
+                {'type': 'status', 'value': 'success'},
+                'Start',
+                [['phases[0].next[0].condition:', 'has an unknown type', '"value": "status"']],
+                id='unknown-condition-type',
+            ),
+            pytest.param(
+                {'type': 'operator', 'operator': 'CONTINUE_ON_FAILURE', 'phase': 'phase1'},
+                'Start',
+                [['phases[0].next[0].condition.tasks: Field required']],
+                id='known-operator-missing-field',
+            ),
+            pytest.param(
+                {'type': 'operator', 'operator': 'CONTINUE_ON_FAIL', 'operands': []},
+                '',
+                [
+                    [
+                        'phases[0].next[0].condition:',
+                        '"CONTINUE_ON_FAIL" at phases[0].next[0].condition is not a flow operator',
+                    ],
+                    ['phases[0].name:', 'at least 1 character'],
+                ],
+                id='condition-and-phase-errors',
+            ),
+            pytest.param(
+                {'type': 'operator', 'operator': 'AND', 'operands': 5},
+                'Start',
+                [['phases[0].next[0].condition.operands: Input should be a valid list']],
+                id='non-list-operands',
+            ),
+            pytest.param(
+                {'type': 'operator', 'operator': 'AND', 'operands': [{'type': 'status', 'value': 'success'}]},
+                'Start',
+                [
+                    [
+                        'phases[0].next[0].condition:',
+                        'Condition at phases[0].next[0].condition.operands.0 has an unknown type',
+                    ]
+                ],
+                id='nested-unknown-condition-type',
+            ),
+            pytest.param(
+                {
+                    'type': 'operator',
+                    'operator': 'AND',
+                    'operands': [
+                        {'type': 'operator', 'operator': 'SUCCEEDED', 'operands': []},
+                        {'type': 'task', 'value': 'status'},
+                    ],
+                },
+                'Start',
+                [
+                    ['phases[0].next[0].condition:', '"SUCCEEDED" at phases[0].next[0].condition.operands.0 is not'],
+                    ['phases[0].next[0].condition.operands.1.task: Field required'],
+                ],
+                id='unknown-operator-and-other-condition-error',
+            ),
+        ],
+    )
+    def test_get_flow_configuration_invalid_condition_hint(
+        self, condition: dict[str, Any], phase_name: str, expected_lines: list[list[str]]
+    ):
+        """An invalid transition condition fails with one short, actionable line, and the phase's other errors
+        are kept in the same message."""
+        phases = [
+            {
+                'id': 'phase1',
+                'name': phase_name,
+                'next': [{'id': 't1', 'condition': condition, 'goto': 'phase2'}, {'id': 't2', 'goto': None}],
+            },
+            {'id': 'phase2', 'name': 'End', 'next': [{'id': 't3', 'goto': None}]},
+        ]
+        with pytest.raises(InvalidArgumentError) as exc_info:
+            get_flow_configuration(
+                phases, [_notification_task('task1', 'phase1')], flow_type=CONDITIONAL_FLOW_COMPONENT_ID
+            )
+        lines = str(exc_info.value).split('\n')
+        assert len(lines) == len(expected_lines)
+        for line, expected_parts in zip(lines, expected_lines, strict=True):
+            for part in expected_parts:
+                assert part in line
 
     @pytest.mark.parametrize(
         ('phases', 'task_specs', 'error_match'),
