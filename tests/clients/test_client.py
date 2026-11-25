@@ -125,6 +125,71 @@ class TestRawKeboolaClient:
 
         raw_client.post.assert_awaited_once_with(endpoint='drafts', data={}, params=None, timeout=None, retry=False)
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ('method', 'kwargs', 'request_count'),
+        [
+            pytest.param('merge_request_request_review', {'merge_request_id': 7}, 1, id='request_review'),
+            pytest.param('merge_request_approve', {'merge_request_id': 7}, 1, id='approve'),
+            pytest.param('merge_request_request_changes', {'merge_request_id': 7}, 1, id='request_changes'),
+            pytest.param('configuration_delete', {'component_id': 'c', 'configuration_id': '1'}, 1, id='delete'),
+            # The control: calls outside the opt-outs keep the retry policy.
+            pytest.param('merge_request_update', {'merge_request_id': 7, 'payload': {}}, 2, id='update_retried'),
+            pytest.param(
+                'configuration_metadata_delete',
+                {'component_id': 'c', 'configuration_id': '1', 'metadata_id': '2'},
+                2,
+                id='other_delete_retried',
+            ),
+        ],
+    )
+    @pytest.mark.parametrize('first', ['timeout', 'conflict'])
+    async def test_non_repeatable_calls_are_sent_once(
+        self,
+        raw_client: RawKeboolaClient,
+        mocker: MockerFixture,
+        first: str,
+        method: str,
+        kwargs: dict[str, Any],
+        request_count: int,
+    ) -> None:
+        """Goes through the real transport: the first attempt's outcome is reported, never hidden by a repeat."""
+        failure = httpx.ReadTimeout('lost response') if first == 'timeout' else httpx.Response(409, json={})
+        send = mocker.patch.object(
+            httpx.AsyncHTTPTransport, 'handle_async_request', side_effect=[failure, httpx.Response(200, json={})]
+        )
+        mocker.patch('httpx_retries.Retry.asleep', new=AsyncMock())
+        call = getattr(AsyncStorageClient(raw_client=raw_client, branch_id='123'), method)
+
+        if request_count == 1:
+            with pytest.raises(httpx.ReadTimeout if first == 'timeout' else httpx.HTTPStatusError):
+                await call(**kwargs)
+        else:
+            await call(**kwargs)
+
+        assert send.await_count == request_count
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize('second', ['timeout', 'conflict'])
+    async def test_skip_trash_purge_is_sent_once(
+        self, raw_client: RawKeboolaClient, mocker: MockerFixture, second: str
+    ) -> None:
+        """The first DELETE succeeds; the second one (the purge) fails and must not be repeated."""
+        failure = httpx.ReadTimeout('lost response') if second == 'timeout' else httpx.Response(409, json={})
+        send = mocker.patch.object(
+            httpx.AsyncHTTPTransport,
+            'handle_async_request',
+            side_effect=[httpx.Response(204), failure, httpx.Response(204)],
+        )
+        mocker.patch('httpx_retries.Retry.asleep', new=AsyncMock())
+
+        with pytest.raises(httpx.ReadTimeout if second == 'timeout' else httpx.HTTPStatusError):
+            await AsyncStorageClient(raw_client=raw_client, branch_id='123').configuration_delete(
+                component_id='c', configuration_id='1', skip_trash=True
+            )
+
+        assert send.await_count == 2
+
     def test_raise_for_status_500_with_exception_id(
         self, raw_client: RawKeboolaClient, mock_http_response_500: httpx.Response
     ):
@@ -1412,28 +1477,28 @@ class TestAsyncStorageClientMergeRequests:
                 'merge_request_request_review',
                 {'merge_request_id': 7},
                 'put',
-                {'endpoint': 'merge-request/7/request-review'},
+                {'endpoint': 'merge-request/7/request-review', 'retry': False},
                 id='request_review',
             ),
             pytest.param(
                 'merge_request_approve',
                 {'merge_request_id': 7},
                 'put',
-                {'endpoint': 'merge-request/7/approve'},
+                {'endpoint': 'merge-request/7/approve', 'retry': False},
                 id='approve',
             ),
             pytest.param(
                 'merge_request_request_changes',
                 {'merge_request_id': 7},
                 'put',
-                {'endpoint': 'merge-request/7/request-changes', 'data': None},
+                {'endpoint': 'merge-request/7/request-changes', 'data': None, 'retry': False},
                 id='request_changes_no_reason',
             ),
             pytest.param(
                 'merge_request_request_changes',
                 {'merge_request_id': 7, 'reason': 'fix it'},
                 'put',
-                {'endpoint': 'merge-request/7/request-changes', 'data': {'reason': 'fix it'}},
+                {'endpoint': 'merge-request/7/request-changes', 'data': {'reason': 'fix it'}, 'retry': False},
                 id='request_changes_with_reason',
             ),
             pytest.param(

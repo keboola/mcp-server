@@ -631,9 +631,11 @@ class AsyncStorageClient(KeboolaServiceClient):
         :raises httpx.HTTPStatusError: If the (component_id, configuration_id) is not found.
         """
         endpoint = f'branch/{self._branch_id}/components/{component_id}/configs/{configuration_id}'
-        await self.delete(endpoint=endpoint)
+        # No retry: deleting a configuration that is already in the trash purges it, so repeating a delete whose
+        # response was lost would turn "move to the trash" into a permanent deletion.
+        await self.delete(endpoint=endpoint, retry=False)
         if skip_trash:
-            await self.delete(endpoint=endpoint)
+            await self.delete(endpoint=endpoint, retry=False)
 
     async def configuration_detail(self, component_id: str, configuration_id: str) -> JsonDict:
         """
@@ -940,17 +942,20 @@ class AsyncStorageClient(KeboolaServiceClient):
 
     async def merge_request_request_review(self, merge_request_id: int | str) -> JsonDict:
         """Sends the merge request for review (`development` -> `in_review`, or `approved` when 0 approvals are required)."""
-        return cast(JsonDict, await self.put(endpoint=f'merge-request/{merge_request_id}/request-review'))
+        # No retry (here and in the two transitions below): when the first attempt succeeds but its response is lost,
+        # a repeat is refused from the new state and the successful transition would be reported as refused.
+        return cast(JsonDict, await self.put(endpoint=f'merge-request/{merge_request_id}/request-review', retry=False))
 
     async def merge_request_approve(self, merge_request_id: int | str) -> JsonDict:
         """Adds the caller's approval (valid only in `in_review`)."""
-        return cast(JsonDict, await self.put(endpoint=f'merge-request/{merge_request_id}/approve'))
+        return cast(JsonDict, await self.put(endpoint=f'merge-request/{merge_request_id}/approve', retry=False))
 
     async def merge_request_request_changes(self, merge_request_id: int | str, reason: str | None = None) -> JsonDict:
         """Sends the merge request back to `development`; the optional reason lands in the activity log."""
         payload: JsonDict | None = {'reason': reason} if reason is not None else None
         return cast(
-            JsonDict, await self.put(endpoint=f'merge-request/{merge_request_id}/request-changes', data=payload)
+            JsonDict,
+            await self.put(endpoint=f'merge-request/{merge_request_id}/request-changes', data=payload, retry=False),
         )
 
     async def merge_request_merge(self, merge_request_id: int | str) -> JsonDict:
