@@ -582,6 +582,30 @@ When you make changes to any tool descriptions (docstrings in tool functions), y
 uv run python -m src.keboola_mcp_server.generate_tool_docs
 ```
 
+### Tracing (OpenTelemetry)
+
+The Docker image includes the `otel` extra: the OpenTelemetry SDK, the OTLP/HTTP exporter and the instrumentations of
+the libraries the server uses (Starlette, httpx and httpx2, asyncpg, logging). The deployment starts the server under
+`opentelemetry-instrument` and configures it entirely with the standard `OTEL_*` environment variables, for example:
+
+```bash
+OTEL_SERVICE_NAME=mcp-server \
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 \
+OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf \
+OTEL_TRACES_EXPORTER=otlp OTEL_METRICS_EXPORTER=none OTEL_LOGS_EXPORTER=none \
+OTEL_PROPAGATORS=tracecontext OTEL_PYTHON_LOG_CORRELATION=true OTEL_SEMCONV_STABILITY_OPT_IN=http \
+uv run --extra otel opentelemetry-instrument python -m keboola_mcp_server.cli --transport streamable-http
+```
+
+- Each HTTP request is one trace: the Starlette server span, FastMCP's own span of the MCP method (e.g.
+  `tools/call get_buckets`, which FastMCP emits through the OpenTelemetry API once an SDK is active) and a client span
+  per outbound Keboola API or Postgres call. JSON log lines carry `otelTraceID` / `otelSpanID`.
+- Without `opentelemetry-instrument` (the default `ENTRYPOINT`, `uvx`, stdio) nothing is traced or exported.
+- `OTEL_EXPORTER_OTLP_TIMEOUT` is in seconds in OpenTelemetry Python.
+- On shutdown the HTTP app's lifespan flushes the queued spans (`_flush_traces` in `cli.py`).
+
+The image no longer contains `ddtrace`: a deployment that still starts it with `ddtrace-run` fails to start.
+
 ### Releasing
 
 We do **not** cut a release for every merged PR. Work lands on the trunk (`main`)

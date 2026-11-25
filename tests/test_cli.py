@@ -667,6 +667,32 @@ class TestLegacySsePath:
         )
 
 
+class TestTraceFlushOnShutdown:
+    """ST-4668: the HTTP app's lifespan exports the queued spans on shutdown, because the SDK's atexit export never
+    runs when uvicorn re-raises SIGTERM and the process dies by the signal."""
+
+    @pytest.mark.parametrize('with_sdk', [True, False], ids=['sdk', 'api_only'])
+    def test_lifespan_flushes_traces(self, with_sdk: bool, monkeypatch: pytest.MonkeyPatch) -> None:
+        from opentelemetry import trace
+        from opentelemetry.trace import NoOpTracerProvider
+
+        # `opentelemetry-instrument` installs the SDK provider (it has `force_flush`); without it the API's no-op
+        # provider has none, and shutting down must still work.
+        provider = NoOpTracerProvider()
+        if with_sdk:
+            provider = MagicMock(wraps=provider)
+            provider.force_flush = MagicMock()
+        monkeypatch.setattr(trace, 'get_tracer_provider', lambda: provider)
+
+        with _http_client(Config(storage_api_url=STACK)) as client:
+            assert client.post('/mcp', json=INITIALIZE_REQUEST, headers=STREAMABLE_HTTP_HEADERS).status_code == 200
+            if with_sdk:
+                provider.force_flush.assert_not_called()
+
+        if with_sdk:
+            provider.force_flush.assert_called_once_with()
+
+
 class TestDirectoryToolProfile:
     @pytest.mark.parametrize(
         ('session_resource', 'expect_profile'),

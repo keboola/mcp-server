@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "keboola-mcp-server"
-version = "1.120.4"
+version = "1.121.0"
 description = "MCP server for interacting with Keboola Connection"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -25,6 +25,7 @@ dependencies = [
     "sqlglot ~= 30.18, != 30.34.0",  # 30.34.0 fails to tokenize Snowflake stage paths (@"my st"/f.csv)
     "toon-format ~= 1.1",
     "pyyaml ~= 6.0",
+    "opentelemetry-api >= 1.28",  # imported by cli.py; the same floor as mcp's own requirement
 ]
 [project.optional-dependencies]
 codestyle = [
@@ -45,6 +46,19 @@ integtests = [
 ]
 dev = [
     "tox ~= 4.35",
+]
+# OpenTelemetry tracing of the deployed server (ST-4668), installed only into the Docker image. The server runs under
+# `opentelemetry-instrument` and is configured purely by the `OTEL_*` env set by the deployment. Pinned exactly and
+# aligned (SDK 1.x / contrib 0.x); only the instrumentations of libraries the server uses.
+otel = [
+    "opentelemetry-api == 1.45.2",
+    "opentelemetry-sdk == 1.45.2",
+    "opentelemetry-distro == 0.66b2",
+    "opentelemetry-exporter-otlp-proto-http == 1.45.2",
+    "opentelemetry-instrumentation-asyncpg == 0.66b2",
+    "opentelemetry-instrumentation-httpx == 0.66b2",
+    "opentelemetry-instrumentation-logging == 0.66b2",
+    "opentelemetry-instrumentation-starlette == 0.66b2",
 ]
 
 [project.scripts]
