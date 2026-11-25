@@ -39,6 +39,49 @@ def _parse_tool_names(header_value: str | None) -> set[str]:
     return {t.strip() for t in (header_value or '').split(',') if t.strip()}
 
 
+def get_authorization_config(
+    http_rq: Request | None = None,
+) -> tuple[set[str] | None, set[str] | None, bool]:
+    """
+    Determines the authorization configuration for the current request based on HTTP headers.
+
+    Returns a tuple of (allowed_tools, disallowed_tools, read_only_mode):
+    - allowed_tools: Set of allowed tool names, or None if all tools are allowed
+    - disallowed_tools: Set of tool names to exclude, or None if no tools are explicitly disallowed
+    - read_only_mode: Whether X-Read-Only-Mode header is enabled
+
+    :param http_rq: Explicit request to read headers from. Falls back to the FastMCP request
+        context when omitted. Raw Starlette routes (e.g. /preview/configuration) must pass it
+        explicitly because the FastMCP request contextvar is not populated for them.
+    """
+    if http_rq is None:
+        http_rq = get_http_request_or_none()
+    if not http_rq:
+        # No HTTP request means no authorization headers are present, so we do not apply any filters.
+        return None, None, False
+
+    allowed_tools: set[str] | None = None
+    disallowed_tools: set[str] | None = None
+    read_only_mode = False
+
+    # Check X-Allowed-Tools header for explicit tool list
+    if parsed_tools := _parse_tool_names(http_rq.headers.get('X-Allowed-Tools')):
+        allowed_tools = parsed_tools
+        LOG.info(f'Tool authorization: X-Allowed-Tools={sorted(allowed_tools)}')
+
+    # Check X-Read-Only-Mode header
+    if http_rq.headers.get('X-Read-Only-Mode', '').lower() in ('true', '1', 'yes'):
+        read_only_mode = True
+        LOG.info('Tool authorization: X-Read-Only-Mode=true')
+
+    # Check X-Disallowed-Tools header for tools to exclude
+    if parsed_tools := _parse_tool_names(http_rq.headers.get('X-Disallowed-Tools')):
+        disallowed_tools = parsed_tools
+        LOG.info(f'Tool authorization: X-Disallowed-Tools={sorted(disallowed_tools)}')
+
+    return allowed_tools, disallowed_tools, read_only_mode
+
+
 class ToolAuthorizationMiddleware(fmw.Middleware):
     """
     Middleware that filters tools based on client-specific authorization.
@@ -52,49 +95,6 @@ class ToolAuthorizationMiddleware(fmw.Middleware):
     - Filters the tools list in on_list_tools() to hide unauthorized tools
     - Blocks unauthorized tool calls in on_call_tool() with a ToolError
     """
-
-    @staticmethod
-    def _get_authorization_config(
-        http_rq: Request | None = None,
-    ) -> tuple[set[str] | None, set[str] | None, bool]:
-        """
-        Determines the authorization configuration for the current request based on HTTP headers.
-
-        Returns a tuple of (allowed_tools, disallowed_tools, read_only_mode):
-        - allowed_tools: Set of allowed tool names, or None if all tools are allowed
-        - disallowed_tools: Set of tool names to exclude, or None if no tools are explicitly disallowed
-        - read_only_mode: Whether X-Read-Only-Mode header is enabled
-
-        :param http_rq: Explicit request to read headers from. Falls back to the FastMCP request
-            context when omitted. Raw Starlette routes (e.g. /preview/configuration) must pass it
-            explicitly because the FastMCP request contextvar is not populated for them.
-        """
-        if http_rq is None:
-            http_rq = get_http_request_or_none()
-        if not http_rq:
-            # No HTTP request means no authorization headers are present, so we do not apply any filters.
-            return None, None, False
-
-        allowed_tools: set[str] | None = None
-        disallowed_tools: set[str] | None = None
-        read_only_mode = False
-
-        # Check X-Allowed-Tools header for explicit tool list
-        if parsed_tools := _parse_tool_names(http_rq.headers.get('X-Allowed-Tools')):
-            allowed_tools = parsed_tools
-            LOG.info(f'Tool authorization: X-Allowed-Tools={sorted(allowed_tools)}')
-
-        # Check X-Read-Only-Mode header
-        if http_rq.headers.get('X-Read-Only-Mode', '').lower() in ('true', '1', 'yes'):
-            read_only_mode = True
-            LOG.info('Tool authorization: X-Read-Only-Mode=true')
-
-        # Check X-Disallowed-Tools header for tools to exclude
-        if parsed_tools := _parse_tool_names(http_rq.headers.get('X-Disallowed-Tools')):
-            disallowed_tools = parsed_tools
-            LOG.info(f'Tool authorization: X-Disallowed-Tools={sorted(disallowed_tools)}')
-
-        return allowed_tools, disallowed_tools, read_only_mode
 
     @staticmethod
     def _apply_workspace_scope(allowed_tools: set[str] | None, strict: bool) -> set[str] | None:
@@ -152,7 +152,7 @@ class ToolAuthorizationMiddleware(fmw.Middleware):
         """Filters the tools list to only include authorized tools."""
         tools = await call_next(context)
 
-        allowed_tools, disallowed_tools, read_only_mode = self._get_authorization_config()
+        allowed_tools, disallowed_tools, read_only_mode = get_authorization_config()
         allowed_tools = self._apply_workspace_scope(allowed_tools, self._is_strict(context))
         if allowed_tools is None and not disallowed_tools and not read_only_mode:
             return tools
@@ -170,7 +170,7 @@ class ToolAuthorizationMiddleware(fmw.Middleware):
     ) -> mt.CallToolResult:
         """Blocks calls to unauthorized tools."""
         tool_name = context.message.name
-        allowed_tools, disallowed_tools, read_only_mode = self._get_authorization_config()
+        allowed_tools, disallowed_tools, read_only_mode = get_authorization_config()
         strict = self._is_strict(context)
         allowed_tools = self._apply_workspace_scope(allowed_tools, strict)
 

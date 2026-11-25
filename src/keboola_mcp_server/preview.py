@@ -9,7 +9,7 @@ from pydantic import AliasChoices, BaseModel, Field, TypeAdapter, field_validato
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
-from keboola_mcp_server.authorization import ToolAuthorizationMiddleware
+from keboola_mcp_server.authorization import ToolAuthorizationMiddleware, get_authorization_config
 from keboola_mcp_server.clients import KeboolaClient
 from keboola_mcp_server.clients.client import DATA_APP_COMPONENT_ID
 from keboola_mcp_server.mcp import (
@@ -288,7 +288,7 @@ async def preview_config_diff(rq: Request) -> Response:
     # so a restricted client cannot drive the mutator-preview path for a tool it cannot call.
     read_only_tools = getattr(rq.app.state, 'mcp_read_only_tools', set())
     is_read_only = preview_rq.tool_name in read_only_tools
-    allowed, disallowed, read_only_mode = ToolAuthorizationMiddleware._get_authorization_config(rq)
+    allowed, disallowed, read_only_mode = get_authorization_config(rq)
     if not ToolAuthorizationMiddleware._is_tool_name_authorized(
         preview_rq.tool_name, is_read_only, allowed, disallowed, read_only_mode
     ):

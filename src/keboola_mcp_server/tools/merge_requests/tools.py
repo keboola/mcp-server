@@ -25,7 +25,7 @@ from fastmcp.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import Field, ValidationError
 
-from keboola_mcp_server.authorization import ToolAuthorizationMiddleware
+from keboola_mcp_server.authorization import get_authorization_config
 from keboola_mcp_server.clients.base import NEVER_SENT_ERRORS, JsonDict
 from keboola_mcp_server.clients.client import BranchNotFoundError, KeboolaClient
 from keboola_mcp_server.errors import tool_errors
@@ -71,6 +71,7 @@ from keboola_mcp_server.tools.merge_requests.status import (
     derive_state,
     same_id,
 )
+from keboola_mcp_server.utils import next_poll_interval
 
 LOG = logging.getLogger(__name__)
 
@@ -245,7 +246,7 @@ async def _load(ctx: Context) -> _MrContext:
     project_id = str(owner.get('id')) if isinstance(owner, Mapping) else await client.storage_client.project_id()
     # Project-level links (no session-branch prefix): a merge request lives on its own source branch.
     links = ProjectLinksManager(base_url=client.storage_api_url, project_id=project_id, branch_id=None)
-    _, _, header_read_only = ToolAuthorizationMiddleware._get_authorization_config()
+    _, _, header_read_only = get_authorization_config()
     return _MrContext(
         client=client, token_info=token_info, branches=branches, links=links, header_read_only=header_read_only
     )
@@ -424,17 +425,6 @@ def _validate_auto_merge(strategy: str | None, at: str | None) -> None:
         raise ToolError("auto_merge_at is only meaningful with auto_merge='scheduled'.")
 
 
-def _next_poll_interval(elapsed_seconds: float) -> float:
-    """Merge-job polling interval: fast at first, capped at 20 s (the schedule `workspace.py` uses)."""
-    if elapsed_seconds < 10:
-        return 1.0
-    if elapsed_seconds < 30:
-        return 2.0
-    if elapsed_seconds < 120:
-        return 5.0
-    return 20.0
-
-
 async def _await_storage_job(client: KeboolaClient, job_id: str) -> tuple[JsonDict | None, str | None]:
     """
     Polls a Storage job until a terminal status. Returns `(job, None)` when it finished, `(None, None)` on
@@ -453,7 +443,7 @@ async def _await_storage_job(client: KeboolaClient, job_id: str) -> tuple[JsonDi
         elapsed = time.monotonic() - started
         if elapsed >= MERGE_JOB_TIMEOUT_SEC:
             return None, None
-        await asyncio.sleep(min(_next_poll_interval(elapsed), MERGE_JOB_TIMEOUT_SEC - elapsed))
+        await asyncio.sleep(min(next_poll_interval(elapsed), MERGE_JOB_TIMEOUT_SEC - elapsed))
 
 
 def _validate_resolved(resolved: Mapping[str, Any]) -> ResolvedConfiguration:

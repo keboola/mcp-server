@@ -8,6 +8,7 @@ from httpx import HTTPStatusError, Request, Response
 from keboola_mcp_server.clients.base import InvalidArgumentError
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.clients.query import QueryServiceClient
+from keboola_mcp_server.utils import next_poll_interval
 from keboola_mcp_server.workspace import (
     GOVERNED_LOGIN_TYPE,
     RLS_FEATURE,
@@ -26,7 +27,7 @@ from keboola_mcp_server.workspace import (
 )
 def test_next_poll_interval_backs_off_over_time(elapsed_seconds: float, expected_interval: float) -> None:
     """Job-status polling interval must back off as the query keeps running."""
-    assert _SnowflakeWorkspace._next_poll_interval(elapsed_seconds) == expected_interval
+    assert next_poll_interval(elapsed_seconds) == expected_interval
 
 
 @pytest.mark.asyncio

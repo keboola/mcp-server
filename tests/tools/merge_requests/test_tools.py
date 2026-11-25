@@ -275,9 +275,7 @@ async def test_next_step_never_recommends_a_write_the_session_cannot_do(
 ) -> None:
     keboola_client.bearer_token = bearer_token
     keboola_client.readonly = client_readonly
-    mocker.patch.object(
-        mr_tools.ToolAuthorizationMiddleware, '_get_authorization_config', return_value=(None, None, header_read_only)
-    )
+    mocker.patch.object(mr_tools, 'get_authorization_config', return_value=(None, None, header_read_only))
     storage.verify_token.return_value = {'owner': {'id': 123}, 'admin': {'id': 10, 'role': role}}
     storage.merge_request_detail.return_value = _mr_raw('approved')
 
@@ -919,7 +917,7 @@ async def test_merge_state_override_drops_server_derived_fields(
     mcp_context_client: Context, storage: AsyncMock, monkeypatch
 ) -> None:
     """After a timeout the local `in_merge` override must win over DMD-1988 fields still saying 'approved'."""
-    monkeypatch.setattr(mr_tools, '_next_poll_interval', lambda _elapsed: 0.0)
+    monkeypatch.setattr(mr_tools, 'next_poll_interval', lambda _elapsed: 0.0)
     monkeypatch.setattr(mr_tools, 'MERGE_JOB_TIMEOUT_SEC', 0)
     storage.merge_request_detail.return_value = _mr_raw(
         'approved', derivedState='approved', allowedActions=['merge'], mergeBlockers=[]
@@ -949,7 +947,7 @@ async def test_merge_reraises_unknown_409(mcp_context_client: Context, storage: 
 async def test_merge_success_awaits_job_and_hands_off(
     mcp_context_client: Context, storage: AsyncMock, monkeypatch
 ) -> None:
-    monkeypatch.setattr(mr_tools, '_next_poll_interval', lambda _elapsed: 0.0)
+    monkeypatch.setattr(mr_tools, 'next_poll_interval', lambda _elapsed: 0.0)
     storage.merge_request_merge.return_value = {'id': 987, 'status': 'waiting'}  # int on the wire
     storage.job_detail.side_effect = [{'id': 987, 'status': 'processing'}, {'id': 987, 'status': 'success'}]
 
@@ -1009,7 +1007,7 @@ async def test_merge_job_failure_rolls_back_to_approved(
     expected_message: str,
     expected_state: str,
 ) -> None:
-    monkeypatch.setattr(mr_tools, '_next_poll_interval', lambda _elapsed: 0.0)
+    monkeypatch.setattr(mr_tools, 'next_poll_interval', lambda _elapsed: 0.0)
     storage.merge_request_detail.side_effect = [_mr_raw('approved'), reread]
     storage.merge_request_merge.return_value = {'id': '988'}
     storage.job_detail.return_value = job
@@ -1032,7 +1030,7 @@ async def test_merge_job_non_success_with_a_merged_mr_reports_the_merge(
     mcp_context_client: Context, storage: AsyncMock, monkeypatch
 ) -> None:
     """The re-read MR, not the job status, decides: a published merge request is reported as merged."""
-    monkeypatch.setattr(mr_tools, '_next_poll_interval', lambda _elapsed: 0.0)
+    monkeypatch.setattr(mr_tools, 'next_poll_interval', lambda _elapsed: 0.0)
     storage.merge_request_detail.side_effect = [_mr_raw('approved'), _mr_raw('published', branch_from=None)]
     storage.merge_request_merge.return_value = {'id': '988'}
     storage.job_detail.return_value = {'id': 988, 'status': 'warning'}
@@ -1051,7 +1049,7 @@ async def test_merge_poll_failure_is_not_a_merge_failure(
     mcp_context_client: Context, storage: AsyncMock, monkeypatch
 ) -> None:
     """The merge is irreversible once the job started: a transient error while polling must not read as failed."""
-    monkeypatch.setattr(mr_tools, '_next_poll_interval', lambda _elapsed: 0.0)
+    monkeypatch.setattr(mr_tools, 'next_poll_interval', lambda _elapsed: 0.0)
     storage.merge_request_merge.return_value = {'id': 990}
     storage.job_detail.side_effect = [
         {'id': 990, 'status': 'processing'},
@@ -1069,7 +1067,7 @@ async def test_merge_poll_failure_is_not_a_merge_failure(
 
 @pytest.mark.asyncio
 async def test_merge_timeout_is_not_a_failure(mcp_context_client: Context, storage: AsyncMock, monkeypatch) -> None:
-    monkeypatch.setattr(mr_tools, '_next_poll_interval', lambda _elapsed: 0.0)
+    monkeypatch.setattr(mr_tools, 'next_poll_interval', lambda _elapsed: 0.0)
     monkeypatch.setattr(mr_tools, 'MERGE_JOB_TIMEOUT_SEC', 0)
     storage.merge_request_merge.return_value = {'id': 989}
     storage.job_detail.return_value = {'id': 989, 'status': 'processing'}
