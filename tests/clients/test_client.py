@@ -133,12 +133,6 @@ class TestRawKeboolaClient:
             pytest.param('merge_request_approve', {'merge_request_id': 7}, 1, id='approve'),
             pytest.param('merge_request_request_changes', {'merge_request_id': 7}, 1, id='request_changes'),
             pytest.param('configuration_delete', {'component_id': 'c', 'configuration_id': '1'}, 1, id='delete'),
-            pytest.param(
-                'configuration_delete',
-                {'component_id': 'c', 'configuration_id': '1', 'skip_trash': True},
-                1,
-                id='delete_skip_trash',
-            ),
             # The control: calls outside the opt-outs keep the retry policy.
             pytest.param('merge_request_update', {'merge_request_id': 7, 'payload': {}}, 2, id='update_retried'),
             pytest.param(
@@ -174,6 +168,27 @@ class TestRawKeboolaClient:
             await call(**kwargs)
 
         assert send.await_count == request_count
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize('second', ['timeout', 'conflict'])
+    async def test_skip_trash_purge_is_sent_once(
+        self, raw_client: RawKeboolaClient, mocker: MockerFixture, second: str
+    ) -> None:
+        """The first DELETE succeeds; the second one (the purge) fails and must not be repeated."""
+        failure = httpx.ReadTimeout('lost response') if second == 'timeout' else httpx.Response(409, json={})
+        send = mocker.patch.object(
+            httpx.AsyncHTTPTransport,
+            'handle_async_request',
+            side_effect=[httpx.Response(204), failure, httpx.Response(204)],
+        )
+        mocker.patch('httpx_retries.Retry.asleep', new=AsyncMock())
+
+        with pytest.raises(httpx.ReadTimeout if second == 'timeout' else httpx.HTTPStatusError):
+            await AsyncStorageClient(raw_client=raw_client, branch_id='123').configuration_delete(
+                component_id='c', configuration_id='1', skip_trash=True
+            )
+
+        assert send.await_count == 2
 
     def test_raise_for_status_500_with_exception_id(
         self, raw_client: RawKeboolaClient, mock_http_response_500: httpx.Response
