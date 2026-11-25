@@ -82,6 +82,15 @@ def add_storage_tools(mcp: KeboolaMcpServer) -> None:
             tags={STORAGE_TOOLS_TAG},
         )
     )
+    mcp.add_tool(
+        ToonFunctionTool.from_function(
+            update_table_clustering,
+            annotations=ToolAnnotations(
+                readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=False
+            ),
+            tags={STORAGE_TOOLS_TAG},
+        )
+    )
 
     LOG.info('Storage tools added to the MCP server.')
 
@@ -410,6 +419,33 @@ class TableDetail(TableSummary):
     last_updated_by: ComponentUsageReference | None = Field(
         default=None, description='Configuration that last updated the table (component/config ID and timestamp).'
     )
+    clustering_fields: list[str] | None = Field(
+        default=None,
+        description='Columns the BigQuery table is clustered by, in clustering order, separated by `|`; absent when '
+        'the table is not clustered.',
+        validation_alias=AliasChoices('clusteringFields', 'clustering_fields', 'clustering-fields'),
+        serialization_alias='clusteringFields',
+    )
+    time_partitioning: dict[str, Any] | None = Field(
+        default=None,
+        description='Time partitioning of the BigQuery table (`type`, `field`, `expirationMs`); absent when the '
+        'table is not partitioned by time.',
+        validation_alias=AliasChoices('timePartitioning', 'time_partitioning', 'time-partitioning'),
+        serialization_alias='timePartitioning',
+    )
+    range_partitioning: dict[str, Any] | None = Field(
+        default=None,
+        description='Integer range partitioning of the BigQuery table (`field`, `range` with `start`, `end`, '
+        '`interval`); absent when the table is not partitioned by range.',
+        validation_alias=AliasChoices('rangePartitioning', 'range_partitioning', 'range-partitioning'),
+        serialization_alias='rangePartitioning',
+    )
+    require_partition_filter: bool | None = Field(
+        default=None,
+        description='Whether queries of the partitioned BigQuery table must filter on the partitioning column.',
+        validation_alias=AliasChoices('requirePartitionFilter', 'require_partition_filter', 'require-partition-filter'),
+        serialization_alias='requirePartitionFilter',
+    )
 
     @model_validator(mode='before')
     @classmethod
@@ -434,6 +470,11 @@ class TableDetail(TableSummary):
                 ),
             }
         )
+
+    @field_serializer('clustering_fields')
+    # Serialized as a string like the primary key, so the table stays tabular data in Toon format.
+    def serialize_clustering_fields(self, clustering_fields: list[str] | None) -> str | None:
+        return '|'.join(clustering_fields) if clustering_fields else None
 
 
 class GetTablesOutput(BaseModel):
@@ -469,6 +510,19 @@ class UpdateDescriptionsOutput(BaseModel):
     total_processed: int = Field(description='Total number of items processed.')
     successful: int = Field(description='Number of successful updates.')
     failed: int = Field(description='Number of failed updates.')
+
+
+class UpdateTableClusteringOutput(BaseModel):
+    table_id: str = Field(description='The ID of the updated table.')
+    clustering_fields: list[str] | None = Field(
+        default=None,
+        description='Columns the table is clustered by as stored after the change, in clustering order; '
+        'null when the table is not clustered.',
+    )
+    job_id: str = Field(description='The ID of the Storage job that changed the clustering.')
+    job_status: str = Field(description='The final status of the Storage job.')
+    timestamp: datetime | None = Field(default=None, description='When the Storage job finished.')
+    links: list[Link] = Field(description='Links relevant to the table.')
 
 
 class DescriptionUpdate(BaseModel):
@@ -798,17 +852,31 @@ def _limit_to_policy(table: TableDetail | TableSummary, allowed: Sequence[str] |
     """Limits a readable table of a governed workspace to what the policies let the reader see.
 
     The number of rows and the size count the rows that a row policy hides, so they are never shown. Of the column
-    names that the table carries, its column list and its primary key, only the columns of the column policy
-    (`allowed`, None means every column) are kept.
+    names that the table carries, its column list, its primary key and its clustering, only the columns of the column
+    policy (`allowed`, None means every column) are kept; a partitioning on a hidden column is dropped.
     """
     update: dict[str, Any] = {'rows_count': None, 'data_size_bytes': None}
     if allowed is not None:
         allowed_set = set(allowed)
         if table.primary_key:
             update['primary_key'] = [column for column in table.primary_key if column in allowed_set] or None
-        if isinstance(table, TableDetail) and table.columns is not None:
-            update['columns'] = [column for column in table.columns if column.name in allowed_set]
+        if isinstance(table, TableDetail):
+            if table.columns is not None:
+                update['columns'] = [column for column in table.columns if column.name in allowed_set]
+            if table.clustering_fields:
+                update['clustering_fields'] = [c for c in table.clustering_fields if c in allowed_set] or None
+            for name in ('time_partitioning', 'range_partitioning'):
+                partitioning = cast(dict[str, Any] | None, getattr(table, name))
+                if partitioning and partitioning.get('field') and partitioning['field'] not in allowed_set:
+                    update[name] = None
     return table.model_copy(update=update)
+
+
+def _copy_keys(source: Any, keys: Iterable[str]) -> dict[str, Any] | None:
+    """Copies the given keys of a Storage definition object; None when the object is absent or has none of them."""
+    if not isinstance(source, dict):
+        return None
+    return {key: source[key] for key in keys if key in source} or None
 
 
 async def _get_table(
@@ -911,6 +979,13 @@ async def _get_table(
             'columns': column_info,
             'fully_qualified_name': db_table_info.fqn.identifier if db_table_info else None,
             'links': links,
+            'clustering_fields': get_nested(raw_table, 'definition.clustering.fields') or None,
+            # definition.partitions is never copied: it has one entry per partition.
+            'time_partitioning': _copy_keys(
+                get_nested(raw_table, 'definition.timePartitioning'), ('type', 'field', 'expirationMs')
+            ),
+            'range_partitioning': _copy_keys(get_nested(raw_table, 'definition.rangePartitioning'), ('field', 'range')),
+            'require_partition_filter': get_nested(raw_table, 'definition.requirePartitionFilter'),
         }
     ).with_lineage_metadata(raw_table)
     return table.model_copy(update={'id': table.prod_id, 'branch_id': None})
@@ -1161,3 +1236,48 @@ async def update_descriptions(
     failed = len(results) - successful
 
     return UpdateDescriptionsOutput(results=results, total_processed=len(results), successful=successful, failed=failed)
+
+
+@tool_errors()
+async def update_table_clustering(
+    ctx: Context,
+    table_id: Annotated[str, Field(description='The ID of the table, e.g. "in.c-bucket.table".')],
+    clustering_fields: Annotated[
+        list[str] | None,
+        Field(
+            description='Columns to cluster the table by, 1 to 4 existing column names in clustering order. '
+            '`null` removes the clustering.'
+        ),
+    ],
+    project_id: ProjectIdArg = None,
+) -> UpdateTableClusteringOutput:
+    """Sets or removes the clustering of one typed BigQuery table.
+
+    Runs a Storage job and waits for it to finish. BigQuery applies a new clustering only to data written after the
+    change; rows already in the table keep their order until they are rewritten (for example by a full load).
+    Storage rejects the change for other backends, aliases, tables in external buckets, unknown or repeated columns
+    and more than 4 columns. Read the current clustering with `get_tables` (`table_ids`).
+    """
+    if clustering_fields is not None and not clustering_fields:
+        raise ValueError('clustering_fields must list 1 to 4 columns; pass null to remove the clustering.')
+
+    client = KeboolaClient.from_state(ctx.session.state)
+    branch_id, _ = await _resolve_write_target(client, table_id)
+    job = await client.storage_client.table_definition_update(
+        table_id=table_id,
+        clustering_fields=clustering_fields,
+        remove_clustering=clustering_fields is None,
+        branch_id=branch_id,
+    )
+    # The job result has no clustering, so the stored value is read back from the table detail.
+    raw_table = await client.storage_client.table_detail(table_id, branch_id=branch_id)
+    links_manager = await ProjectLinksManager.from_client(client)
+    bucket_id = cast(str, get_nested(raw_table, 'bucket.id', default=''))
+    return UpdateTableClusteringOutput(
+        table_id=table_id,
+        clustering_fields=get_nested(raw_table, 'definition.clustering.fields') or None,
+        job_id=str(job.get('id', '')),
+        job_status=str(job.get('status', '')),
+        timestamp=_job_timestamp(job),
+        links=[links_manager.get_table_detail_link(bucket_id, cast(str, raw_table.get('name', '')))],
+    )

@@ -9,7 +9,7 @@ from fastmcp import Client, Context, FastMCP
 from mcp.types import TextContent
 from pytest_mock import MockerFixture
 
-from keboola_mcp_server.clients.base import JsonDict
+from keboola_mcp_server.clients.base import JsonDict, RawKeboolaClient
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config, MetadataField, ServerRuntimeInfo
 from keboola_mcp_server.links import Link, ProjectLinksManager
@@ -24,9 +24,12 @@ from keboola_mcp_server.tools.storage.tools import (
     TableDetail,
     TableSummary,
     UpdateDescriptionsOutput,
+    UpdateTableClusteringOutput,
+    _limit_to_policy,
     get_buckets,
     get_tables,
     update_descriptions,
+    update_table_clustering,
 )
 from keboola_mcp_server.utils import parse_iso_timestamp
 from keboola_mcp_server.workspace import DbColumnInfo, DbTableInfo, TableFqn, WorkspaceManager
@@ -223,6 +226,24 @@ def _get_sapi_tables(details: bool | None = None) -> list[dict[str, Any]]:
                 }
             },
         },
+        # clustered and time-partitioned typed table in a BigQuery bucket
+        _bigquery_sapi_table(
+            'events',
+            {
+                'clustering': {'fields': ['country', 'id']},
+                'timePartitioning': {'type': 'DAY', 'field': 'created_at', 'expirationMs': None},
+                'requirePartitionFilter': True,
+                'partitions': [{'id': '20250801', 'rowsCount': 1}, {'id': '20250802', 'rowsCount': 1}],
+            },
+        ),
+        # range-partitioned typed table in a BigQuery bucket, not clustered
+        _bigquery_sapi_table(
+            'ranges',
+            {
+                'rangePartitioning': {'field': 'id', 'range': {'start': '0', 'end': '100', 'interval': '10'}},
+                'requirePartitionFilter': False,
+            },
+        ),
     ]
     if not details:
         for t in tables:
@@ -230,6 +251,65 @@ def _get_sapi_tables(details: bool | None = None) -> list[dict[str, Any]]:
             t.pop('columnMetadata')
             t.pop('bucket')
     return tables
+
+
+def _bigquery_sapi_table(name: str, definition: dict[str, Any]) -> dict[str, Any]:
+    columns = {'id': 'INTEGER', 'country': 'STRING', 'created_at': 'DATE'}
+    return {
+        'id': f'in.c-bq.{name}',
+        'name': name,
+        'displayName': name,
+        'primaryKey': ['id'],
+        'created': '2025-08-01T00:00:00+0200',
+        'lastChangeDate': '2025-08-02T00:00:00+0200',
+        'rowsCount': 2,
+        'dataSizeBytes': 100,
+        'isAlias': False,
+        'isTyped': True,
+        'metadata': [],
+        'columns': list(columns),
+        'columnMetadata': {},
+        'definition': {
+            'columns': [
+                {'name': col, 'basetype': col_type, 'definition': {'type': col_type, 'nullable': True}}
+                for col, col_type in columns.items()
+            ],
+            **definition,
+        },
+        'bucket': {'id': 'in.c-bq', 'name': 'c-bq', 'backend': 'bigquery'},
+    }
+
+
+def _bigquery_table_detail_expected(name: str, **fields: Any) -> TableDetail:
+    return TableDetail(
+        id=f'in.c-bq.{name}',
+        name=name,
+        display_name=name,
+        primary_key=['id'],
+        created='2025-08-01T00:00:00+0200',
+        updated='2025-08-02T00:00:00+0200',
+        rows_count=2,
+        data_size_bytes=100,
+        columns=[
+            TableColumnInfo(
+                name=col,
+                quoted_name=f'#{col}#',
+                database_native_type=col_type,
+                nullable=True,
+                keboola_base_type=col_type,
+            )
+            for col, col_type in {'id': 'INTEGER', 'country': 'STRING', 'created_at': 'DATE'}.items()
+        ],
+        fully_qualified_name=f'#SAPI_TEST#.#in.c-bq#.#{name}#',
+        links=[
+            Link(
+                type='ui-detail',
+                title=f'Table: {name}',
+                url=f'https://connection.test.keboola.com/admin/projects/69420/storage/in.c-bq/table/{name}',
+            ),
+        ],
+        **fields,
+    )
 
 
 def _table_list_side_effect(*, bucket_id: str, **kwargs: Any) -> list[dict[str, Any]]:
@@ -910,6 +990,25 @@ async def test_get_buckets(
                 source_project='Source Project (ID: 1234)',
             ),
         ),
+        (
+            None,
+            'in.c-bq.events',
+            _bigquery_table_detail_expected(
+                'events',
+                clustering_fields=['country', 'id'],
+                time_partitioning={'type': 'DAY', 'field': 'created_at', 'expirationMs': None},
+                require_partition_filter=True,
+            ),
+        ),
+        (
+            None,
+            'in.c-bq.ranges',
+            _bigquery_table_detail_expected(
+                'ranges',
+                range_partitioning={'field': 'id', 'range': {'start': '0', 'end': '100', 'interval': '10'}},
+                require_partition_filter=False,
+            ),
+        ),
     ],
 )
 async def test_get_table(
@@ -966,6 +1065,13 @@ async def test_get_table(
             links=[Link(type='ui-dashboard', title='Buckets in the project', url=dashboard_url)],
         ).pack_links()
         assert result == expected_result
+        dumped = result.model_dump(by_alias=True)['tables'][0]
+        if expected_table.clustering_fields:
+            assert dumped['clusteringFields'] == '|'.join(expected_table.clustering_fields)
+        else:
+            assert dumped.get('clusteringFields') is None
+        # the per-partition list is unbounded, so it never reaches the output
+        assert '"partitions"' not in result.model_dump_json()
         workspace_manager.get_sql_dialect.assert_called_once()
         workspace_manager.get_table_info.assert_called_once()
         workspace_manager.get_quoted_name.assert_has_calls([call(col_info.name) for col_info in expected_table.columns])
@@ -2302,3 +2408,165 @@ async def test_update_descriptions_table_and_columns_in_one_write(
         else keboola_client.storage_client.table_metadata_update
     )
     written.assert_called_once()
+
+
+def _raw_bigquery_table(clustering_fields: list[str] | None) -> JsonDict:
+    definition: JsonDict = {'columns': []}
+    if clustering_fields is not None:
+        definition['clustering'] = {'fields': clustering_fields}
+    return {
+        'id': 'in.c-test.test-table',
+        'name': 'test-table',
+        'bucket': {'id': 'in.c-test', 'backend': 'bigquery'},
+        'definition': definition,
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('clustering_fields', 'storage_branches', 'expected_branch_id'),
+    [
+        (['a', 'b'], False, 'default'),
+        (None, False, 'default'),
+        (['a'], True, '1246948'),  # the table exists in the dev branch of a storage-branches project
+    ],
+)
+async def test_update_table_clustering(
+    clustering_fields: list[str] | None,
+    storage_branches: bool,
+    expected_branch_id: str,
+    mocker: MockerFixture,
+    mcp_context_client,
+    merged_table,
+) -> None:
+    """Test that the clustering is written in one definition update and read back from the table detail."""
+    merged_table(backend='bigquery', dev_table_exists=storage_branches)
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.branch_id = '1246948' if storage_branches else None
+    keboola_client.has_feature = mocker.AsyncMock(return_value=storage_branches)
+    keboola_client.storage_client.table_definition_update = mocker.AsyncMock(
+        return_value={'id': 42, 'status': 'success', 'endTime': '2024-01-01T00:00:00Z'}
+    )
+    keboola_client.storage_client.table_detail = mocker.AsyncMock(return_value=_raw_bigquery_table(clustering_fields))
+
+    result = await update_table_clustering(
+        ctx=mcp_context_client, table_id='in.c-test.test-table', clustering_fields=clustering_fields
+    )
+
+    assert isinstance(result, UpdateTableClusteringOutput)
+    assert result.table_id == 'in.c-test.test-table'
+    assert result.clustering_fields == clustering_fields
+    assert (result.job_id, result.job_status) == ('42', 'success')
+    assert result.timestamp == parse_iso_timestamp('2024-01-01T00:00:00Z')
+    assert [link.title for link in result.links] == ['Table: test-table']
+    keboola_client.storage_client.table_definition_update.assert_called_once_with(
+        table_id='in.c-test.test-table',
+        clustering_fields=clustering_fields,
+        remove_clustering=clustering_fields is None,
+        branch_id=expected_branch_id,
+    )
+    keboola_client.storage_client.table_detail.assert_called_once_with(
+        'in.c-test.test-table', branch_id=expected_branch_id
+    )
+
+
+def _storage_error(message: str) -> httpx.HTTPStatusError:
+    response = httpx.Response(
+        422,
+        json={'error': message, 'code': 'storage.tables.clusteringUpdateNotAllowed', 'exceptionId': 'x'},
+        request=httpx.Request('PUT', 'https://x'),
+    )
+    try:
+        RawKeboolaClient._raise_for_status(response)
+    except httpx.HTTPStatusError as e:
+        return e
+    raise AssertionError('A 422 response must raise.')
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('clustering_fields', 'table_exists', 'storage_error', 'expected_error'),
+    [
+        (
+            ['a'],
+            True,
+            'Clustering cannot be changed on alias table "in.c-test.test-table".',
+            'Clustering cannot be changed on alias table',
+        ),
+        (
+            ['a'],
+            True,
+            'Clustering can be changed only on BigQuery tables. Table "x" is stored on backend "snowflake".',
+            'only on BigQuery tables',
+        ),
+        (
+            ['missing'],
+            True,
+            'Clustering column "missing" does not exist in table "in.c-test.test-table".',
+            'does not exist',
+        ),
+        ([], True, None, 'clustering_fields must list 1 to 4 columns'),
+        (['a'], False, None, 'Table "in.c-test.test-table" not found.'),
+    ],
+)
+async def test_update_table_clustering_errors(
+    clustering_fields: list[str],
+    table_exists: bool,
+    storage_error: str | None,
+    expected_error: str,
+    mocker: MockerFixture,
+    mcp_context_client,
+) -> None:
+    """Test that a rejected or invalid clustering change fails the tool with a readable message."""
+    table = {'id': 'in.c-test.test-table', 'bucket': {'backend': 'bigquery'}} if table_exists else None
+    mocker.patch(
+        'keboola_mcp_server.tools.storage.tools.merged_table_detail',
+        new=mocker.AsyncMock(return_value=(table, None)),
+    )
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.storage_client.table_definition_update = mocker.AsyncMock(
+        side_effect=_storage_error(storage_error) if storage_error else None
+    )
+    keboola_client.storage_client.table_detail = mocker.AsyncMock()
+
+    # @tool_errors re-raises the original exception; the MCP server turns it into the tool error the client gets.
+    with pytest.raises((httpx.HTTPStatusError, ValueError), match=expected_error):
+        await update_table_clustering(
+            ctx=mcp_context_client, table_id='in.c-test.test-table', clustering_fields=clustering_fields
+        )
+    if storage_error is None:
+        keboola_client.storage_client.table_definition_update.assert_not_called()
+    keboola_client.storage_client.table_detail.assert_not_called()
+
+
+def _bigquery_table_detail(**fields: Any) -> TableDetail:
+    return TableDetail(
+        id='in.c-bq.events',
+        name='events',
+        display_name='events',
+        primary_key=['a', 'b'],
+        **fields,
+    )
+
+
+@pytest.mark.parametrize(
+    ('field', 'value', 'allowed', 'expected'),
+    [
+        ('clustering_fields', ['a', 'b'], None, ['a', 'b']),
+        ('clustering_fields', ['a', 'b'], ['a'], ['a']),
+        ('clustering_fields', ['a', 'b'], ['c'], None),
+        ('time_partitioning', {'type': 'DAY', 'field': 'a'}, None, {'type': 'DAY', 'field': 'a'}),
+        ('time_partitioning', {'type': 'DAY', 'field': 'a'}, ['a'], {'type': 'DAY', 'field': 'a'}),
+        ('time_partitioning', {'type': 'DAY', 'field': 'a'}, ['c'], None),
+        # ingestion-time partitioning has no column to hide
+        ('time_partitioning', {'type': 'DAY'}, ['c'], {'type': 'DAY'}),
+        ('range_partitioning', {'field': 'a', 'range': {'start': 0}}, None, {'field': 'a', 'range': {'start': 0}}),
+        ('range_partitioning', {'field': 'a', 'range': {'start': 0}}, ['a'], {'field': 'a', 'range': {'start': 0}}),
+        ('range_partitioning', {'field': 'a', 'range': {'start': 0}}, ['c'], None),
+    ],
+)
+def test_limit_to_policy_clustering_fields(field: str, value: Any, allowed: list[str] | None, expected: Any) -> None:
+    """Test that the clustering and the partitioning never show a column hidden by the column policy."""
+    limited = _limit_to_policy(_bigquery_table_detail(**{field: value}), allowed)
+
+    assert getattr(limited, field) == expected
