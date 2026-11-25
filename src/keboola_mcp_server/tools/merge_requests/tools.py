@@ -40,10 +40,9 @@ from keboola_mcp_server.mcp import (
 from keboola_mcp_server.scope import ProjectIdArg
 from keboola_mcp_server.tools.constants import MERGE_REQUEST_BRANCH_ONLY_MESSAGE, MERGE_REQUEST_TOOLS_TAG
 from keboola_mcp_server.tools.merge_requests.conflicts import (
-    DIFF_CONTENT_KEYS,
     build_config_conflict,
+    compose_resolution,
     diff_warnings,
-    envelope_holes,
 )
 from keboola_mcp_server.tools.merge_requests.models import (
     ActivityEvent,
@@ -1173,44 +1172,7 @@ async def resolve_merge_request_conflict(
         )
 
     warnings = list(diff_warnings(diff))
-    body: dict[str, Any]
-    mode: str
-    if custom is not None:
-        body = {
-            'name': custom.name,
-            'description': custom.description,
-            'isDisabled': custom.is_disabled,
-            'configuration': custom.configuration,
-            'rows': custom.rows,
-        }
-        mode = 'custom'
-    elif take == 'delete':
-        body, mode = {}, 'delete'
-    else:
-        side = diff.get('ours') if take == 'ours' else theirs
-        if not isinstance(side, Mapping):
-            # An absent side is not a deletion: never turn it into a tombstone behind the user's back.
-            raise ToolError(
-                f'The diff has no {take} side: the configuration does not exist on that branch. '
-                "Use take='delete' to delete it explicitly, or pass the content as `resolved`."
-            )
-        if side.get('isDeleted'):
-            body, mode = {}, 'delete'  # taking a deleted side IS the delete resolution
-        else:
-            holes = envelope_holes(side)
-            envelope = side.get('diff') or {}
-            if holes or not str(envelope.get('name') or '').strip():
-                raise ToolError(
-                    f"The diff's {take} side carries no {', '.join(holes) or 'name'}; cannot compose the content from "
-                    'it (backend envelope hole). Pass the resolution as `resolved` instead.'
-                )
-            if not isinstance(envelope.get('isDisabled'), bool):
-                raise ToolError(
-                    f"The diff's {take} side carries a non-boolean isDisabled ({envelope.get('isDisabled')!r}). "
-                    'Pass the resolution as `resolved` instead.'
-                )
-            body = {key: envelope[key] for key in DIFF_CONTENT_KEYS if key in envelope}
-            mode = take  # type: ignore[assignment]
+    body, mode = compose_resolution(take, custom, diff)
 
     if body:
         if change_description is not None:

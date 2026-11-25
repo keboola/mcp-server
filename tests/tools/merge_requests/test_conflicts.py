@@ -1,15 +1,17 @@
 from typing import Any
 
 import pytest
+from fastmcp.exceptions import ToolError
 
 from keboola_mcp_server.tools.merge_requests.conflicts import (
     build_config_conflict,
     classify_three_way,
+    compose_resolution,
     diff_warnings,
     envelope_holes,
     suggest_take,
 )
-from keboola_mcp_server.tools.merge_requests.models import ConflictRef, PathChange
+from keboola_mcp_server.tools.merge_requests.models import ConflictRef, PathChange, ResolvedConfiguration
 
 
 def _side(version: int = 1, is_deleted: bool = False, **content: Any) -> dict[str, Any]:
@@ -301,3 +303,73 @@ def test_envelope_holes() -> None:
     assert envelope_holes({'diff': {}}) == ['name', 'rows', 'configuration', 'isDisabled']
     assert envelope_holes({'diff': {'name': 'n', 'rows': [], 'configuration': {}, 'isDisabled': False}}) == []
     assert envelope_holes({'diff': {'name': 'n'}}) == ['rows', 'configuration', 'isDisabled']
+
+
+_CUSTOM = ResolvedConfiguration(name='Merged', description=None, is_disabled=True, configuration={'a': 1}, rows=[])
+_FULL_BODY = {
+    'name': 'My config',
+    'description': None,
+    'isDisabled': False,
+    'configuration': {'parameters': {'query': 'SELECT 1', 'limit': 10}},
+    'rows': [],
+}
+
+
+@pytest.mark.parametrize(
+    ('take', 'custom', 'diff', 'expected_body', 'expected_mode'),
+    [
+        pytest.param(
+            None,
+            _CUSTOM,
+            {'ours': _side(3), 'theirs': _side(5)},
+            {'name': 'Merged', 'description': None, 'isDisabled': True, 'configuration': {'a': 1}, 'rows': []},
+            'custom',
+            id='custom_wins',
+        ),
+        pytest.param('delete', None, {'ours': _side(3), 'theirs': _side(5)}, {}, 'delete', id='delete'),
+        pytest.param('ours', None, {'ours': _side(3), 'theirs': _side(5, name='Prod')}, _FULL_BODY, 'ours', id='ours'),
+        pytest.param(
+            'theirs',
+            None,
+            {'ours': _side(3), 'theirs': _side(5, name='Prod')},
+            _FULL_BODY | {'name': 'Prod'},
+            'theirs',
+            id='theirs',
+        ),
+        pytest.param(
+            'theirs', None, {'ours': _side(3), 'theirs': _side(5, is_deleted=True)}, {}, 'delete', id='deleted_side'
+        ),
+        pytest.param(
+            'ours',
+            None,
+            {'ours': _side(3, changeDescription='drop me'), 'theirs': _side(5)},
+            _FULL_BODY,
+            'ours',
+            id='change_description_not_copied',
+        ),
+    ],
+)
+def test_compose_resolution(
+    take: str | None, custom: ResolvedConfiguration | None, diff: dict, expected_body: dict, expected_mode: str
+) -> None:
+    assert compose_resolution(take, custom, diff) == (expected_body, expected_mode)
+
+
+@pytest.mark.parametrize(
+    ('take', 'side', 'expected_fragment'),
+    [
+        pytest.param('ours', None, 'no ours side', id='absent_side_is_not_a_delete'),
+        pytest.param('ours', {'version': 3, 'isDeleted': False, 'diff': {}}, 'envelope hole', id='empty_envelope'),
+        pytest.param(
+            'ours',
+            {'version': 3, 'diff': {'name': 'n', 'rows': [], 'configuration': {}}},
+            'carries no isDisabled',
+            id='holed_envelope',
+        ),
+        pytest.param('ours', _side(3, name='  '), 'carries no name', id='blank_name'),
+        pytest.param('ours', _side(3, isDisabled='false'), 'non-boolean isDisabled', id='string_boolean'),
+    ],
+)
+def test_compose_resolution_refuses(take: str, side: dict | None, expected_fragment: str) -> None:
+    with pytest.raises(ToolError, match=expected_fragment):
+        compose_resolution(take, None, {'ours': side, 'theirs': _side(5)})
