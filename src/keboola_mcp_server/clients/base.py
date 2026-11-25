@@ -305,19 +305,21 @@ class RawKeboolaClient:
         self,
         endpoint: str,
         headers: dict[str, Any] | None = None,
+        retry: bool = True,
     ) -> JsonStruct | None:
         """
         Makes a DELETE request to the service API.
 
         :param endpoint: API endpoint to call
         :param headers: Additional headers for the request
+        :param retry: Whether to apply the retry policy (timeouts, 429/5xx, 409); see `_create_transport`
         :return: API response as dictionary
         """
         if self.readonly:
             raise RuntimeError(f'Forbidden DELETE operation on a readonly client: {self.base_api_url}')
 
         headers = self.headers | (headers or {})
-        async with httpx.AsyncClient(timeout=self.timeout, transport=self._create_transport()) as client:
+        async with httpx.AsyncClient(timeout=self.timeout, transport=self._create_transport(retry=retry)) as client:
             response = await client.delete(
                 f'{self.base_api_url}/{endpoint}',
                 headers=headers,
@@ -452,14 +454,18 @@ class KeboolaServiceClient:
     async def delete(
         self,
         endpoint: str,
+        retry: bool = True,
     ) -> JsonStruct | None:
         """
         Makes a DELETE request to the service API.
 
         :param endpoint: API endpoint to call
+        :param retry: Whether to apply the retry policy; False when repeating the call has a different effect
         :return: API response as dictionary
         """
-        return await self.raw_client.delete(endpoint=endpoint)
+        # Forwarded only when opting out, so the default call to the raw client stays the plain one.
+        extra: dict[str, Any] = {} if retry else {'retry': False}
+        return await self.raw_client.delete(endpoint=endpoint, **extra)
 
     async def patch(
         self,
