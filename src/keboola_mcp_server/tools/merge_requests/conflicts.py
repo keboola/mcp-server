@@ -3,6 +3,8 @@
 Pure functions, a port of the kbagent CLI's `_classify_three_way` / `_envelope_holes` / `_diff_warnings`
 (`merge_request_service.py`). A side that is absent, `isDeleted` or key-incomplete produces no path rows at
 all (`changes=[]`) — fabricating rows against an empty stand-in would contradict the side flags.
+
+Unlike the CLI, which reports a changed list as one whole-path change, lists are walked item by item here.
 """
 
 from collections.abc import Mapping
@@ -75,41 +77,47 @@ def _ids(items: list[Any]) -> dict[str, Any] | None:
     return by_id if len(by_id) == len(items) else None
 
 
-def _walk(old: Any, new: Any, path: str, out: dict[str, tuple[Any, Any]]) -> None:
+def _child(value: Any, key: Any) -> Any:
+    """`value[key]`, or `_ABSENT` when `value` is not a dict or has no such key."""
+    return value.get(key, _ABSENT) if isinstance(value, dict) else _ABSENT
+
+
+def _walk(old: Any, new: Any, other: Any, path: str, out: dict[str, tuple[Any, Any]]) -> None:
     """Records changed leaf paths (JSON pointers) between two JSON values into `out` as `(old, new)`
-    where a missing side is `_ABSENT`. Dicts and lists recurse; anything else compares by value."""
+    where a missing side is `_ABSENT`. Dicts and lists recurse; anything else compares by value.
+
+    `other` is the third side's value at the same path (`_ABSENT` when it has none). It is not compared; it only
+    takes part in the choice between aligning a list by id or by index, so that the base->ours and base->theirs
+    walks always choose the same way and a row both sides edited gets one path.
+    """
     if isinstance(old, dict) and isinstance(new, dict):
         for key in sorted(set(old) | set(new)):
             sub = f'{path}/{key}'
             if key in old and key in new:
-                _walk(old[key], new[key], sub, out)
+                _walk(old[key], new[key], _child(other, key), sub, out)
             elif key in old:
                 out[sub] = (old[key], _ABSENT)
             else:
                 out[sub] = (_ABSENT, new[key])
         return
     if isinstance(old, list) and isinstance(new, list):
-        if _ids(old) is not None and _ids(new) is not None:
-            # Rows carry ids: align by id so an insertion does not shift every following row into a "change".
-            old_by_id, new_by_id = _ids(old), _ids(new)
-            assert old_by_id is not None and new_by_id is not None
-            for key in sorted(set(old_by_id) | set(new_by_id)):
-                sub = f'{path}/{key}'
-                if key in old_by_id and key in new_by_id:
-                    _walk(old_by_id[key], new_by_id[key], sub, out)
-                elif key in old_by_id:
-                    out[sub] = (old_by_id[key], _ABSENT)
-                else:
-                    out[sub] = (_ABSENT, new_by_id[key])
-            return
-        for i in range(max(len(old), len(new))):
-            sub = f'{path}/{i}'
-            if i < len(old) and i < len(new):
-                _walk(old[i], new[i], sub, out)
-            elif i < len(old):
-                out[sub] = (old[i], _ABSENT)
+        # Only a side that holds a list here votes; a removed or replaced list has no items to align.
+        other_items: list[Any] = other if isinstance(other, list) else []
+        old_by_id, new_by_id, other_by_id = _ids(old), _ids(new), _ids(other_items)
+        if old_by_id is None or new_by_id is None or other_by_id is None:
+            # All or nothing, never per item: an index key `3` would collide with an id `3`.
+            old_by_id, new_by_id, other_by_id = (
+                {str(i): item for i, item in enumerate(items)} for items in (old, new, other_items)
+            )
+        # Keyed by id, an insertion does not shift every following row into a "change".
+        for key in old_by_id | new_by_id:
+            sub = f'{path}/{key}'
+            if key in old_by_id and key in new_by_id:
+                _walk(old_by_id[key], new_by_id[key], other_by_id.get(key, _ABSENT), sub, out)
+            elif key in old_by_id:
+                out[sub] = (old_by_id[key], _ABSENT)
             else:
-                out[sub] = (_ABSENT, new[i])
+                out[sub] = (_ABSENT, new_by_id[key])
         return
     if old != new:
         out[path] = (old, new)
@@ -127,8 +135,10 @@ def classify_three_way(diff: Mapping[str, Any]) -> list[PathChange]:
     base = _content(diff.get('base'))
     ours: dict[str, tuple[Any, Any]] = {}
     theirs: dict[str, tuple[Any, Any]] = {}
-    _walk(base, _content(diff.get('ours')), '', ours)
-    _walk(base, _content(diff.get('theirs')), '', theirs)
+    ours_content = _content(diff.get('ours'))
+    theirs_content = _content(diff.get('theirs'))
+    _walk(base, ours_content, theirs_content, '', ours)
+    _walk(base, theirs_content, ours_content, '', theirs)
 
     def present(value: Any) -> Any:
         return None if value is _ABSENT else value

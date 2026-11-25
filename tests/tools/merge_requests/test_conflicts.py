@@ -296,6 +296,119 @@ def test_subtree_vs_leaf_edit_is_a_conflict() -> None:
     assert conflict.suggested_take is None
 
 
+@pytest.mark.parametrize(
+    ('base_items', 'ours_items', 'theirs_items', 'expected_changes', 'expected_conflicting'),
+    [
+        pytest.param(
+            [{'query': 'a'}, {'query': 'b'}],
+            [{'query': 'x'}, {'query': 'b'}],
+            [{'query': 'y'}, {'query': 'b'}],
+            {'/configuration/tables/0/query': ('both', 'x', 'y')},
+            ['/configuration/tables/0/query'],
+            id='lists_without_ids_walk_by_index',
+        ),
+        pytest.param(
+            [{'id': 5, 'query': 'a'}],
+            [{'id': 5, 'query': 'b'}],
+            [{'id': 5, 'query': 'c'}, {'id': 6, 'query': 'z'}],
+            {
+                '/configuration/tables/5/query': ('both', 'b', 'c'),
+                '/configuration/tables/6': ('theirs', None, {'id': 6, 'query': 'z'}),
+            },
+            ['/configuration/tables/5/query'],
+            id='id_keyed_on_both_pairs_finds_the_clash',
+        ),
+        # Keying is decided once per list across base, ours and theirs: one side breaking the id rule makes both
+        # pairs walk by index, so the same edited row always lands under the same path.
+        pytest.param(
+            [{'id': 5, 'query': 'a'}],
+            [{'id': 5, 'query': 'b'}],
+            [{'id': 5, 'query': 'c'}, {'query': 'z'}],
+            {
+                '/configuration/tables/0/query': ('both', 'b', 'c'),
+                '/configuration/tables/1': ('theirs', None, {'query': 'z'}),
+            },
+            ['/configuration/tables/0/query'],
+            id='one_side_adds_item_without_id',
+        ),
+        pytest.param(
+            [{'id': 5, 'query': 'a'}],
+            [{'id': 5, 'query': 'b'}, {'query': 'z'}],
+            [{'id': 5, 'query': 'c'}],
+            {
+                '/configuration/tables/0/query': ('both', 'b', 'c'),
+                '/configuration/tables/1': ('ours', {'query': 'z'}, None),
+            },
+            ['/configuration/tables/0/query'],
+            id='ours_adds_item_without_id',
+        ),
+        pytest.param(
+            [{'id': 5, 'query': 'a'}],
+            [{'id': 5, 'query': 'b'}],
+            [{'id': 5, 'query': 'c'}, {'id': 5, 'query': 'z'}],
+            {
+                '/configuration/tables/0/query': ('both', 'b', 'c'),
+                '/configuration/tables/1': ('theirs', None, {'id': 5, 'query': 'z'}),
+            },
+            ['/configuration/tables/0/query'],
+            id='one_side_duplicates_an_id',
+        ),
+        pytest.param(
+            [{'id': 1, 'query': 'a'}, {'id': 2, 'query': 'b'}],
+            [{'id': 1, 'query': 'a'}, {'id': 2, 'query': 'x'}],
+            [{'id': 1, 'query': 'a'}, {'id': 2, 'query': 'b'}, {'query': 'new'}],
+            {
+                '/configuration/tables/1/query': ('ours', 'x', 'b'),
+                '/configuration/tables/2': ('theirs', None, {'query': 'new'}),
+            },
+            [],
+            id='different_rows_do_not_collide',
+        ),
+        pytest.param(
+            [{'id': 7, 'cols': [{'id': 5, 'n': 'a'}]}],
+            [{'id': 7, 'cols': [{'id': 5, 'n': 'b'}]}],
+            [{'id': 6, 'cols': []}, {'id': 7, 'cols': [{'id': 5, 'n': 'c'}, {'n': 'z'}]}],
+            {
+                '/configuration/tables/6': ('theirs', None, {'id': 6, 'cols': []}),
+                '/configuration/tables/7/cols/0/n': ('both', 'b', 'c'),
+                '/configuration/tables/7/cols/1': ('theirs', None, {'n': 'z'}),
+            },
+            ['/configuration/tables/7/cols/0/n'],
+            id='nested_list_decides_on_its_own',
+        ),
+        pytest.param(
+            [{'id': 5, 'query': 'a'}],
+            [{'id': 5, 'query': 'b'}],
+            None,
+            {
+                '/configuration/tables': ('theirs', [{'id': 5, 'query': 'a'}], None),
+                '/configuration/tables/5/query': ('ours', 'b', 'a'),
+            },
+            ['/configuration/tables', '/configuration/tables/5/query'],
+            id='list_replaced_by_non_list_does_not_vote',
+        ),
+    ],
+)
+def test_list_keying_across_sides(
+    base_items: list,
+    ours_items: list,
+    theirs_items: list | None,
+    expected_changes: dict[str, tuple[str, Any, Any]],
+    expected_conflicting: list[str],
+) -> None:
+    """Characterizes how lists inside `configuration` are aligned when the sides disagree on the id rule."""
+    diff = {
+        'base': _side(1, configuration={'tables': base_items}),
+        'ours': _side(3, configuration={'tables': ours_items}),
+        'theirs': _side(5, configuration={'tables': theirs_items}),
+    }
+
+    conflict = build_config_conflict(_ref(), diff)
+
+    assert {c.path: (c.changed_by, c.ours, c.theirs) for c in conflict.changes} == expected_changes
+    assert conflict.conflicting_paths == expected_conflicting
+
+
 def test_envelope_holes() -> None:
     assert envelope_holes(_side()) == []
     assert envelope_holes({'diff': {}}) == ['name', 'rows', 'configuration', 'isDisabled']
