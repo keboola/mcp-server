@@ -604,8 +604,7 @@ uv run --extra otel opentelemetry-instrument python -m keboola_mcp_server.cli --
 - `OTEL_EXPORTER_OTLP_TIMEOUT` is in seconds in OpenTelemetry Python.
 - On shutdown the HTTP app's lifespan flushes the queued spans (`_flush_traces` in `cli.py`).
 
-The image still contains `ddtrace` for the deployments that are started with `ddtrace-run` until they move to
-OpenTelemetry.
+The image no longer contains `ddtrace`: a deployment that still starts it with `ddtrace-run` fails to start.
 
 ### Releasing
 

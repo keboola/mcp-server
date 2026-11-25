@@ -18,11 +18,6 @@ RUN --mount=type=cache,target=/root/.cache/uv     uv sync --frozen --no-install-
 # Installing separately from its dependencies allows optimal layer caching
 ADD src /app/src
 RUN --mount=type=cache,target=/root/.cache/uv     uv sync --frozen --no-dev --no-editable --extra otel
-# TRANSITIONAL (ST-4668): ddtrace stays only for the deployments the chart still starts with `ddtrace-run`
-# (mcp-router, stacks not yet switched to OpenTelemetry). The OpenTelemetry ones start with `opentelemetry-instrument`
-# (the `otel` extra). Remove this line in a follow-up PR once mcp-router has moved to OpenTelemetry (after the
-# collector's secret masking) and every stack runs `opentelemetry-instrument`.
-RUN --mount=type=cache,target=/root/.cache/uv     uv pip install ddtrace~=3.0
 
 FROM python:3.13-slim-bookworm
 
