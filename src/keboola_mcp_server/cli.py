@@ -17,6 +17,7 @@ from contextlib import asynccontextmanager
 import pydantic
 from fastmcp import FastMCP
 from fastmcp.server.http import StarletteWithLifespan
+from opentelemetry import trace
 from starlette.applications import Starlette
 from starlette.exceptions import HTTPException
 from starlette.middleware import Middleware
@@ -311,6 +312,19 @@ def create_anonymous_app(mcp_server: FastMCP, *, config: Config, stateless_http:
     )
 
 
+def _flush_traces() -> None:
+    """Exports the spans still queued by the OpenTelemetry SDK when the HTTP server shuts down.
+
+    After its graceful shutdown uvicorn re-raises SIGTERM with the default handler. Unless Python runs as PID 1
+    (where the kernel ignores that signal), the process dies by it and the SDK's atexit shutdown, which would export
+    the last batch, never runs. Without the SDK (the server not started by `opentelemetry-instrument`) the API's
+    provider has no `force_flush` and this is a no-op.
+    """
+    flush = getattr(trace.get_tracer_provider(), 'force_flush', None)
+    if flush is not None:
+        flush()
+
+
 def build_http_app(
     mcp_server: FastMCP,
     custom_routes: CustomRoutes,
@@ -336,6 +350,7 @@ def build_http_app(
             for _inner_app in mount_paths.values():
                 await stack.enter_async_context(_inner_app.lifespan(_app))
             yield
+        _flush_traces()
 
     app = Starlette(
         middleware=[

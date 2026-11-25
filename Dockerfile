@@ -12,12 +12,15 @@ ENV UV_LINK_MODE=copy
 
 # Install the project's dependencies using the lockfile and settings
 COPY uv.lock pyproject.toml README.md /app/
-RUN --mount=type=cache,target=/root/.cache/uv     uv sync --frozen --no-install-project --no-dev --no-editable
+RUN --mount=type=cache,target=/root/.cache/uv     uv sync --frozen --no-install-project --no-dev --no-editable --extra otel
 
 # Then, add the rest of the project source code and install it
 # Installing separately from its dependencies allows optimal layer caching
 ADD src /app/src
-RUN --mount=type=cache,target=/root/.cache/uv     uv sync --frozen --no-dev --no-editable
+RUN --mount=type=cache,target=/root/.cache/uv     uv sync --frozen --no-dev --no-editable --extra otel
+# ddtrace stays only for the deployments the chart still starts with `ddtrace-run` (mcp-router, stacks not yet
+# switched to OpenTelemetry). The OpenTelemetry ones start with `opentelemetry-instrument` (the `otel` extra).
+# Remove it once every deployment has moved to OpenTelemetry (ST-4668).
 RUN --mount=type=cache,target=/root/.cache/uv     uv pip install ddtrace~=3.0
 
 FROM python:3.13-slim-bookworm
