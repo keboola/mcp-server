@@ -3913,9 +3913,6 @@ EXAMPLES WITH LOGS:
 
 Starts a new job for a given component or transformation.
 
-Does not run data apps (`keboola.data-apps`). To deploy or restart a data app, use `deploy_data_app`. To start a
-data app from a flow, add a `keboola.data-app-control` task.
-
 
 **Input JSON Schema**:
 ```json
