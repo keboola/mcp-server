@@ -260,8 +260,7 @@ async def normalize_data_app_tasks(client: KeboolaClient, flow_configuration: Js
 
     :param client: Authenticated Keboola client instance.
     :param flow_configuration: The flow configuration with ``tasks`` to normalize.
-    :raises ValueError: If a data app task cannot be resolved to a data app, or the stack has no
-        ``keboola.data-app-control`` component.
+    :raises ValueError: If a data app task cannot be resolved to a data app.
     """
     tasks = flow_configuration.get('tasks') or []
     control_tasks = [
@@ -282,31 +281,12 @@ async def normalize_data_app_tasks(client: KeboolaClient, flow_configuration: Js
                 '"configData.parameters.appId". Set it to the `data_app_id` returned by `get_data_apps`.'
             )
 
-    if not control_tasks and not legacy_tasks:
-        return
-    if not await _is_data_app_control_available(client):
-        raise ValueError(
-            f'Component "{DATA_APP_CONTROL_COMPONENT_ID}" is not available on this stack, so a flow cannot start '
-            'a data app here. Remove the data app task from the flow.'
-        )
-
     for task in legacy_tasks:
         task_config = task['task']
         app_id = await _resolve_data_app_id(client, task.get('id'), task_config.get('configId'))
         task_config.pop('configId', None)
         task_config['componentId'] = DATA_APP_CONTROL_COMPONENT_ID
         task_config['configData'] = {'parameters': {'appId': app_id}}
-
-
-async def _is_data_app_control_available(client: KeboolaClient) -> bool:
-    try:
-        await client.storage_client.component_detail(component_id=DATA_APP_CONTROL_COMPONENT_ID)
-    except httpx.HTTPStatusError as e:
-        if e.response.status_code == HTTPStatus.NOT_FOUND:
-            LOG.info(f'Component "{DATA_APP_CONTROL_COMPONENT_ID}" is not available on this stack.')
-            return False
-        raise
-    return True
 
 
 async def _resolve_data_app_id(client: KeboolaClient, task_id: Any, config_id: str | int | None) -> str:

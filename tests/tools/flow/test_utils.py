@@ -1040,27 +1040,21 @@ _DATA_APP_CONFIG = {'id': 'cfg-1', 'configuration': {'parameters': {'id': 'app-1
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ('task', 'control_component', 'expected_task', 'checks_stack'),
+    ('task', 'expected_task'),
     [
-        (_LEGACY_DATA_APP_TASK, {}, _CONTROL_DATA_APP_TASK, True),
-        (_CONTROL_DATA_APP_TASK, {}, _CONTROL_DATA_APP_TASK, True),
+        (_LEGACY_DATA_APP_TASK, _CONTROL_DATA_APP_TASK),
+        (_CONTROL_DATA_APP_TASK, _CONTROL_DATA_APP_TASK),
         (
             {'componentId': 'keboola.data-app-control', 'configData': {'parameters': {'appId': 5823114}}},
-            {},
             {'componentId': 'keboola.data-app-control', 'configData': {'parameters': {'appId': '5823114'}}},
-            True,
         ),
         (
             {'componentId': 'keboola.data-app-control', 'configId': 'control-cfg'},
-            {},
             {'componentId': 'keboola.data-app-control', 'configId': 'control-cfg'},
-            True,
         ),
         (
             {'componentId': 'keboola.snowflake-transformation', 'configId': 'cfg-1'},
-            {},
             {'componentId': 'keboola.snowflake-transformation', 'configId': 'cfg-1'},
-            False,
         ),
     ],
     ids=[
@@ -1071,54 +1065,44 @@ _DATA_APP_CONFIG = {'id': 'cfg-1', 'configuration': {'parameters': {'id': 'app-1
         'other_component_kept',
     ],
 )
-async def test_normalize_data_app_tasks(
-    task: dict[str, Any], control_component: Any, expected_task: dict[str, Any], checks_stack: bool, mocker: Any
-):
+async def test_normalize_data_app_tasks(task: dict[str, Any], expected_task: dict[str, Any], mocker: Any):
     async def configuration_detail(component_id: str, configuration_id: str) -> dict[str, Any]:
         if (component_id, configuration_id) == ('keboola.data-apps', 'cfg-1'):
             return _DATA_APP_CONFIG
         raise _status_error(404)
 
     client = mocker.Mock()
-    client.storage_client.component_detail = mocker.AsyncMock(side_effect=[control_component])
     client.storage_client.configuration_detail = mocker.AsyncMock(side_effect=configuration_detail)
     flow_configuration = {'phases': [], 'tasks': [_data_app_task(task)]}
 
     await normalize_data_app_tasks(client, flow_configuration)
 
     assert flow_configuration['tasks'] == [_data_app_task(expected_task)]
-    assert client.storage_client.component_detail.await_count == int(checks_stack)
+    client.storage_client.component_detail.assert_not_called()
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ('task', 'control_component', 'data_app_config', 'expected'),
+    ('task', 'data_app_config', 'expected'),
     [
-        (_LEGACY_DATA_APP_TASK, {}, {'id': 'cfg-1', 'configuration': {'parameters': {}}}, 'has no data app ID'),
-        (_LEGACY_DATA_APP_TASK, {}, _status_error(404), 'does not exist'),
-        ({'componentId': 'keboola.data-apps'}, {}, _DATA_APP_CONFIG, 'has no "configId"'),
-        ({'componentId': 'keboola.data-app-control', 'configData': {}}, {}, _DATA_APP_CONFIG, 'without "configData'),
-        (_CONTROL_DATA_APP_TASK, _status_error(404), _DATA_APP_CONFIG, 'not available on this stack'),
-        (_LEGACY_DATA_APP_TASK, _status_error(404), _DATA_APP_CONFIG, 'not available on this stack'),
-        (_LEGACY_DATA_APP_TASK, _status_error(503), _DATA_APP_CONFIG, 503),
-        (_LEGACY_DATA_APP_TASK, {}, _status_error(503), 503),
+        (_LEGACY_DATA_APP_TASK, {'id': 'cfg-1', 'configuration': {'parameters': {}}}, 'has no data app ID'),
+        (_LEGACY_DATA_APP_TASK, _status_error(404), 'does not exist'),
+        ({'componentId': 'keboola.data-apps'}, _DATA_APP_CONFIG, 'has no "configId"'),
+        ({'componentId': 'keboola.data-app-control', 'configData': {}}, _DATA_APP_CONFIG, 'without "configData'),
+        (_LEGACY_DATA_APP_TASK, _status_error(503), 503),
     ],
     ids=[
         'app_without_id',
         'missing_config',
         'legacy_without_config_id',
         'control_without_app_id',
-        'control_without_component',
-        'legacy_without_control_component',
-        'component_check_fails',
         'config_fetch_fails',
     ],
 )
 async def test_normalize_data_app_tasks_rejects_unresolvable_app(
-    task: dict[str, Any], control_component: Any, data_app_config: Any, expected: str | int, mocker: Any
+    task: dict[str, Any], data_app_config: Any, expected: str | int, mocker: Any
 ):
     client = mocker.Mock()
-    client.storage_client.component_detail = mocker.AsyncMock(side_effect=[control_component])
     client.storage_client.configuration_detail = mocker.AsyncMock(side_effect=[data_app_config])
 
     with pytest.raises(Exception) as exc_info:
@@ -1129,4 +1113,3 @@ async def test_normalize_data_app_tasks_rejects_unresolvable_app(
     else:
         assert isinstance(exc_info.value, ValueError)
         assert expected in str(exc_info.value)
-        assert 'keboola.data-apps' not in str(exc_info.value).replace('keboola.data-app-control', '')
