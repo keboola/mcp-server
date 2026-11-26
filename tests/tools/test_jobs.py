@@ -294,6 +294,19 @@ async def test_run_job_fail(mocker: MockerFixture, mcp_context_client: Context, 
     )
 
 
+@pytest.mark.asyncio
+async def test_run_job_refuses_data_apps(mocker: MockerFixture, mcp_context_client: Context):
+    context = mcp_context_client
+    keboola_client = KeboolaClient.from_state(context.session.state)
+    keboola_client.jobs_queue_client.create_job = mocker.AsyncMock()
+
+    with pytest.raises(ValueError, match='deploy_data_app') as exc_info:
+        await run_job(ctx=context, component_id='keboola.data-apps', configuration_id='123')
+
+    assert 'keboola.data-app-control' in str(exc_info.value)
+    keboola_client.jobs_queue_client.create_job.assert_not_called()
+
+
 @pytest.mark.parametrize(
     ('field_name', 'input_value', 'expected_result'),
     [

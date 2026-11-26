@@ -1062,7 +1062,6 @@ _DATA_APP_CONFIG = {'id': 'cfg-1', 'configuration': {'parameters': {'id': 'app-1
             {'componentId': 'keboola.snowflake-transformation', 'configId': 'cfg-1'},
             False,
         ),
-        (_LEGACY_DATA_APP_TASK, _status_error(404), _LEGACY_DATA_APP_TASK, True),
     ],
     ids=[
         'legacy_rewritten',
@@ -1070,7 +1069,6 @@ _DATA_APP_CONFIG = {'id': 'cfg-1', 'configuration': {'parameters': {'id': 'app-1
         'control_int_app_id_stringified',
         'control_config_kept',
         'other_component_kept',
-        'no_control_component',
     ],
 )
 async def test_normalize_data_app_tasks(
@@ -1101,6 +1099,7 @@ async def test_normalize_data_app_tasks(
         ({'componentId': 'keboola.data-apps'}, {}, _DATA_APP_CONFIG, 'has no "configId"'),
         ({'componentId': 'keboola.data-app-control', 'configData': {}}, {}, _DATA_APP_CONFIG, 'without "configData'),
         (_CONTROL_DATA_APP_TASK, _status_error(404), _DATA_APP_CONFIG, 'not available on this stack'),
+        (_LEGACY_DATA_APP_TASK, _status_error(404), _DATA_APP_CONFIG, 'not available on this stack'),
         (_LEGACY_DATA_APP_TASK, _status_error(503), _DATA_APP_CONFIG, 503),
         (_LEGACY_DATA_APP_TASK, {}, _status_error(503), 503),
     ],
@@ -1110,6 +1109,7 @@ async def test_normalize_data_app_tasks(
         'legacy_without_config_id',
         'control_without_app_id',
         'control_without_component',
+        'legacy_without_control_component',
         'component_check_fails',
         'config_fetch_fails',
     ],
@@ -1129,3 +1129,4 @@ async def test_normalize_data_app_tasks_rejects_unresolvable_app(
     else:
         assert isinstance(exc_info.value, ValueError)
         assert expected in str(exc_info.value)
+        assert 'keboola.data-apps' not in str(exc_info.value).replace('keboola.data-app-control', '')

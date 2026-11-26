@@ -255,13 +255,13 @@ def validate_flow_structure(
 async def normalize_data_app_tasks(client: KeboolaClient, flow_configuration: JsonDict) -> None:
     """
     Rewrites data app tasks in place from the legacy ``keboola.data-apps`` + ``configId`` shape to
-    ``keboola.data-app-control`` + ``configData.parameters.appId``, the shape the UI writes. The legacy shape
-    is kept on stacks without ``keboola.data-app-control``.
+    ``keboola.data-app-control`` + ``configData.parameters.appId``, the shape the UI writes. A flow never keeps
+    a ``keboola.data-apps`` task.
 
     :param client: Authenticated Keboola client instance.
     :param flow_configuration: The flow configuration with ``tasks`` to normalize.
-    :raises ValueError: If a data app task cannot be resolved to a data app, or uses ``keboola.data-app-control``
-        on a stack without it.
+    :raises ValueError: If a data app task cannot be resolved to a data app, or the stack has no
+        ``keboola.data-app-control`` component.
     """
     tasks = flow_configuration.get('tasks') or []
     control_tasks = [
@@ -285,12 +285,10 @@ async def normalize_data_app_tasks(client: KeboolaClient, flow_configuration: Js
     if not control_tasks and not legacy_tasks:
         return
     if not await _is_data_app_control_available(client):
-        if control_tasks:
-            raise ValueError(
-                f'Component "{DATA_APP_CONTROL_COMPONENT_ID}" is not available on this stack. Reference data apps '
-                f'as "{DATA_APP_COMPONENT_ID}" tasks with "configId" set to the data app\'s `configuration_id`.'
-            )
-        return
+        raise ValueError(
+            f'Component "{DATA_APP_CONTROL_COMPONENT_ID}" is not available on this stack, so a flow cannot start '
+            'a data app here. Remove the data app task from the flow.'
+        )
 
     for task in legacy_tasks:
         task_config = task['task']
@@ -305,7 +303,7 @@ async def _is_data_app_control_available(client: KeboolaClient) -> bool:
         await client.storage_client.component_detail(component_id=DATA_APP_CONTROL_COMPONENT_ID)
     except httpx.HTTPStatusError as e:
         if e.response.status_code == HTTPStatus.NOT_FOUND:
-            LOG.info(f'Component "{DATA_APP_CONTROL_COMPONENT_ID}" is not available, keeping legacy data app tasks.')
+            LOG.info(f'Component "{DATA_APP_CONTROL_COMPONENT_ID}" is not available on this stack.')
             return False
         raise
     return True

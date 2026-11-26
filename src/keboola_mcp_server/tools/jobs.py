@@ -7,7 +7,7 @@ from fastmcp import Context
 from mcp.types import ToolAnnotations
 from pydantic import AliasChoices, BaseModel, Field, field_validator
 
-from keboola_mcp_server.clients.client import KeboolaClient
+from keboola_mcp_server.clients.client import DATA_APP_COMPONENT_ID, KeboolaClient
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
 from keboola_mcp_server.mcp import KeboolaMcpServer, ToonCompactFunctionTool, process_concurrently
@@ -453,7 +453,16 @@ async def run_job(
 ) -> JobDetail:
     """
     Starts a new job for a given component or transformation.
+
+    Does not run data apps (`keboola.data-apps`). To deploy or restart a data app, use `deploy_data_app`. To start a
+    data app from a flow, add a `keboola.data-app-control` task.
     """
+    if component_id == DATA_APP_COMPONENT_ID:
+        raise ValueError(
+            f'Component "{DATA_APP_COMPONENT_ID}" cannot be run as a job. To deploy or restart a data app, use '
+            '`deploy_data_app`. To start a data app from a flow, add a "keboola.data-app-control" task with '
+            '"configData.parameters.appId" set to the `data_app_id` returned by `get_data_apps`.'
+        )
     client = KeboolaClient.from_state(ctx.session.state)
 
     try:
