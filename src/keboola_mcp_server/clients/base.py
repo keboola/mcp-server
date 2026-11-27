@@ -191,6 +191,8 @@ class RawKeboolaClient:
         endpoint: str,
         params: dict[str, Any] | None = None,
         headers: dict[str, Any] | None = None,
+        timeout: httpx.Timeout | None = None,
+        retry: bool = True,
     ) -> JsonStruct:
         """
         Makes a GET request to the service API.
@@ -198,10 +200,14 @@ class RawKeboolaClient:
         :param endpoint: API endpoint to call
         :param params: Query parameters for the request
         :param headers: Additional headers for the request
+        :param timeout: Optional per-call timeout override; falls back to the client default when None
+        :param retry: Whether to apply the retry policy (timeouts, 429/5xx, 409); see `_create_transport`
         :return: API response as dictionary
         """
         headers = self.headers | (headers or {})
-        async with httpx.AsyncClient(timeout=self.timeout, transport=self._create_transport()) as client:
+        async with httpx.AsyncClient(
+            timeout=timeout or self.timeout, transport=self._create_transport(retry=retry)
+        ) as client:
             response = await client.get(
                 f'{self.base_api_url}/{endpoint}',
                 params=params,
@@ -383,15 +389,25 @@ class KeboolaServiceClient:
         self,
         endpoint: str,
         params: dict[str, Any] | None = None,
+        timeout: httpx.Timeout | None = None,
+        retry: bool = True,
     ) -> JsonStruct:
         """
         Makes a GET request to the service API.
 
         :param endpoint: API endpoint to call
         :param params: Query parameters for the request
+        :param timeout: Optional per-call timeout override; falls back to the client default when None
+        :param retry: Whether to apply the retry policy; False for a best-effort call
         :return: API response as dictionary
         """
-        return await self.raw_client.get(endpoint=endpoint, params=params)
+        # Forwarded only when overridden, so the default call to the raw client stays the plain one.
+        extra: dict[str, Any] = {}
+        if timeout is not None:
+            extra['timeout'] = timeout
+        if not retry:
+            extra['retry'] = False
+        return await self.raw_client.get(endpoint=endpoint, params=params, **extra)
 
     async def get_text(
         self,

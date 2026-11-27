@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Mapping, Sequence
 from dataclasses import dataclass
 from http import HTTPStatus
 from importlib import resources
-from typing import Annotated, Any, Literal, TypeVar, cast
+from typing import Annotated, Any, Literal, NamedTuple, TypeVar, cast
 from urllib.parse import quote, urlsplit, urlunsplit
 
 import httpx
@@ -22,6 +22,7 @@ from keboola_mcp_server.clients.data_science import (
     AppGitAccessTokenResponse,
     AppRunResponse,
     CodeDataAppConfig,
+    CustomDomainCallbacks,
     DataAppConfig,
     DataAppResponse,
     DraftResponse,
@@ -673,8 +674,17 @@ class ModifiedDataAppOutput(BaseModel):
     oidc_callback_url: str | None = Field(
         default=None,
         description=(
-            'The OIDC redirect URI of the app (`https://<slug>-<app id>.hub.<stack>/_proxy/callback`, or the one of the custom '
-            'domain when the app has one). Register it at the identity provider before you switch the app to OIDC. None for drafts.'
+            "The OIDC redirect URI of the URL the app is served on: the primary custom domain's when it has one, "
+            'else `https://<slug>-<app id>.hub.<stack>/_proxy/callback`. Register the URIs of '
+            '`oidc_callback_urls`, not only this one. None for drafts.'
+        ),
+    )
+    oidc_callback_urls: list[str] | None = Field(
+        default=None,
+        description=(
+            'Every OIDC redirect URI to register at the identity provider before you switch the app to OIDC: the '
+            'callbacks of the custom domains (primary first, whatever their state), then the `.hub` one '
+            '(`https://<slug>-<app id>.hub.<stack>/_proxy/callback`). Register all of them. None for drafts.'
         ),
     )
     oidc_setup_required: bool = Field(
@@ -695,8 +705,17 @@ class ModifiedPythonJsDataAppOutput(BaseModel):
     oidc_callback_url: str | None = Field(
         default=None,
         description=(
-            'The OIDC redirect URI of the app (`https://<slug>-<app id>.hub.<stack>/_proxy/callback`, or the one of the custom '
-            'domain when the app has one). Register it at the identity provider before you switch the app to OIDC. None for drafts.'
+            "The OIDC redirect URI of the URL the app is served on: the primary custom domain's when it has one, "
+            'else `https://<slug>-<app id>.hub.<stack>/_proxy/callback`. Register the URIs of '
+            '`oidc_callback_urls`, not only this one. None for drafts.'
+        ),
+    )
+    oidc_callback_urls: list[str] | None = Field(
+        default=None,
+        description=(
+            'Every OIDC redirect URI to register at the identity provider before you switch the app to OIDC: the '
+            'callbacks of the custom domains (primary first, whatever their state), then the `.hub` one '
+            '(`https://<slug>-<app id>.hub.<stack>/_proxy/callback`). Register all of them. None for drafts.'
         ),
     )
     oidc_setup_required: bool = Field(
@@ -905,7 +924,7 @@ async def modify_streamlit_data_app(
     - After a create or update, ALWAYS call `deploy_data_app(action="deploy", configuration_id=...)`: without it a
     new app does not start and a running app keeps the previous code.
     - On update, `authentication_type='default'` keeps the existing auth (including OIDC set up elsewhere).
-    - **OIDC** (update only): first register the `oidc_callback_url` (returned on create) at the identity
+    - **OIDC** (update only): first register every URL in `oidc_callback_urls` at the identity
     provider, then update with `authentication_type='oidc'` and `oidc`. The user enters the client secret in the
     Keboola UI (see `change_summary` while `oidc_setup_required` is true); with `allowed_roles`, update with
     `'oidc'` once more after that. Deploy last.
@@ -1002,12 +1021,14 @@ async def modify_streamlit_data_app(
             )
             if _oidc_setup_required(written_authorization):
                 offer_url(_OIDC_SECRET_PAGE_MESSAGE, config_link)
+            callbacks = await _oidc_callbacks(client, data_app_pre.data_app_id, updated_config)
             return ModifiedDataAppOutput(
                 response=response,
                 change_summary='\n'.join(note for note in (folder_hint, oidc_hint) if note) or None,
                 data_app=DataAppSummary.model_validate(data_app.model_dump()),
                 links=links,
-                oidc_callback_url=await _oidc_callback_url(client, data_app_pre.data_app_id, updated_config),
+                oidc_callback_url=callbacks.url,
+                oidc_callback_urls=callbacks.urls,
                 oidc_setup_required=_oidc_setup_required(written_authorization),
             )
         except Exception:
@@ -1061,12 +1082,14 @@ async def modify_streamlit_data_app(
                 deployment_link=data_app_resp.url,
                 uses_basic_authentication=_uses_basic_authentication(validated_config.authorization),
             )
+            callbacks = await _oidc_callbacks(client, data_app_resp.id, config, lookup=False)
             return ModifiedDataAppOutput(
                 response='created',
                 change_summary=folder_hint,
                 data_app=DataAppSummary.from_api_response(data_app_resp, config_version),
                 links=links,
-                oidc_callback_url=await _oidc_callback_url(client, data_app_resp.id, config),
+                oidc_callback_url=callbacks.url,
+                oidc_callback_urls=callbacks.urls,
             )
         except Exception:
             LOG.exception(
@@ -1378,7 +1401,7 @@ async def modify_python_js_data_app(
     - **Customer GitHub repository**: pass `git_repository` with `git_auth='organization'` to deploy a prod
       app from the customer's repo. Code goes there through the user's own GitHub access; such an app has no
       managed repo, no git credential, no drafts and deploys in production mode only.
-    - **OIDC** (update of a prod app only): first register the `oidc_callback_url` (returned on create) at the
+    - **OIDC** (update of a prod app only): first register every URL in `oidc_callback_urls` at the
       identity provider, then update with `authentication_type='oidc'` and `oidc`. The user enters the client
       secret in the Keboola UI (see `change_summary` while `oidc_setup_required` is true); with
       `allowed_roles`, update with `'oidc'` once more after that. Deploy last.
@@ -1492,7 +1515,8 @@ async def modify_python_js_data_app(
             )
         data_app = fetched
         written_authorization = updated_config.get('authorization') or {}
-        oidc_callback_url = await _oidc_callback_url(client, data_app.data_app_id, updated_config)
+        callbacks = await _oidc_callbacks(client, data_app.data_app_id, updated_config)
+        oidc_callback_urls_text = ', '.join(callbacks.urls or [])
         # Without an explicit `slug`, a new slug is a never-deployed app's slug following its name.
         if new_slug is None:
             slug_hint = None
@@ -1500,8 +1524,8 @@ async def modify_python_js_data_app(
             # nothing moves now, but the agent has not yet seen the IdP warning.
             if slug and oidc_app:
                 slug_hint = (
-                    f"The URL slug is '{slug}'. The app uses OIDC login: register the callback URL "
-                    f'{oidc_callback_url} at the identity provider before you redeploy, or every login fails.'
+                    f"The URL slug is '{slug}'. The app uses OIDC login: register every callback URL "
+                    f'({oidc_callback_urls_text}) at the identity provider before you redeploy, or every login fails.'
                 )
         elif slug:
             slug_hint = (
@@ -1511,7 +1535,7 @@ async def modify_python_js_data_app(
             )
             if oidc_app:
                 slug_hint += (
-                    f' The app uses OIDC login: register the new callback URL {oidc_callback_url} at the '
+                    f' The app uses OIDC login: register every callback URL ({oidc_callback_urls_text}) at the '
                     'identity provider before you redeploy, or every login fails.'
                 )
         else:
@@ -1575,7 +1599,8 @@ async def modify_python_js_data_app(
             data_app=data_app_summary,
             repo_url=repo_url,
             links=links,
-            oidc_callback_url=oidc_callback_url,
+            oidc_callback_url=callbacks.url,
+            oidc_callback_urls=callbacks.urls,
             oidc_setup_required=_oidc_setup_required(written_authorization),
         )
     else:
@@ -1673,6 +1698,9 @@ async def modify_python_js_data_app(
             _organization_git_hint(git_block, rebound=False) if git_block is not None and git_block.auth_type else None
         )
         change_summary = '\n'.join(note for note in (repo_hint, folder_hint, organization_hint) if note) or None
+        callbacks = await _oidc_callbacks(
+            client, data_app_resp.id, config.model_dump(by_alias=True, exclude_none=True), lookup=False
+        )
         return ModifiedPythonJsDataAppOutput(
             response='created',
             change_summary=change_summary,
@@ -1680,9 +1708,8 @@ async def modify_python_js_data_app(
             repo_url=repo_url,
             branch=app_branch,
             links=links,
-            oidc_callback_url=await _oidc_callback_url(
-                client, data_app_resp.id, config.model_dump(by_alias=True, exclude_none=True)
-            ),
+            oidc_callback_url=callbacks.url,
+            oidc_callback_urls=callbacks.urls,
         )
 
 
@@ -3378,23 +3405,34 @@ def _app_url(client: KeboolaClient, data_app_id: str, configuration: Mapping[str
     return _hub_url(client, data_app_id, slug)
 
 
-async def _oidc_callback_url(client: KeboolaClient, data_app_id: str, configuration: Mapping[str, Any]) -> str | None:
-    """The OIDC redirect URI of a prod app; None for a draft (drafts cannot use OIDC) or without a slug.
+class _OidcCallbacks(NamedTuple):
+    url: str | None
+    urls: list[str] | None
 
-    A custom domain's callback URL wins. The sandboxes-service lists them before the `.hub` one, so a single
-    entry is the `.hub` URL of the app's current slug; the configuration's slug can be newer and then decides.
+
+async def _oidc_callbacks(
+    client: KeboolaClient, data_app_id: str, configuration: Mapping[str, Any], *, lookup: bool = True
+) -> _OidcCallbacks:
+    """The OIDC redirect URIs of a prod app; both None for a draft (no OIDC) or without a slug.
+
+    - `url`: the callback of the app's primary URL: the primary custom domain's, else the `.hub` one.
+    - `urls`: every callback to register: the custom domains' (primary first), then the `.hub` one.
+    - The `.hub` callback always comes from the configuration's slug: the API's one follows the pinned
+      config version, which is behind right after a slug change.
+    - The custom domains are best effort: any failure leaves the `.hub` callback alone.
+    - `lookup=False` skips the API call, for an app that has just been created and so has no domain.
     """
     slug = _config_slug(configuration)
     if not slug or _is_draft_config(configuration):
-        return None
-    try:
-        urls = await client.data_science_client.get_auth_callback_urls(data_app_id)
-    except Exception as e:
-        LOG.info(f'Custom-domain callback URLs of data app {data_app_id} are unavailable: {e!r}')
-        urls = []
-    if isinstance(urls, list) and len(urls) > 1 and isinstance(urls[0], str):
-        return urls[0]
-    return f'{_hub_url(client, data_app_id, slug)}/_proxy/callback'
+        return _OidcCallbacks(None, None)
+    hub = f'{_hub_url(client, data_app_id, slug)}/_proxy/callback'
+    custom = CustomDomainCallbacks()
+    if lookup:
+        try:
+            custom = await client.data_science_client.get_custom_domain_callbacks(data_app_id)
+        except Exception as e:
+            LOG.info(f'Custom-domain callback URLs of data app {data_app_id} are unavailable: {e!r}')
+    return _OidcCallbacks(custom.primary_url or hub, [*custom.urls, hub])
 
 
 _OIDC_SECRET_PAGE_MESSAGE = (
