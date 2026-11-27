@@ -2569,7 +2569,7 @@ Creates or updates a python-js data app.
 - **Customer GitHub repository**: pass `git_repository` with `git_auth='organization'` to deploy a prod
   app from the customer's repo. Code goes there through the user's own GitHub access; such an app has no
   managed repo, no git credential, no drafts and deploys in production mode only.
-- **OIDC** (update of a prod app only): first register the `oidc_callback_url` (returned on create) at the
+- **OIDC** (update of a prod app only): first register every URL in `oidc_callback_urls` (in the result of a create or update) at the
   identity provider, then update with `authentication_type='oidc'` and `oidc`. The user enters the client
   secret in the Keboola UI (see `change_summary` while `oidc_setup_required` is true); with
   `allowed_roles`, update with `'oidc'` once more after that. Deploy last.
@@ -2833,8 +2833,8 @@ the literal placeholder breaks the app.
 - After a create or update, ALWAYS call `deploy_data_app(action="deploy", configuration_id=...)`: without it a
 new app does not start and a running app keeps the previous code.
 - On update, `authentication_type='default'` keeps the existing auth (including OIDC set up elsewhere).
-- **OIDC** (update only): first register the `oidc_callback_url` (returned on create) at the identity
-provider, then update with `authentication_type='oidc'` and `oidc`. The user enters the client secret in the
+- **OIDC** (update only): first register every URL in `oidc_callback_urls` (in the result of a create or update) at the
+identity provider, then update with `authentication_type='oidc'` and `oidc`. The user enters the client secret in the
 Keboola UI (see `change_summary` while `oidc_setup_required` is true); with `allowed_roles`, update with
 `'oidc'` once more after that. Deploy last.
 

@@ -8,6 +8,7 @@ from mcp.server.session import ServerSession
 from keboola_mcp_server.clients.ai_service import AIServiceClient
 from keboola_mcp_server.clients.base import RawKeboolaClient
 from keboola_mcp_server.clients.client import KeboolaClient
+from keboola_mcp_server.clients.data_science import CustomDomainCallbacks
 from keboola_mcp_server.clients.jobs_queue import JobsQueueClient
 from keboola_mcp_server.clients.metastore import MetastoreClient
 from keboola_mcp_server.clients.scheduler import SchedulerClient
@@ -59,6 +60,9 @@ def keboola_client(mocker) -> KeboolaClient:
     client.storage_client.api_client = mocker.AsyncMock(RawKeboolaClient)
     client.jobs_queue_client.api_client = mocker.AsyncMock(RawKeboolaClient)
     client.ai_service_client.api_client = mocker.AsyncMock(RawKeboolaClient)
+
+    # No custom domains unless a test sets some.
+    client.data_science_client.get_custom_domain_callbacks = mocker.AsyncMock(return_value=CustomDomainCallbacks())
 
     return client
 

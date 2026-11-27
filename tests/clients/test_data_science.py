@@ -627,3 +627,90 @@ async def test_list_app_runs_filters_by_deployment() -> None:
     client.get.assert_awaited_once_with(
         endpoint='v2/apps/app-1/runs', params={'limit': 1, 'offset': 0, 'deploymentId': 'dep-2'}
     )
+
+
+_C1 = 'https://a.example.com/_proxy/callback'
+_C2 = 'https://b.example.com/_proxy/callback'
+_HUB = 'https://my-app-1.hub.test.keboola.com/_proxy/callback'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('response', 'expected_primary', 'expected_urls'),
+    [
+        # primary first, then the others; the .hub entry never comes from the API
+        (
+            {
+                'enabled': True,
+                'primaryDomain': 'b.example.com',
+                'items': [{'domain': 'a.example.com'}, {'domain': 'b.example.com'}],
+                'authCallbackUrls': [_C1, _C2, _HUB],
+            },
+            _C2,
+            [_C2, _C1],
+        ),
+        # a pending domain while .hub is primary
+        (
+            {
+                'enabled': True,
+                'primaryDomain': None,
+                'items': [{'domain': 'a.example.com'}],
+                'authCallbackUrls': [_C1, _HUB],
+            },
+            None,
+            [_C1],
+        ),
+        # the .hub entry was dropped by the API
+        (
+            {
+                'enabled': True,
+                'primaryDomain': 'a.example.com',
+                'items': [{'domain': 'a.example.com'}],
+                'authCallbackUrls': [_C1],
+            },
+            _C1,
+            [_C1],
+        ),
+        # callback path of the primary comes from the API
+        (
+            {
+                'enabled': True,
+                'primaryDomain': 'a.example.com',
+                'items': [{'domain': 'a.example.com'}],
+                'authCallbackUrls': ['https://a.example.com/other/callback'],
+            },
+            'https://a.example.com/other/callback',
+            ['https://a.example.com/other/callback'],
+        ),
+        # primary without a listed URL
+        ({'enabled': True, 'primaryDomain': 'a.example.com', 'items': [], 'authCallbackUrls': []}, _C1, [_C1]),
+        # stack switched off: the rows exist but do not serve
+        (
+            {
+                'enabled': False,
+                'primaryDomain': 'a.example.com',
+                'items': [{'domain': 'a.example.com'}],
+                'authCallbackUrls': [_C1, _HUB],
+            },
+            None,
+            [],
+        ),
+        ({'authCallbackUrls': [_C1]}, None, []),
+        ({'enabled': True, 'authCallbackUrls': 'oops', 'items': 3}, None, []),
+        ({'enabled': True, 'items': [{'domain': 'a.example.com'}, 5], 'authCallbackUrls': [_C1, 3, '']}, None, [_C1]),
+        ([], None, []),
+    ],
+)
+async def test_get_custom_domain_callbacks(response, expected_primary, expected_urls) -> None:
+    client = DataScienceClient.create('https://api.example.com', token=None)
+    client.get = AsyncMock(return_value=response)  # type: ignore[assignment]
+
+    result = await client.get_custom_domain_callbacks('app-123')
+
+    assert result.primary_url == expected_primary
+    assert result.urls == expected_urls
+    kwargs = client.get.await_args.kwargs
+    assert kwargs['endpoint'] == 'v2/apps/app-123/custom-domains'
+    assert kwargs['retry'] is False
+    assert kwargs['soft_errors'] is True
+    assert kwargs['timeout'].read == 5.0

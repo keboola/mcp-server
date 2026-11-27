@@ -580,6 +580,40 @@ class RuntimeResponse(BaseModel):
     )
 
 
+class CustomDomainCallbacks(BaseModel):
+    """The callback URLs of the custom domains of a data app, as `GET /v2/apps/{appId}/custom-domains` lists them."""
+
+    primary_url: str | None = Field(default=None, description='The callback URL of the primary domain, if any.')
+    urls: list[str] = Field(default_factory=list, description='Callback URLs of all custom domains, primary first.')
+
+    @classmethod
+    def from_response(cls, response: Any) -> 'CustomDomainCallbacks':
+        """Only custom-domain callbacks are taken: the `.hub` one is not read, and nothing while `enabled` is false."""
+        if not isinstance(response, dict) or response.get('enabled') is not True:
+            return cls()
+        items = response.get('items')
+        domains = {
+            item['domain'].lower()
+            for item in (items if isinstance(items, list) else [])
+            if isinstance(item, dict) and isinstance(item.get('domain'), str) and item['domain']
+        }
+        listed = response.get('authCallbackUrls')
+        urls = [
+            url
+            for url in (listed if isinstance(listed, list) else [])
+            if isinstance(url, str) and (urlsplit(url).hostname or '').lower() in domains
+        ]
+        primary = response.get('primaryDomain')
+        primary_url = None
+        if isinstance(primary, str) and primary:
+            primary_url = next(
+                (url for url in urls if (urlsplit(url).hostname or '').lower() == primary.lower()),
+                f'https://{primary.lower()}/_proxy/callback',
+            )
+            urls = [primary_url] + [url for url in urls if url != primary_url]
+        return cls(primary_url=primary_url, urls=urls)
+
+
 class DataScienceClient(KeboolaServiceClient):
     def __init__(self, raw_client: RawKeboolaClient, branch_id: str | None = None) -> None:
         """
@@ -629,6 +663,21 @@ class DataScienceClient(KeboolaServiceClient):
         """
         response = await self.get(endpoint=f'v2/apps/{data_app_id}')
         return DataAppResponse.model_validate(response)
+
+    async def get_custom_domain_callbacks(self, data_app_id: str) -> 'CustomDomainCallbacks':
+        """
+        Get the OAuth/OIDC callback URLs of the custom domains of a data app (best effort, no retries).
+
+        :param data_app_id: The ID of the data app
+        :return: The callbacks; empty while custom domains are off for the stack.
+        """
+        response = await self.get(
+            endpoint=f'v2/apps/{data_app_id}/custom-domains',
+            timeout=httpx.Timeout(connect=2.0, read=5.0, write=5.0, pool=2.0),
+            retry=False,
+            soft_errors=True,
+        )
+        return CustomDomainCallbacks.from_response(response)
 
     async def deploy_data_app(self, data_app_id: str, config_version: str) -> DeploymentResponse:
         """
