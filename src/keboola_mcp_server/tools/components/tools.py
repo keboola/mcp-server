@@ -86,6 +86,7 @@ from keboola_mcp_server.tools.components.utils import (
     get_sql_transformation_id_from_sql_dialect,
     list_configs_by_ids,
     list_configs_by_types,
+    normalize_runtime,
     set_cfg_creation_metadata,
     set_cfg_update_metadata,
     set_configuration_folder,
@@ -1132,6 +1133,7 @@ async def create_config(
         Field(
             description=(
                 'Runtime settings such as "parallelism" (parallel row processing) and backend configuration. '
+                '"parallelism" is a string from "2" to "100" (e.g. {"parallelism": "3"}). '
                 'Only provide if the component supports it.'
             ),
         ),
@@ -1210,7 +1212,7 @@ async def create_config(
         set_nested_value(configuration_payload, 'processors.after', processors_after)
 
     if runtime:
-        configuration_payload['runtime'] = runtime
+        configuration_payload['runtime'] = normalize_runtime(runtime)
 
     new_raw_configuration = cast(
         dict[str, Any],
@@ -1504,6 +1506,7 @@ async def update_config(
         Field(
             description=(
                 'Runtime settings such as "parallelism" (parallel row processing) and backend configuration. '
+                '"parallelism" is a string from "2" to "100" (e.g. {"parallelism": "3"}). '
                 'Only provide if updating runtime settings - this replaces the ENTIRE runtime configuration. '
                 'Leave unfilled to preserve the existing runtime configuration.'
             ),
@@ -1687,7 +1690,7 @@ async def update_config_internal(
         set_nested_value(configuration_payload, 'processors.after', processors_after)
 
     if runtime is not None:
-        configuration_payload['runtime'] = runtime
+        configuration_payload['runtime'] = normalize_runtime(runtime)
 
     if parameter_updates:
         current_params = configuration_payload.get('parameters', {})

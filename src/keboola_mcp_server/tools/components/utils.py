@@ -1085,6 +1085,33 @@ _DIRECTORY_UNSUITABLE_COMPONENTS_MESSAGES: Mapping[str, str] = {
 }
 
 
+_PARALLELISM_NUMBERS = frozenset(str(n) for n in range(101))
+
+
+def normalize_runtime(runtime: dict[str, Any] | None) -> dict[str, Any] | None:
+    """
+    Returns the runtime block with `parallelism` in the form the job queue accepts.
+
+    - The job queue accepts only the strings `'0'`-`'100'`, `'infinity'` or null; any other value
+      makes every job of the configuration fail at creation, long after the config is saved.
+    - An integer is converted to its string form.
+    :raises ValueError: If `parallelism` has any other value.
+    """
+    if not runtime or 'parallelism' not in runtime:
+        return runtime
+    parallelism = runtime['parallelism']
+    if isinstance(parallelism, int) and not isinstance(parallelism, bool):
+        parallelism = str(parallelism)
+    if parallelism is not None and not (
+        isinstance(parallelism, str) and (parallelism == 'infinity' or parallelism in _PARALLELISM_NUMBERS)
+    ):
+        raise ValueError(
+            f'Invalid "runtime.parallelism" value {runtime["parallelism"]!r}: use a string from "2" to "100" '
+            '(e.g. "3"), or null to run the configuration rows sequentially.'
+        )
+    return {**runtime, 'parallelism': parallelism}
+
+
 def check_suitable(tool_name: str, component_id: str, *, runtime: Mapping[str, Any] | None = None) -> None:
     """
     Checks if the general components tooling can be used with the given component.
