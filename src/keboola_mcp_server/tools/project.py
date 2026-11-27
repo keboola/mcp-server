@@ -45,7 +45,7 @@ from keboola_mcp_server.scope import (
     resolve_scope_binding_aad,
     resolve_scope_key,
 )
-from keboola_mcp_server.workspace import WorkspaceManager
+from keboola_mcp_server.workspace import RLS_FEATURE, RlsScopeUnavailableError, WorkspaceManager
 
 LOG = logging.getLogger(__name__)
 
@@ -193,6 +193,13 @@ def _get_toolset_restrictions(role: str) -> str | None:
     return None
 
 
+_ROW_LEVEL_SECURITY_DESCRIPTION = (
+    'Whether the project enforces row-level security. When true, the MCP server shows and queries only the tables '
+    'that a security policy grants to the current user. A table that no policy covers is not described and cannot '
+    'be queried, for administrators too. Policies are managed in Project settings > Data access.'
+)
+
+
 class ProjectInfo(BaseModel):
     project_id: str | int = Field(description='The id of the project.')
     project_name: str = Field(description='The name of the project.')
@@ -233,6 +240,10 @@ class ProjectInfo(BaseModel):
             'Describes any restrictions on the available toolset implied by the user role. '
             'None if no special restrictions apply.'
         ),
+    )
+    row_level_security: bool = Field(
+        default=False,
+        description=_ROW_LEVEL_SECURITY_DESCRIPTION,
     )
     llm_instruction: str = Field(
         description=(
@@ -308,6 +319,9 @@ async def get_project_info(
         sql_dialect, workspace_id = token_dialect, None
     project_features = cast(JsonDict, project_data.get('features', {}))
     conditional_flows = 'hide-conditional-flows' not in project_features
+    row_level_security = await _enforces_row_level_security(
+        workspace_manager, has_rls_feature=RLS_FEATURE in project_features, has_workspace=workspace_id is not None
+    )
     links = links_manager.get_project_links()
 
     branch_id, branch_name, is_development_branch = await _resolve_branch_context(client)
@@ -326,11 +340,30 @@ async def get_project_info(
         is_development_branch=is_development_branch,
         user_role=user_role,
         toolset_restrictions=_get_toolset_restrictions(user_role),
-        llm_instruction=get_project_system_prompt(sql_dialect, directory=is_directory_session()),
+        row_level_security=row_level_security,
+        llm_instruction=get_project_system_prompt(
+            sql_dialect, directory=is_directory_session(), row_level_security=row_level_security
+        ),
     )
 
     LOG.info('Returning unified project info.')
     return project_info
+
+
+async def _enforces_row_level_security(
+    workspace_manager: WorkspaceManager, *, has_rls_feature: bool, has_workspace: bool
+) -> bool:
+    """Whether the session reads through a governed workspace. When that cannot be resolved, the project feature
+    decides: it is safer to tell the model that tables may be hidden than to let it say they do not exist."""
+    if not has_rls_feature:
+        return False
+    if not has_workspace:
+        return True
+    try:
+        return await workspace_manager.is_governed()
+    except RlsScopeUnavailableError:
+        LOG.warning('Cannot resolve the governed state of the workspace, using the project feature.')
+        return True
 
 
 def _sql_dialect_from_token(token_data: JsonDict) -> str | None:
@@ -361,6 +394,14 @@ class AccessibleProject(BaseModel):
     )
     organization_id: str | None = Field(default=None, description='The ID of the organization this project belongs to.')
     organization_name: str | None = Field(default=None, description='The name of the organization, if known.')
+    row_level_security: bool | None = Field(
+        default=None,
+        description=(
+            'Whether the project has row-level security switched on (the project feature), None when unknown. '
+            'When true, the MCP server shows and queries only the tables that a security policy grants to the '
+            'current user, administrators included. Policies are managed in Project settings > Data access.'
+        ),
+    )
 
 
 class BaseInstructionGroup(BaseModel):
@@ -368,6 +409,9 @@ class BaseInstructionGroup(BaseModel):
 
     project_ids: list[int] = Field(description='The scoped projects these instructions apply to.')
     sql_dialect: str | None = Field(default=None, description='The SQL dialect these projects share.')
+    row_level_security: bool = Field(
+        default=False, description='Whether these projects have row-level security switched on.'
+    )
     instructions: str = Field(description='The base working instructions for projects of this dialect.')
 
 
@@ -390,7 +434,8 @@ class AccessibleProjects(BaseModel):
     base_instructions: list[BaseInstructionGroup] | None = Field(
         default=None,
         description=(
-            'The base working instructions, grouped by SQL dialect (deduplicated across projects). '
+            'The base working instructions, grouped by SQL dialect and row-level security (deduplicated across '
+            'projects). '
             'Only present when the tool is called with with_llm_instruction=true; request this once at the '
             'start of a conversation.'
         ),
@@ -456,9 +501,9 @@ async def _persist_kai_scope(ctx: Context, scope: SessionScope, client: KeboolaC
 
 async def _project_verify_info(
     server_state: ServerState, storage_api_url: str, subject_token: str, project_id: int
-) -> tuple[int, str | None, str | None, str | None]:
-    """Fetches one project's SQL dialect + organization (id, name) via a single token verify, the
-    parent token narrowed with X-KBC-ProjectId.
+) -> tuple[int, str | None, str | None, str | None, bool]:
+    """Fetches one project's SQL dialect, organization (id, name) and row-level security feature via a single
+    token verify, the parent token narrowed with X-KBC-ProjectId.
 
     No workspace is provisioned — the dialect comes from the token's owner.defaultBackend and the
     organization from the token's organization field, so this is one cheap Storage API call per
@@ -469,7 +514,8 @@ async def _project_verify_info(
     )
     token_data = await per_client.storage_client.verify_token()
     org_id, org_name = _organization_from_token(token_data)
-    return project_id, _sql_dialect_from_token(token_data), org_id, org_name
+    features = cast(JsonDict, token_data.get('owner', {})).get('features') or []
+    return project_id, _sql_dialect_from_token(token_data), org_id, org_name, RLS_FEATURE in features
 
 
 @tool_errors()
@@ -509,7 +555,7 @@ async def get_accessible_projects(
     # Enrich each project with its SQL dialect + organization (concurrently). Best-effort: a project
     # whose verify fails simply keeps these fields None rather than failing the whole listing.
     server_state = ServerState.from_context(ctx)
-    verify_info: dict[int, tuple[str | None, str | None, str | None]] = {}
+    verify_info: dict[int, tuple[str | None, str | None, str | None, bool | None]] = {}
     results = await process_concurrently(
         [p.id for p in introspection.projects],
         lambda pid: _project_verify_info(server_state, client.storage_api_url, subject_token, pid),
@@ -520,12 +566,12 @@ async def get_accessible_projects(
         if isinstance(result, BaseException):
             LOG.warning(f'Could not resolve SQL dialect/organization for a project: {result}', exc_info=result)
             continue
-        pid, dialect, org_id, org_name = result
-        verify_info[pid] = (dialect, org_id, org_name)
+        pid, dialect, org_id, org_name, row_level_security = result
+        verify_info[pid] = (dialect, org_id, org_name, row_level_security)
 
     projects = []
     for p in introspection.projects:
-        dialect, org_id, org_name = verify_info.get(p.id, (None, None, None))
+        dialect, org_id, org_name, row_level_security = verify_info.get(p.id, (None, None, None, None))
         projects.append(
             AccessibleProject(
                 id=p.id,
@@ -535,6 +581,7 @@ async def get_accessible_projects(
                 sql_dialect=dialect,
                 organization_id=org_id,
                 organization_name=org_name,
+                row_level_security=row_level_security,
             )
         )
 
@@ -543,18 +590,21 @@ async def get_accessible_projects(
     base_instructions: list[BaseInstructionGroup] | None = None
     if with_llm_instruction:
         directory = is_directory_session()
-        by_dialect: dict[str | None, list[int]] = {}
+        by_variant: dict[tuple[str | None, bool], list[int]] = {}
         for p in projects:
-            by_dialect.setdefault(p.sql_dialect, []).append(p.id)
+            by_variant.setdefault((p.sql_dialect, bool(p.row_level_security)), []).append(p.id)
         base_instructions = [
             BaseInstructionGroup(
                 project_ids=ids,
                 sql_dialect=dialect,
+                row_level_security=row_level_security,
                 # No/unknown dialect -> pass '' so the prompt omits dialect-specific guidance rather
                 # than defaulting to Snowflake (which would mislead a BigQuery/unknown project).
-                instructions=get_project_system_prompt(dialect or '', directory=directory),
+                instructions=get_project_system_prompt(
+                    dialect or '', directory=directory, row_level_security=row_level_security
+                ),
             )
-            for dialect, ids in by_dialect.items()
+            for (dialect, row_level_security), ids in by_variant.items()
         ]
 
     if scoped_ids is None:

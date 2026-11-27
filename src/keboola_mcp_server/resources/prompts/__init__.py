@@ -125,10 +125,17 @@ def directory_variant(text: str, *, directory: bool) -> str:
     return _DIRECTORY_BLOCK.sub('', text)
 
 
-def get_project_system_prompt(sql_dialect: str = '', *, directory: bool = False) -> str:
+def get_project_system_prompt(
+    sql_dialect: str = '', *, directory: bool = False, row_level_security: bool = False
+) -> str:
     """:param directory: The session has the directory tool profile (ChatGPT plugin): the variant that names only the
-    tools it has."""
-    base = directory_variant(load_prompt('project_system_prompt.md'), directory=directory)
-    if not sql_dialect:
-        return base
-    return _build_dialect_section(sql_dialect) + '\n\n---\n\n' + base
+    tools it has.
+    :param row_level_security: The project enforces row-level security: adds the section that explains hidden
+    tables."""
+    sections = []
+    if sql_dialect:
+        sections.append(_build_dialect_section(sql_dialect))
+    if row_level_security:
+        sections.append(load_prompt('row_level_security_prompt.md').rstrip('\n'))
+    sections.append(directory_variant(load_prompt('project_system_prompt.md'), directory=directory))
+    return '\n\n---\n\n'.join(sections)
