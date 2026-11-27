@@ -4967,6 +4967,9 @@ HOW IT WORKS:
 - scopes (config-based) narrow matching to specific JSONPath areas within configurations; matching is performed
   against the stringified JSON node content in those areas.
 - config-based always returns all matched paths per item in `match_scopes` (including matched patterns)
+- in a project with row-level security, `tables_hidden_by_policy` lists the IDs of matching tables that exist but
+  no security policy grants to the current user; tell the user that a project administrator can grant them in
+  Project settings > Data access
 
 IMPORTANT:
 - Always use this tool when the user mentions a name but you don't have the exact ID
@@ -5757,6 +5760,9 @@ RETURNS:
 - With `table_ids` and `include_usage`: Full details plus components / transformations that use the tables
   in their input / output mappings. Use only when explicitly needed or evident from context; usage calculation
   might be demanding in big projects.
+- `tables_hidden_by_policy`: In a project with row-level security, tables that exist but no security policy
+  grants to the current user. Only their IDs are shown. Tell the user that a project administrator can grant
+  them in Project settings > Data access.
 
 COLUMN DATA TYPES:
 - database_native_type: The actual type in the storage backend (Snowflake, BigQuery, etc.)

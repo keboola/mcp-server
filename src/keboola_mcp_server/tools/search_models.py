@@ -20,6 +20,7 @@ from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.storage import ItemType as ApiItemType
 from keboola_mcp_server.links import Link
 from keboola_mcp_server.tools.components.utils import _normalize_jsonpath
+from keboola_mcp_server.workspace import TABLES_HIDDEN_BY_POLICY_DESCRIPTION
 
 LOG = logging.getLogger(__name__)
 
@@ -191,6 +192,11 @@ class SearchOutput(BaseModel):
         description="Branch scope the hits come from. 'all-branches' means nothing was found in the current "
         "branch context and the search was widened to the whole project; check each hit's branch_id/branch_name "
         'to see where it lives.',
+    )
+    tables_hidden_by_policy: list[str] | None = Field(
+        default=None,
+        description=f'{TABLES_HIDDEN_BY_POLICY_DESCRIPTION} Only tables whose ID or name matches the search are '
+        'listed; this list is not paginated and not counted in `total` or `by_type`.',
     )
 
 
