@@ -712,4 +712,5 @@ async def test_get_custom_domain_callbacks(response, expected_primary, expected_
     kwargs = client.get.await_args.kwargs
     assert kwargs['endpoint'] == 'v2/apps/app-123/custom-domains'
     assert kwargs['retry'] is False
+    assert kwargs['soft_errors'] is True
     assert kwargs['timeout'].read == 5.0

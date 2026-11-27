@@ -1119,9 +1119,6 @@ async def test_modify_streamlit_data_app_folder(
             return_value=mocker.MagicMock(authorization={'app_proxy': {'auth_providers': [], 'auth_rules': []}}),
         )
         keboola_client.data_science_client = mocker.AsyncMock()
-        keboola_client.data_science_client.get_custom_domain_callbacks = mocker.AsyncMock(
-            return_value=CustomDomainCallbacks()
-        )
         keboola_client.data_science_client.create_data_app = mocker.AsyncMock(return_value=data_app_response)
 
     mocker.patch(
@@ -1228,9 +1225,6 @@ async def test_modify_streamlit_data_app_partial_success_when_response_building_
             return_value=mocker.MagicMock(authorization={'app_proxy': {'auth_providers': [], 'auth_rules': []}}),
         )
         keboola_client.data_science_client = mocker.AsyncMock()
-        keboola_client.data_science_client.get_custom_domain_callbacks = mocker.AsyncMock(
-            return_value=CustomDomainCallbacks()
-        )
         keboola_client.data_science_client.create_data_app = mocker.AsyncMock(
             return_value=_make_data_app_response(config_id='new-cfg-1')
         )
@@ -1477,9 +1471,6 @@ async def test_modify_python_js_data_app_create_prod_derives_or_honors_slug(
     clean DNS-label-safe slug (AI-3634)."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
-    keboola_client.data_science_client.get_custom_domain_callbacks = mocker.AsyncMock(
-        return_value=CustomDomainCallbacks()
-    )
     workspace_manager.get_data_app_branch_id = mocker.AsyncMock(return_value='branch-1')
 
     keboola_client.data_science_client.create_data_app = mocker.AsyncMock(
@@ -1692,9 +1683,6 @@ async def test_modify_python_js_data_app_create_calls_full_provisioning_chain(
     credential creation is now a separate tool — not exercised here."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
-    keboola_client.data_science_client.get_custom_domain_callbacks = mocker.AsyncMock(
-        return_value=CustomDomainCallbacks()
-    )
 
     workspace_manager.get_data_app_branch_id = mocker.AsyncMock(return_value='branch-1')
 
@@ -1725,6 +1713,8 @@ async def test_modify_python_js_data_app_create_calls_full_provisioning_chain(
     assert result.repo_url == 'https://managed.repo/org/app.git'
     assert result.data_app.repo_url == 'https://managed.repo/org/app.git'
     assert result.data_app.type == 'python-js'
+    keboola_client.data_science_client.get_custom_domain_callbacks.assert_not_awaited()
+    assert result.oidc_callback_urls == [result.oidc_callback_url]
 
     # Verify the create payload was python-js + managed repo
     create_kwargs = keboola_client.data_science_client.create_data_app.await_args.kwargs
@@ -1775,9 +1765,6 @@ async def test_modify_python_js_data_app_create_authentication_type(
     which is skipped here to check that the create path never makes the app public by mistake."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
-    keboola_client.data_science_client.get_custom_domain_callbacks = mocker.AsyncMock(
-        return_value=CustomDomainCallbacks()
-    )
 
     workspace_manager.get_data_app_branch_id = mocker.AsyncMock(return_value='branch-1')
 
@@ -1919,9 +1906,6 @@ async def test_modify_python_js_data_app_oidc_rejected(
 ) -> None:
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
-    keboola_client.data_science_client.get_custom_domain_callbacks = mocker.AsyncMock(
-        return_value=CustomDomainCallbacks()
-    )
     workspace_manager.get_data_app_branch_id = mocker.AsyncMock(return_value='branch-1')
     data_app_block: dict = {'slug': 'old-slug'}
     if target_is_draft:
@@ -1979,9 +1963,6 @@ async def test_modify_streamlit_data_app_oidc_rejected(
 ) -> None:
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
-    keboola_client.data_science_client.get_custom_domain_callbacks = mocker.AsyncMock(
-        return_value=CustomDomainCallbacks()
-    )
     keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value={})
     fetch = mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock())
 
@@ -2026,6 +2007,7 @@ def _assert_oidc_output(
     assert [(p['id'], p['type'], p['client_id']) for p in providers] == [('oidc-1', 'oidc', 'c')]
     assert result.oidc_setup_required is expect_setup_required
     assert result.oidc_callback_url == callback_url
+    assert result.oidc_callback_urls == [callback_url]
     summary = result.change_summary or ''
     for phrase in expected_phrases:
         assert phrase in summary
@@ -2112,9 +2094,6 @@ async def test_modify_streamlit_data_app_create_returns_callback_url(
     mocker, mcp_context_client: Context, streamlit_client: KeboolaClient
 ) -> None:
     streamlit_client.data_science_client = mocker.AsyncMock()
-    streamlit_client.data_science_client.get_custom_domain_callbacks = mocker.AsyncMock(
-        return_value=CustomDomainCallbacks()
-    )
     streamlit_client.data_science_client.create_data_app = mocker.AsyncMock(
         return_value=_make_data_app_response(data_app_id='app-1', config_id='cfg-1')
     )
@@ -2432,9 +2411,6 @@ async def test_modify_python_js_data_app_create_storage_access(
     `WORKSPACE_ID` secret, so it never resolves its own workspace for the app."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
-    keboola_client.data_science_client.get_custom_domain_callbacks = mocker.AsyncMock(
-        return_value=CustomDomainCallbacks()
-    )
 
     workspace_manager.get_data_app_workspace_id = mocker.AsyncMock(return_value='wid-mcp')
 
@@ -2596,9 +2572,6 @@ async def test_modify_python_js_data_app_create_passes_storage_through(
     """Create path forwards a caller-supplied `storage` block (with direct-grant) into the DSAPI payload."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
-    keboola_client.data_science_client.get_custom_domain_callbacks = mocker.AsyncMock(
-        return_value=CustomDomainCallbacks()
-    )
 
     workspace_manager.get_data_app_branch_id = mocker.AsyncMock(return_value='branch-1')
 
@@ -2647,9 +2620,6 @@ async def test_modify_python_js_data_app_create_omits_empty_storage(
     """Create path never persists an empty `storage` block (it collapses to `[]` server-side, AI-3135)."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
-    keboola_client.data_science_client.get_custom_domain_callbacks = mocker.AsyncMock(
-        return_value=CustomDomainCallbacks()
-    )
 
     workspace_manager.get_data_app_branch_id = mocker.AsyncMock(return_value='branch-1')
 
@@ -3466,9 +3436,6 @@ async def test_modify_python_js_data_app_create_prod_calls_get_app_git_repo_for_
     repo read or metadata write still reports it created, so a retry cannot duplicate it."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
-    keboola_client.data_science_client.get_custom_domain_callbacks = mocker.AsyncMock(
-        return_value=CustomDomainCallbacks()
-    )
     workspace_manager.get_data_app_branch_id = mocker.AsyncMock(return_value='branch-1')
 
     keboola_client.data_science_client.create_data_app = mocker.AsyncMock(
@@ -3517,9 +3484,6 @@ async def test_create_python_js_data_app_git_credential_happy_path(
     one-time secret into a ready-to-use HTTPS clone URL."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
-    keboola_client.data_science_client.get_custom_domain_callbacks = mocker.AsyncMock(
-        return_value=CustomDomainCallbacks()
-    )
 
     pyjs_app = DataApp(
         name='my-app',
@@ -3578,9 +3542,6 @@ async def test_create_python_js_data_app_git_credential_url_encodes_secret(
     """Secrets containing URL-reserved characters must be percent-encoded in `git_clone_url`."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
-    keboola_client.data_science_client.get_custom_domain_callbacks = mocker.AsyncMock(
-        return_value=CustomDomainCallbacks()
-    )
 
     pyjs_app = DataApp(
         name='my-app',
@@ -3630,9 +3591,6 @@ async def test_create_python_js_data_app_git_credential_rejects_streamlit_app(
     """Streamlit apps have no managed git repo — must raise a clear ValueError."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
-    keboola_client.data_science_client.get_custom_domain_callbacks = mocker.AsyncMock(
-        return_value=CustomDomainCallbacks()
-    )
 
     streamlit_app = DataApp(
         name='streamlit-app',
@@ -3667,9 +3625,6 @@ async def test_create_python_js_data_app_git_credential_rejects_draft(
     misleading https_url=None 'platform bug' error."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
-    keboola_client.data_science_client.get_custom_domain_callbacks = mocker.AsyncMock(
-        return_value=CustomDomainCallbacks()
-    )
 
     draft = _make_python_js_draft_data_app(
         configuration_id='cfg-draft-1', data_app_id='app-draft-1', parent_configuration_id='cfg-prod-1'
@@ -3696,9 +3651,6 @@ async def test_create_python_js_data_app_git_credential_invalid_configuration_id
     """Regression smoke test: _fetch_data_app's component_id validation still surfaces through the new tool."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
-    keboola_client.data_science_client.get_custom_domain_callbacks = mocker.AsyncMock(
-        return_value=CustomDomainCallbacks()
-    )
 
     # Simulate a configuration_id that resolves to a non-data-app component_id, mirroring how
     # _fetch_data_app raises today.
@@ -4637,9 +4589,6 @@ async def test_deploy_data_app_turns_a_conflict_into_guidance(
 ) -> None:
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
-    keboola_client.data_science_client.get_custom_domain_callbacks = mocker.AsyncMock(
-        return_value=CustomDomainCallbacks()
-    )
     keboola_client.data_science_client.deploy_data_app.side_effect = _http_error(409, error)
     keboola_client.data_science_client.suspend_data_app.side_effect = _http_error(409, error)
     app = DataApp(
@@ -4665,9 +4614,6 @@ async def test_deploy_data_app_turns_a_conflict_into_guidance(
 async def test_deploy_data_app_stop_leaves_a_suspended_app_alone(mocker, mcp_context_client: Context) -> None:
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
-    keboola_client.data_science_client.get_custom_domain_callbacks = mocker.AsyncMock(
-        return_value=CustomDomainCallbacks()
-    )
     app = DataApp(
         name='app',
         component_id=DATA_APP_COMPONENT_ID,
@@ -4737,9 +4683,6 @@ async def test_modify_python_js_data_app_create_prod_on_organization_repo(
     encrypted and no git-repo lookup or credential mint happens."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
-    keboola_client.data_science_client.get_custom_domain_callbacks = mocker.AsyncMock(
-        return_value=CustomDomainCallbacks()
-    )
     keboola_client.encryption_client = mocker.AsyncMock()
     workspace_manager.get_data_app_branch_id = mocker.AsyncMock(return_value='branch-1')
     keboola_client.data_science_client.create_data_app = mocker.AsyncMock(
@@ -4804,9 +4747,6 @@ async def test_modify_python_js_data_app_create_rejects_invalid_git_repository_a
 ) -> None:
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
-    keboola_client.data_science_client.get_custom_domain_callbacks = mocker.AsyncMock(
-        return_value=CustomDomainCallbacks()
-    )
 
     with pytest.raises(ValueError, match=error_match):
         await modify_python_js_data_app(ctx=mcp_context_client, name='Sales', description='', **kwargs)
@@ -4917,9 +4857,6 @@ async def test_deploy_data_app_refuses_dev_mode_and_legacy_drafts(
     """Dev mode and legacy drafts are refused up front: no config version lookup and no deploy call."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
-    keboola_client.data_science_client.get_custom_domain_callbacks = mocker.AsyncMock(
-        return_value=CustomDomainCallbacks()
-    )
     data_app = _preview_app(app_kind)
     mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=data_app))
 
@@ -4941,9 +4878,6 @@ async def test_deploy_data_app_switches_organization_git_app_to_production(
     so an external-repo app once deployed in dev mode would otherwise be refused for organization auth."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
-    keboola_client.data_science_client.get_custom_domain_callbacks = mocker.AsyncMock(
-        return_value=CustomDomainCallbacks()
-    )
     mocker.patch(
         'keboola_mcp_server.tools.data_apps._fetch_data_app',
         mocker.AsyncMock(return_value=_make_organization_git_data_app()),
@@ -5002,9 +4936,6 @@ async def test_deploy_data_app_maps_organization_git_errors(
 ) -> None:
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
-    keboola_client.data_science_client.get_custom_domain_callbacks = mocker.AsyncMock(
-        return_value=CustomDomainCallbacks()
-    )
     error = _http_error(status, _sandboxes_error(status, api_error))
     # An organization-auth app deploys through the mode endpoint, any other app through /v2 deployments.
     keboola_client.data_science_client.deploy_data_app_in_mode.side_effect = error
@@ -5084,9 +5015,6 @@ def _mock_customer_repo(
     """The data science client of a prod app on a customer GitHub repo; `configuration` overrides the app's."""
     keboola_client = KeboolaClient.from_state(ctx.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
-    keboola_client.data_science_client.get_custom_domain_callbacks = mocker.AsyncMock(
-        return_value=CustomDomainCallbacks()
-    )
     app = _make_organization_git_data_app()
     if configuration is not None:
         app.configuration = configuration
@@ -5496,9 +5424,6 @@ async def test_draft_tools_refuse_a_draft_id_that_is_not_one(
     """A draft id lands in the request path: `..` would reach the prod app itself, so only a UUID passes."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
-    keboola_client.data_science_client.get_custom_domain_callbacks = mocker.AsyncMock(
-        return_value=CustomDomainCallbacks()
-    )
     fetch = mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock())
     call = delete_python_js_data_app_draft if tool == 'delete' else get_data_app_preview_link
 
@@ -5593,9 +5518,6 @@ async def test_oidc_callbacks(
 async def test_oidc_callbacks_api_calls(
     keboola_client: KeboolaClient, mocker, configuration, lookup, expected_calls
 ) -> None:
-    keboola_client.data_science_client.get_custom_domain_callbacks = mocker.AsyncMock(
-        return_value=CustomDomainCallbacks()
-    )
 
     result = await _oidc_callbacks(keboola_client, 'app-1', configuration, lookup=lookup)
 

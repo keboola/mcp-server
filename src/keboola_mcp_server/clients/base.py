@@ -122,10 +122,13 @@ class RawKeboolaClient:
         return RetryTransport(retry=self._retry)
 
     @staticmethod
-    def _raise_for_status(response: httpx.Response) -> None:
+    def _raise_for_status(response: httpx.Response, soft_errors: bool = False) -> None:
         """
         Checks the HTTP response status code and raises an exception with a detailed message. The message will
         include "error" and "exceptionId" fields if they are present in the response.
+
+        :param soft_errors: For a best-effort call whose caller falls back on failure: a 404 is logged at DEBUG,
+            any other error at WARNING.
         """
         try:
             response.raise_for_status()
@@ -137,6 +140,8 @@ class RawKeboolaClient:
                 # 4xx (not found, access denied, invalid token) is the caller's/data problem and is
                 # routine -- only a 5xx is this deployment's problem worth ERROR-level alerting.
                 log = LOG.error if response.status_code >= HTTPStatus.INTERNAL_SERVER_ERROR else LOG.warning
+                if soft_errors:
+                    log = LOG.debug if response.status_code == HTTPStatus.NOT_FOUND else LOG.warning
                 log(
                     f'API error data: {error_data}',
                     extra={
@@ -193,6 +198,7 @@ class RawKeboolaClient:
         headers: dict[str, Any] | None = None,
         timeout: httpx.Timeout | None = None,
         retry: bool = True,
+        soft_errors: bool = False,
     ) -> JsonStruct:
         """
         Makes a GET request to the service API.
@@ -202,6 +208,7 @@ class RawKeboolaClient:
         :param headers: Additional headers for the request
         :param timeout: Optional per-call timeout override; falls back to the client default when None
         :param retry: Whether to apply the retry policy (timeouts, 429/5xx, 409); see `_create_transport`
+        :param soft_errors: Log a 404 at DEBUG and other errors at WARNING; see `_raise_for_status`
         :return: API response as dictionary
         """
         headers = self.headers | (headers or {})
@@ -213,7 +220,7 @@ class RawKeboolaClient:
                 params=params,
                 headers=headers,
             )
-            self._raise_for_status(response)
+            self._raise_for_status(response, soft_errors=soft_errors)
             return cast(JsonStruct, response.json())
 
     async def get_text(
@@ -391,6 +398,7 @@ class KeboolaServiceClient:
         params: dict[str, Any] | None = None,
         timeout: httpx.Timeout | None = None,
         retry: bool = True,
+        soft_errors: bool = False,
     ) -> JsonStruct:
         """
         Makes a GET request to the service API.
@@ -399,6 +407,7 @@ class KeboolaServiceClient:
         :param params: Query parameters for the request
         :param timeout: Optional per-call timeout override; falls back to the client default when None
         :param retry: Whether to apply the retry policy; False for a best-effort call
+        :param soft_errors: Log a 404 at DEBUG and other errors at WARNING; for a best-effort call
         :return: API response as dictionary
         """
         # Forwarded only when overridden, so the default call to the raw client stays the plain one.
@@ -407,6 +416,8 @@ class KeboolaServiceClient:
             extra['timeout'] = timeout
         if not retry:
             extra['retry'] = False
+        if soft_errors:
+            extra['soft_errors'] = True
         return await self.raw_client.get(endpoint=endpoint, params=params, **extra)
 
     async def get_text(

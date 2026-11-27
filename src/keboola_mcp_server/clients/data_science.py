@@ -675,6 +675,7 @@ class DataScienceClient(KeboolaServiceClient):
             endpoint=f'v2/apps/{data_app_id}/custom-domains',
             timeout=httpx.Timeout(connect=2.0, read=5.0, write=5.0, pool=2.0),
             retry=False,
+            soft_errors=True,
         )
         return CustomDomainCallbacks.from_response(response)
 

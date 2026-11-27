@@ -1,6 +1,9 @@
+import logging
+
+import httpx
 import pytest
 
-from keboola_mcp_server.clients.base import normalize_storage_api_url
+from keboola_mcp_server.clients.base import RawKeboolaClient, normalize_storage_api_url
 
 
 class TestNormalizeStorageApiUrl:
@@ -52,3 +55,22 @@ class TestNormalizeStorageApiUrl:
     def test_rejects_lookalike_or_foreign_hosts(self, url: str) -> None:
         with pytest.raises(ValueError, match='Invalid Keboola Storage API URL'):
             normalize_storage_api_url(url)
+
+
+@pytest.mark.parametrize(
+    ('status', 'soft_errors', 'expected_level'),
+    [
+        (404, False, logging.WARNING),
+        (503, False, logging.ERROR),
+        (404, True, logging.DEBUG),
+        (403, True, logging.WARNING),
+        (503, True, logging.WARNING),
+    ],
+)
+def test_raise_for_status_log_level(caplog, status: int, soft_errors: bool, expected_level: int) -> None:
+    response = httpx.Response(status, json={'error': 'x'}, request=httpx.Request('GET', 'https://a.example/x'))
+
+    with caplog.at_level(logging.DEBUG), pytest.raises(httpx.HTTPStatusError):
+        RawKeboolaClient._raise_for_status(response, soft_errors=soft_errors)
+
+    assert [r.levelno for r in caplog.records if 'API error data' in r.getMessage()] == [expected_level]
