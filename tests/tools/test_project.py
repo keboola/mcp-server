@@ -36,6 +36,7 @@ from keboola_mcp_server.tools.project import (
     ProjectInfo,
     _get_toolset_restrictions,
     _parent_subject_token,
+    _project_verify_info,
     _resolve_branch_context,
     create_project,
     get_accessible_projects,
@@ -43,7 +44,7 @@ from keboola_mcp_server.tools.project import (
     set_project_scope,
     update_project_description,
 )
-from keboola_mcp_server.workspace import WorkspaceManager
+from keboola_mcp_server.workspace import RlsScopeUnavailableError, WorkspaceManager
 
 STACK = 'https://connection.test.keboola.com'
 
@@ -240,6 +241,7 @@ async def test_get_project_info(
     assert result.branch_id == expected_branch_id
     assert result.branch_name == expected_branch_name
     assert result.is_development_branch is expected_is_dev
+    assert result.row_level_security is False
 
     if restriction_is_none:
         assert result.toolset_restrictions is None
@@ -247,6 +249,58 @@ async def test_get_project_info(
         assert result.toolset_restrictions is not None
         for substring in expected_restriction_substrings:
             assert substring in result.toolset_restrictions
+
+
+@pytest.mark.parametrize(
+    ('features', 'workspace_available', 'is_governed', 'expected'),
+    [
+        # without the feature the workspace is not asked
+        ([], True, None, False),
+        (['row-level-security'], True, True, True),
+        # the feature is on but Query Service says the workspace is not governed
+        (['row-level-security'], True, False, False),
+        # the governed state cannot be resolved: the feature decides
+        (['row-level-security'], True, RlsScopeUnavailableError(), True),
+        (['row-level-security'], False, None, True),
+    ],
+)
+@pytest.mark.asyncio
+async def test_get_project_info_row_level_security(
+    mocker: MockerFixture,
+    mcp_context_client: Context,
+    features: list[str],
+    workspace_available: bool,
+    is_governed: bool | Exception | None,
+    expected: bool,
+) -> None:
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.storage_client.verify_token = mocker.AsyncMock(
+        return_value={'owner': {'id': 'proj-123', 'name': 'P', 'defaultBackend': 'snowflake', 'features': features}}
+    )
+    keboola_client.storage_client.branch_metadata_get = mocker.AsyncMock(return_value=[])
+    keboola_client.storage_client.branches_list = mocker.AsyncMock(return_value=[_DEFAULT_BRANCH])
+    mocker.patch(
+        'keboola_mcp_server.tools.project.ProjectLinksManager.from_client',
+        new=mocker.AsyncMock(return_value=mocker.Mock(get_project_links=mocker.Mock(return_value=[]))),
+    )
+    workspace_manager = WorkspaceManager.from_state(mcp_context_client.session.state)
+    if workspace_available:
+        workspace_manager.get_sql_dialect = mocker.AsyncMock(return_value='Snowflake')
+    else:
+        workspace_manager.get_sql_dialect = mocker.AsyncMock(side_effect=InvalidArgumentError('no component access'))
+    workspace_manager.get_workspace_id = mocker.AsyncMock(return_value=789)
+    if isinstance(is_governed, Exception):
+        workspace_manager.is_governed = mocker.AsyncMock(side_effect=is_governed)
+    else:
+        workspace_manager.is_governed = mocker.AsyncMock(return_value=is_governed)
+
+    result = await get_project_info(mcp_context_client)
+
+    assert result.row_level_security is expected
+    assert result.llm_instruction == get_project_system_prompt('Snowflake', row_level_security=expected)
+    assert ('### Row-Level Security' in result.llm_instruction) is expected
+    if is_governed is None:
+        workspace_manager.is_governed.assert_not_called()
 
 
 @pytest.mark.parametrize(
@@ -388,7 +442,7 @@ async def test_get_accessible_projects(mcp_context_client: Context, mocker: Mock
         'keboola_mcp_server.tools.project.ServerState.from_context',
         return_value=SimpleNamespace(config=Config(), runtime_info=ServerRuntimeInfo(transport='stdio')),
     )
-    verify_info = {18: ('BigQuery', 'org-1', 'Org One'), 83: ('Snowflake', 'org-2', 'Org Two')}
+    verify_info = {18: ('BigQuery', 'org-1', 'Org One', True), 83: ('Snowflake', 'org-2', 'Org Two', False)}
     mocker.patch(
         'keboola_mcp_server.tools.project._project_verify_info',
         new=mocker.AsyncMock(side_effect=lambda _ss, _url, _tok, pid: (pid, *verify_info[pid])),
@@ -399,9 +453,12 @@ async def test_get_accessible_projects(mcp_context_client: Context, mocker: Mock
 
     introspect.assert_awaited_once_with(STACK, subject_token='kbc_at_parent')
     assert result.user_email == 'm@k.com'
-    assert [(p.id, p.name, p.role, p.sql_dialect, p.organization_id, p.organization_name) for p in result.projects] == [
-        (18, 'A', 'admin', 'BigQuery', 'org-1', 'Org One'),
-        (83, 'B', 'admin', 'Snowflake', 'org-2', 'Org Two'),
+    assert [
+        (p.id, p.name, p.role, p.sql_dialect, p.organization_id, p.organization_name, p.row_level_security)
+        for p in result.projects
+    ] == [
+        (18, 'A', 'admin', 'BigQuery', 'org-1', 'Org One', True),
+        (83, 'B', 'admin', 'Snowflake', 'org-2', 'Org Two', False),
     ]
     assert result.scoped_project_ids is None
     assert result.read_only is None
@@ -434,19 +491,25 @@ async def test_get_accessible_projects_llm_instructions_grouped_by_dialect(
     )
     mocker.patch('keboola_mcp_server.tools.project.introspect_token', new=mocker.AsyncMock(return_value=introspection))
     mocker.patch('keboola_mcp_server.tools.project.ServerState.from_context', return_value=mocker.Mock())
-    dialects = {18: 'BigQuery', 86: 'BigQuery', 95: 'Snowflake'}
+    variants = {18: ('BigQuery', False), 86: ('BigQuery', False), 95: ('Snowflake', False), 97: ('Snowflake', True)}
+    introspection.projects.append(SimpleNamespace(id=97, name='D', role='admin'))
     mocker.patch(
         'keboola_mcp_server.tools.project._project_verify_info',
-        new=mocker.AsyncMock(side_effect=lambda _ss, _url, _tok, pid: (pid, dialects[pid], None, None)),
+        new=mocker.AsyncMock(
+            side_effect=lambda _ss, _url, _tok, pid: (pid, variants[pid][0], None, None, variants[pid][1])
+        ),
     )
 
     result = await get_accessible_projects(mcp_context_client, with_llm_instruction=True)
 
     assert result.base_instructions is not None
-    # One group per distinct dialect, projects deduplicated into their dialect group (no per-project copies).
-    groups = {g.sql_dialect: g.project_ids for g in result.base_instructions}
-    assert groups == {'BigQuery': [18, 86], 'Snowflake': [95]}
-    assert all(g.instructions for g in result.base_instructions)
+    # One group per distinct dialect and row-level security, projects deduplicated into their group.
+    groups = {(g.sql_dialect, g.row_level_security): g.project_ids for g in result.base_instructions}
+    assert groups == {('BigQuery', False): [18, 86], ('Snowflake', False): [95], ('Snowflake', True): [97]}
+    for group in result.base_instructions:
+        assert group.instructions == get_project_system_prompt(
+            group.sql_dialect, row_level_security=group.row_level_security
+        )
 
 
 @pytest.mark.parametrize('directory', [False, True])
@@ -464,7 +527,7 @@ async def test_get_accessible_projects_unknown_dialect_omits_snowflake_guidance(
     mocker.patch('keboola_mcp_server.tools.project.ServerState.from_context', return_value=mocker.Mock())
     mocker.patch(
         'keboola_mcp_server.tools.project._project_verify_info',
-        new=mocker.AsyncMock(side_effect=lambda _ss, _url, _tok, pid: (pid, None, None, None)),
+        new=mocker.AsyncMock(side_effect=lambda _ss, _url, _tok, pid: (pid, None, None, None, False)),
     )
 
     mocker.patch('keboola_mcp_server.tools.project.is_directory_session', return_value=directory)
@@ -478,6 +541,27 @@ async def test_get_accessible_projects_unknown_dialect_omits_snowflake_guidance(
     # gets the variant that names only its tools.
     assert group.instructions == get_project_system_prompt('', directory=directory)
     assert group.instructions != get_project_system_prompt('Snowflake', directory=directory)
+
+
+@pytest.mark.parametrize(('features', 'expected'), [(['row-level-security'], True), ([], False)])
+@pytest.mark.asyncio
+async def test_project_verify_info(mocker: MockerFixture, features: list[str], expected: bool) -> None:
+    per_client = mocker.Mock()
+    per_client.storage_client.verify_token = mocker.AsyncMock(
+        return_value={'owner': {'defaultBackend': 'bigquery', 'features': features}, 'organization': {'id': 7}}
+    )
+    mocker.patch(
+        'keboola_mcp_server.tools.project.MultiProjectMiddleware.client_for_project',
+        new=mocker.AsyncMock(return_value=per_client),
+    )
+
+    assert await _project_verify_info(mocker.Mock(), STACK, 'kbc_at_parent', 42) == (
+        42,
+        'BigQuery',
+        '7',
+        None,
+        expected,
+    )
 
 
 @pytest.mark.asyncio
