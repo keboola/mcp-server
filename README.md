@@ -178,7 +178,12 @@ refuses, `query_data` returns as an error.
   governed tables.
 - **Metadata.** The metadata tools show only what the Query Service lets the reader read. `get_tables` and `search`
   (which then does not use the global search, as its counts include the hidden tables) leave out a table the reader may
-  not read, and `get_tables` reports one that was asked for by ID as not found; a table with a column policy shows only
+  not read. For an administrator's own token (the `verify_token` response has an `admin` object), they list the IDs of
+  such tables in `tables_hidden_by_policy`: `get_tables` the hidden tables asked for by ID or in the asked buckets,
+  `search` the hidden tables whose ID or name matches (never their columns or descriptions). The same token lists these
+  tables through the Storage API anyway, and the field tells the agent that a security policy in Project settings >
+  Data access is missing. For any other token `get_tables` reports a hidden table asked for by ID as not found, as no
+  policy can grant it to a reader that is not identified. A table with a column policy shows only
   the columns of the policy (also in its primary key and in what `search` matches). A readable table is shown without
   its number of rows and its size, which count the rows that a row policy hides. `get_buckets` still lists every bucket,
   but without the number of tables and the size, which count the hidden tables. This needs the Query Service endpoint

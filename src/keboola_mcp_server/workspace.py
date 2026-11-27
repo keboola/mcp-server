@@ -36,6 +36,13 @@ _RLS_SCOPE_MAX_TABLES = 100
 _RLS_SCOPE_MAX_CONCURRENCY = 5
 _RLS_TABLE_KEY_RE = re.compile(r'[A-Za-z0-9_.\-]+\.[A-Za-z0-9_\-]+')
 
+TABLES_HIDDEN_BY_POLICY_DESCRIPTION = (
+    'IDs of tables that exist but are hidden by security policies: the project enforces row-level security and no '
+    'security policy grants these tables to the current user, so the MCP server cannot describe or query them. Tell '
+    'the user that such a table exists and that a project administrator can grant access to it with a security '
+    'policy in Project settings > Data access. There is no other way to read it.'
+)
+
 
 class RlsScopeUnavailableError(ToolError):
     """Query Service could not say which tables of a governed workspace the reader may read. The message is the one

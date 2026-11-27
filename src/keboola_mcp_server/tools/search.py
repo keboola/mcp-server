@@ -20,7 +20,7 @@ from keboola_mcp_server.clients.client import (
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
-from keboola_mcp_server.mcp import ToonCompactFunctionTool
+from keboola_mcp_server.mcp import ToonCompactFunctionTool, is_admin_own_token
 from keboola_mcp_server.tools.components.utils import get_nested
 from keboola_mcp_server.tools.search_global import _global_textual_search
 from keboola_mcp_server.tools.search_models import (
@@ -159,12 +159,17 @@ def _limit_raw_columns(table: JsonDict, allowed: Sequence[str] | None) -> JsonDi
 
 
 async def _fetch_tables(
-    client: KeboolaClient, spec: SearchSpec, workspace_manager: WorkspaceManager | None = None
+    client: KeboolaClient,
+    spec: SearchSpec,
+    workspace_manager: WorkspaceManager | None = None,
+    hidden_matches: list[str] | None = None,
 ) -> list[SearchHit]:
     """Fetches and filters tables from all buckets.
 
     :param workspace_manager: Set for a project that enforces row-level security: only the tables that Query Service
         lets the reader read are searched, and only in the columns of their column policy.
+    :param hidden_matches: Gets the IDs of the tables that the reader may not read and whose ID or name matches,
+        when the token is an administrator's own token. Columns and descriptions of such a table are never matched.
     """
     bucket_ids = {bucket_id for bucket in await merged_bucket_list(client) if (bucket_id := bucket.get('id'))}
     raw_tables = [
@@ -179,12 +184,18 @@ async def _fetch_tables(
             [prod_storage_id(table['id'], client.branch_id) for table in raw_tables]
         )
 
+    report_hidden: bool | None = None  # resolved only when a table is hidden, as it needs a token check
     hits = []
     for table in raw_tables:
         table_id = table['id']
         if scope is not None:
             prod_id = prod_storage_id(table_id, client.branch_id)
             if not scope.is_readable(prod_id):
+                if hidden_matches is not None:
+                    if report_hidden is None:
+                        report_hidden = await is_admin_own_token(client)
+                    if report_hidden and spec.match_texts([table_id, table.get('name'), table.get('displayName')]):
+                        hidden_matches.append(table_id)
                 continue
             table = _limit_raw_columns(table, scope.visible_columns(prod_id))
 
@@ -436,6 +447,9 @@ async def search(
     - scopes (config-based) narrow matching to specific JSONPath areas within configurations; matching is performed
       against the stringified JSON node content in those areas.
     - config-based always returns all matched paths per item in `match_scopes` (including matched patterns)
+    - in a project with row-level security, `tables_hidden_by_policy` lists the IDs of matching tables that exist but
+      no security policy grants to the current user; tell the user that a project administrator can grant them in
+      Project settings > Data access
 
     IMPORTANT:
     - Always use this tool when the user mentions a name but you don't have the exact ID
@@ -604,12 +618,13 @@ async def _enumeration_search(
     # Fetch items concurrently based on requested types
     tasks = []
     all_hits: list[SearchHit] = []
+    hidden_matches: list[str] | None = [] if workspace_manager else None
 
     if not types_to_fetch or 'bucket' in types_to_fetch:
         tasks.append(_fetch_buckets(client, spec))
 
     if not types_to_fetch or 'table' in types_to_fetch:
-        tasks.append(_fetch_tables(client, spec, workspace_manager))
+        tasks.append(_fetch_tables(client, spec, workspace_manager, hidden_matches))
 
     if not types_to_fetch or types_to_fetch & {
         'configuration',
@@ -659,6 +674,7 @@ async def _enumeration_search(
         total=len(all_hits),
         by_type=dict(by_type),
         branch_scope='current-branch',
+        tables_hidden_by_policy=sorted(hidden_matches) if hidden_matches else None,
     )
 
 

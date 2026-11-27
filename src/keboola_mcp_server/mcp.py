@@ -11,7 +11,7 @@ import dataclasses
 import inspect
 import logging
 import textwrap
-from collections.abc import Awaitable, Callable, Iterable, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from contextvars import ContextVar
 from http import HTTPStatus
 from typing import Any, TypeVar, cast
@@ -135,6 +135,16 @@ WORKSPACE_SCOPE = 'workspace_scope'
 def is_strict_workspace_scope(state: Any) -> bool:
     """Whether the session state belongs to a session with `X-Workspace-Scope: strict`."""
     return isinstance(state, dict) and state.get(WORKSPACE_SCOPE) == WORKSPACE_SCOPE_STRICT
+
+
+async def is_admin_own_token(client: KeboolaClient) -> bool:
+    """Whether the Storage token of the session is an administrator's own token, i.e. it names a user of the project.
+    An integration, data app or Kai token has no `admin` object."""
+    token_info = TOKEN_INFO_VAR.get(None)
+    if not isinstance(token_info, Mapping):
+        token_info = await client.storage_client.verify_token()
+    admin = token_info.get('admin')
+    return isinstance(admin, Mapping) and bool(admin)
 
 
 # The project the current request runs against, stamped on every log record (see

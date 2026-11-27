@@ -34,6 +34,12 @@ _USERS = 'in.c-foo.users'  # the primary key of the table is `user_id`
 _EMAILS = 'in.c-foo.emails'  # the primary key of the table is `email_id`
 
 
+def _use_token(ctx: Context, admin_token: bool) -> None:
+    """An administrator's own token names a user of the project; an integration, data app or Kai token does not."""
+    token_info = {'owner': {'id': 69420}} | ({'admin': {'id': 7, 'role': 'admin'}} if admin_token else {})
+    KeboolaClient.from_state(ctx.session.state).storage_client.verify_token.return_value = token_info
+
+
 @pytest.fixture
 def keboola_client_in_branch_free_project(mocker: MockerFixture, mcp_context_client: Context) -> KeboolaClient:
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
@@ -41,6 +47,7 @@ def keboola_client_in_branch_free_project(mocker: MockerFixture, mcp_context_cli
     keboola_client.has_feature = mocker.AsyncMock(return_value=False)
     keboola_client.storage_client.bucket_detail = mocker.AsyncMock(side_effect=_bucket_detail_side_effect)
     keboola_client.storage_client.table_list = mocker.AsyncMock(side_effect=_table_list_side_effect)
+    _use_token(mcp_context_client, admin_token=False)
     return keboola_client
 
 
@@ -84,23 +91,38 @@ async def test_get_tables_listing_shows_only_the_readable_tables_and_their_key_c
     assert result.tables_not_found is None
 
 
+@pytest.mark.parametrize(('admin_token', 'expected_hidden'), [(True, [_USERS]), (False, None)])
 @pytest.mark.asyncio
 async def test_get_tables_listing_hides_a_table_that_the_reader_may_not_read(
-    mcp_context_client: Context, keboola_client_in_branch_free_project: KeboolaClient
+    mcp_context_client: Context,
+    keboola_client_in_branch_free_project: KeboolaClient,
+    admin_token: bool,
+    expected_hidden: list[str] | None,
 ) -> None:
+    _use_token(mcp_context_client, admin_token)
     manager = _workspace_manager(mcp_context_client)
     manager.get_rls_scope.return_value = RlsScope(readable={_EMAILS: None})
 
     result = await get_tables(mcp_context_client, ['in.c-foo'])
 
     assert [t.id for t in result.tables] == [_EMAILS]
-    assert result.tables_not_found is None, 'a hidden table of a listing is simply not there'
+    assert result.tables_not_found is None, 'a hidden table of a listing is never reported as not found'
+    assert result.tables_hidden_by_policy == expected_hidden, 'only an administrator learns that it is hidden'
 
 
+@pytest.mark.parametrize(
+    ('admin_token', 'expected_not_found', 'expected_hidden'), [(True, None, [_EMAILS]), (False, [_EMAILS], None)]
+)
 @pytest.mark.asyncio
-async def test_get_tables_by_id_reports_a_hidden_table_as_not_found_and_limits_the_columns(
-    mocker: MockerFixture, mcp_context_client: Context, keboola_client_in_branch_free_project: KeboolaClient
+async def test_get_tables_by_id_reports_a_hidden_table_and_limits_the_columns(
+    mocker: MockerFixture,
+    mcp_context_client: Context,
+    keboola_client_in_branch_free_project: KeboolaClient,
+    admin_token: bool,
+    expected_not_found: list[str] | None,
+    expected_hidden: list[str] | None,
 ) -> None:
+    _use_token(mcp_context_client, admin_token)
     details = {
         _USERS: _detail(_USERS, ['user_id', 'name', 'salary'], ['user_id']),
         _EMAILS: _detail(_EMAILS, ['email_id', 'address'], ['email_id']),
@@ -120,13 +142,20 @@ async def test_get_tables_by_id_reports_a_hidden_table_as_not_found_and_limits_t
     assert [c.name for c in users.columns or []] == ['user_id', 'name']
     assert users.primary_key == ['user_id']
     assert (users.rows_count, users.data_size_bytes) == (None, None), 'the counts include the hidden rows'
-    assert result.tables_not_found == [_EMAILS], 'a hidden table looks like a table that does not exist'
+    # for a token without an identified reader a hidden table looks like a table that does not exist
+    assert result.tables_not_found == expected_not_found
+    assert result.tables_hidden_by_policy == expected_hidden
 
 
+@pytest.mark.parametrize('admin_token', [True, False])
 @pytest.mark.asyncio
 async def test_get_tables_by_branch_id_reports_a_hidden_table_under_the_requested_id(
-    mocker: MockerFixture, mcp_context_client: Context, keboola_client_in_branch_free_project: KeboolaClient
+    mocker: MockerFixture,
+    mcp_context_client: Context,
+    keboola_client_in_branch_free_project: KeboolaClient,
+    admin_token: bool,
 ) -> None:
+    _use_token(mcp_context_client, admin_token)
     branch_id = 'in.c-123-foo.emails'  # the table is returned under its production id `in.c-foo.emails`
     mocker.patch(
         'keboola_mcp_server.tools.storage.tools._get_table',
@@ -139,7 +168,8 @@ async def test_get_tables_by_branch_id_reports_a_hidden_table_under_the_requeste
     result = await get_tables(mcp_context_client, table_ids=[branch_id])
 
     assert result.tables == []
-    assert result.tables_not_found == [branch_id], 'a hidden table is reported as the caller asked for it'
+    reported = result.tables_hidden_by_policy if admin_token else result.tables_not_found
+    assert reported == [branch_id], 'a hidden table is reported as the caller asked for it'
 
 
 @pytest.mark.asyncio
@@ -155,6 +185,8 @@ async def test_get_tables_of_an_ungoverned_project_is_unchanged(
     assert all(isinstance(t, TableSummary) for t in result.tables)
     assert result.tables[0].primary_key == ['user_id']
     assert [(t.rows_count, t.data_size_bytes) for t in result.tables] == [(10, 10240), (33, 332211)]
+    assert result.tables_hidden_by_policy is None
+    keboola_client_in_branch_free_project.storage_client.verify_token.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -258,6 +290,7 @@ def searchable_project(mocker: MockerFixture, mcp_context_client: Context) -> Ke
     keboola_client.storage_client.table_list = mocker.AsyncMock(return_value=_search_tables())
     keboola_client.storage_client.component_list = mocker.AsyncMock(return_value=[])
     keboola_client.storage_client.workspace_list = mocker.AsyncMock(return_value=[])
+    _use_token(mcp_context_client, admin_token=False)
     return keboola_client
 
 
@@ -265,10 +298,12 @@ async def _search_tables_by(ctx: Context, *patterns: str) -> SearchOutput:
     return await search(ctx, patterns=list(patterns), item_types=(cast(SearchItemType, 'table'),), limit=20, offset=0)
 
 
+@pytest.mark.parametrize('admin_token', [True, False])
 @pytest.mark.asyncio
 async def test_search_of_a_governed_project_hides_tables_and_columns_and_skips_the_global_search(
-    mocker: MockerFixture, mcp_context_client: Context, searchable_project: KeboolaClient
+    mocker: MockerFixture, mcp_context_client: Context, searchable_project: KeboolaClient, admin_token: bool
 ) -> None:
+    _use_token(mcp_context_client, admin_token)
     global_search = mocker.patch.object(search_module, '_global_textual_search', mocker.AsyncMock())
     manager = _workspace_manager(mcp_context_client)
     manager.is_governed.return_value = True
@@ -283,6 +318,9 @@ async def test_search_of_a_governed_project_hides_tables_and_columns_and_skips_t
     assert [(h.table_id, h.item_type) for h in by_name.hits] == [('in.c-foo.users', 'table')]
     assert by_name.total == 1 and by_name.by_type == {'table': 1}, 'the totals do not count the hidden tables'
     assert by_hidden_column.hits == [] and by_hidden_column.total == 0
+    # an administrator learns the id of a hidden table that matches by name, never one that matches by a column
+    assert by_name.tables_hidden_by_policy == (['in.c-foo.hidden_users'] if admin_token else None)
+    assert by_hidden_column.tables_hidden_by_policy is None
 
 
 @pytest.mark.parametrize(
@@ -348,6 +386,7 @@ async def test_get_tables_on_a_development_branch_asks_for_the_production_ids(
     keboola_client.has_feature = mocker.AsyncMock(return_value=False)
     keboola_client.storage_client.bucket_detail = mocker.AsyncMock(side_effect=_bucket_detail_side_effect)
     keboola_client.storage_client.table_list = mocker.AsyncMock(side_effect=_table_list_side_effect)
+    _use_token(mcp_context_client, admin_token=False)
     manager = _workspace_manager(mcp_context_client)
     manager.get_rls_scope.return_value = RlsScope(readable={})
 

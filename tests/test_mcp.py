@@ -48,6 +48,7 @@ from keboola_mcp_server.mcp import (
     _filter_toon_nulls,
     _is_unauthorized,
     install_project_id_log_field,
+    is_admin_own_token,
     is_strict_workspace_scope,
     process_concurrently,
     toon_serializer,
@@ -3233,3 +3234,29 @@ def test_function_tool_keeps_whole_docstring(tool_cls: type) -> None:
     description = tool_cls.from_function(my_tool).description
 
     assert description == 'Does a thing.\n\nEXAMPLES:\n- do it'
+
+
+@pytest.mark.parametrize(
+    ('token_info', 'expected'),
+    [
+        ({'owner': {'id': 1}, 'admin': {'id': 10, 'role': 'admin'}}, True),
+        ({'owner': {'id': 1}, 'admin': {'id': 10, 'role': 'readOnly'}}, True),
+        # an integration, data app or Kai token names no user of the project
+        ({'owner': {'id': 1}}, False),
+        ({'owner': {'id': 1}, 'admin': {}}, False),
+        ({'owner': {'id': 1}, 'admin': None}, False),
+    ],
+)
+@pytest.mark.parametrize('published_by_middleware', [True, False])
+@pytest.mark.asyncio
+async def test_is_admin_own_token(
+    keboola_client: KeboolaClient, token_info: dict[str, Any], expected: bool, published_by_middleware: bool
+) -> None:
+    keboola_client.storage_client.verify_token = AsyncMock(return_value=token_info)
+    token = TOKEN_INFO_VAR.set(token_info if published_by_middleware else None)
+    try:
+        assert await is_admin_own_token(keboola_client) is expected
+    finally:
+        TOKEN_INFO_VAR.reset(token)
+
+    assert keboola_client.storage_client.verify_token.await_count == (0 if published_by_middleware else 1)

@@ -19,6 +19,7 @@ from keboola_mcp_server.mcp import (
     KeboolaMcpServer,
     ToonCompactFunctionTool,
     ToonFunctionTool,
+    is_admin_own_token,
     process_concurrently,
     unwrap_results,
 )
@@ -38,7 +39,7 @@ from keboola_mcp_server.tools.storage_helpers import (
     prod_storage_id,
 )
 from keboola_mcp_server.utils import parse_iso_timestamp
-from keboola_mcp_server.workspace import WorkspaceManager
+from keboola_mcp_server.workspace import TABLES_HIDDEN_BY_POLICY_DESCRIPTION, WorkspaceManager
 
 LOG = logging.getLogger(__name__)
 
@@ -444,6 +445,7 @@ class GetTablesOutput(BaseModel):
     )
     links: list[Link] = Field(description='Links relevant to the table listing.')
     tables_not_found: list[str] | None = Field(default=None, description='List of table IDs that were not found.')
+    tables_hidden_by_policy: list[str] | None = Field(default=None, description=TABLES_HIDDEN_BY_POLICY_DESCRIPTION)
 
     def pack_links(self) -> 'GetTablesOutput':
         """Move links from particular table objects to GetTablesOutput object to optimize TOON serialization."""
@@ -700,6 +702,9 @@ async def get_tables(
     - With `table_ids` and `include_usage`: Full details plus components / transformations that use the tables
       in their input / output mappings. Use only when explicitly needed or evident from context; usage calculation
       might be demanding in big projects.
+    - `tables_hidden_by_policy`: In a project with row-level security, tables that exist but no security policy
+      grants to the current user. Only their IDs are shown. Tell the user that a project administrator can grant
+      them in Project settings > Data access.
 
     COLUMN DATA TYPES:
     - database_native_type: The actual type in the storage backend (Snowflake, BigQuery, etc.)
@@ -756,15 +761,21 @@ async def get_tables(
                 missing_ids.append(table_detail_or_id)
 
     # A governed project shows only what Query Service lets the reader read, with the columns of its column policy.
-    # A table that is hidden is reported exactly as a table that does not exist.
+    # An administrator learns which tables are hidden (by ID only), as the same token lists them through the Storage
+    # API anyway. Any other token has no identified reader that a policy could grant, so for it a hidden table is
+    # reported exactly as a table that does not exist.
+    hidden_ids: list[str] = []
     if tables_by_id and (scope := await workspace_manager.get_rls_scope(list(tables_by_id))) is not None:
-        for table_id in list(tables_by_id):
-            if scope.is_readable(table_id):
-                tables_by_id[table_id] = _limit_to_policy(tables_by_id[table_id], scope.visible_columns(table_id))
-            else:
-                del tables_by_id[table_id]
-                if table_id in requested_as:
-                    missing_ids.append(requested_as[table_id])
+        hidden_table_ids = [table_id for table_id in tables_by_id if not scope.is_readable(table_id)]
+        report_hidden = bool(hidden_table_ids) and await is_admin_own_token(client)
+        for table_id in hidden_table_ids:
+            del tables_by_id[table_id]
+            if report_hidden:
+                hidden_ids.append(requested_as.get(table_id, table_id))
+            elif table_id in requested_as:
+                missing_ids.append(requested_as[table_id])
+        for table_id, table in tables_by_id.items():
+            tables_by_id[table_id] = _limit_to_policy(table, scope.visible_columns(table_id))
 
     # Add the component usage to the table detail
     if table_ids and include_usage:
@@ -790,6 +801,7 @@ async def get_tables(
     return GetTablesOutput(
         tables=list(tables_by_id.values()),
         tables_not_found=missing_ids if missing_ids else None,
+        tables_hidden_by_policy=hidden_ids if hidden_ids else None,
         links=[links_manager.get_bucket_dashboard_link()],
     ).pack_links()
 
