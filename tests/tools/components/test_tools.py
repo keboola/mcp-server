@@ -1611,6 +1611,23 @@ async def test_add_config_row(
         pytest.param(
             None,
             None,
+            {'parallelism': 3},
+            {
+                'parameters': {
+                    'api_key': 'old_api_key',
+                    'database': {'host': 'old_host', 'port': 5432},
+                    'deprecated_field': 'old_value',
+                    'existing_param': 'existing_value',
+                },
+                'storage': {'input': {'tables': ['existing_table']}},
+                'other_field': 'should_be_preserved',
+                'runtime': {'parallelism': '3'},
+            },
+            id='runtime_integer_parallelism_is_stringified',
+        ),
+        pytest.param(
+            None,
+            None,
             None,
             {
                 'parameters': {

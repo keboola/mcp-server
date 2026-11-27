@@ -398,7 +398,7 @@ EXAMPLES:
         }
       ],
       "default": null,
-      "description": "Runtime settings such as \"parallelism\" (parallel row processing) and backend configuration. Only provide if the component supports it."
+      "description": "Runtime settings such as \"parallelism\" (parallel row processing) and backend configuration. \"parallelism\" is a string from \"2\" to \"100\" (e.g. {\"parallelism\": \"3\"}). Only provide if the component supports it."
     },
     "project_id": {
       "anyOf": [
@@ -1181,7 +1181,7 @@ WORKFLOW:
         }
       ],
       "default": null,
-      "description": "Runtime settings such as \"parallelism\" (parallel row processing) and backend configuration. Only provide if updating runtime settings - this replaces the ENTIRE runtime configuration. Leave unfilled to preserve the existing runtime configuration."
+      "description": "Runtime settings such as \"parallelism\" (parallel row processing) and backend configuration. \"parallelism\" is a string from \"2\" to \"100\" (e.g. {\"parallelism\": \"3\"}). Only provide if updating runtime settings - this replaces the ENTIRE runtime configuration. Leave unfilled to preserve the existing runtime configuration."
     },
     "project_id": {
       "anyOf": [

@@ -34,6 +34,7 @@ from keboola_mcp_server.tools.components.utils import (
     create_transformation_configuration,
     expand_component_types,
     get_config_folders,
+    normalize_runtime,
     set_nested_value,
     structure_summary,
     update_params,
@@ -1501,3 +1502,26 @@ async def test_apply_configuration_folder_sets_folder(
             folder=expected_saved,
         )
     client.storage_client.configuration_list.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ('runtime', 'expected'),
+    [
+        ({'parallelism': 3, 'backend': {'type': 'large'}}, {'parallelism': '3', 'backend': {'type': 'large'}}),
+        ({'parallelism': '3'}, {'parallelism': '3'}),
+        ({'parallelism': 'infinity'}, {'parallelism': 'infinity'}),
+        ({'parallelism': None}, {'parallelism': None}),
+        ({'backend': {'type': 'large'}}, {'backend': {'type': 'large'}}),
+        ({}, {}),
+        (None, None),
+    ],
+    ids=['int_stringified', 'string', 'infinity', 'null', 'no_parallelism', 'empty', 'none'],
+)
+def test_normalize_runtime(runtime: dict[str, Any] | None, expected: dict[str, Any] | None) -> None:
+    assert normalize_runtime(runtime) == expected
+
+
+@pytest.mark.parametrize('parallelism', [True, 3.0, 101, '101', 'auto', [3]])
+def test_normalize_runtime_rejects_invalid_parallelism(parallelism: Any) -> None:
+    with pytest.raises(ValueError, match='Invalid "runtime.parallelism" value'):
+        normalize_runtime({'parallelism': parallelism})
