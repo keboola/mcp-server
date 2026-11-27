@@ -630,6 +630,17 @@ class DataScienceClient(KeboolaServiceClient):
         response = await self.get(endpoint=f'v2/apps/{data_app_id}')
         return DataAppResponse.model_validate(response)
 
+    async def get_auth_callback_urls(self, data_app_id: str) -> list[str]:
+        """
+        Get the OAuth/OIDC callback URLs of a data app: one per custom domain, then the `.hub` one.
+
+        :param data_app_id: The ID of the data app
+        :return: The callback URLs; empty when the response carries none.
+        """
+        response = await self.get(endpoint=f'v2/apps/{data_app_id}/custom-domains')
+        urls = response.get('authCallbackUrls') if isinstance(response, dict) else None
+        return [url for url in urls if isinstance(url, str) and url] if isinstance(urls, list) else []
+
     async def deploy_data_app(self, data_app_id: str, config_version: str) -> DeploymentResponse:
         """
         Deploy a data app: create a deployment of the given config version and promote it to production.

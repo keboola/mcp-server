@@ -47,6 +47,7 @@ from keboola_mcp_server.tools.data_apps import (
     _get_secrets,
     _inject_query_to_source_code,
     _legacy_draft_convert_message,
+    _oidc_callback_url,
     _oidc_setup_required,
     _prune_empty_storage_objects,
     _resolve_app_image,
@@ -5409,3 +5410,39 @@ async def test_draft_tools_refuse_a_draft_id_that_is_not_one(
     fetch.assert_not_called()
     keboola_client.data_science_client.delete_draft.assert_not_called()
     keboola_client.data_science_client.create_draft_preview_link.assert_not_called()
+
+
+_CUSTOM_CALLBACK = 'https://apps.example.com/_proxy/callback'
+_HUB_CALLBACK = 'https://my-app-app-1.hub.test.keboola.com/_proxy/callback'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('api_result', 'api_error', 'expected'),
+    [
+        ([_CUSTOM_CALLBACK, _HUB_CALLBACK], None, _CUSTOM_CALLBACK),
+        ([_HUB_CALLBACK], None, _HUB_CALLBACK),
+        ([], None, _HUB_CALLBACK),
+        (None, httpx.HTTPStatusError('404', request=MagicMock(), response=MagicMock(status_code=404)), _HUB_CALLBACK),
+        (None, httpx.HTTPStatusError('503', request=MagicMock(), response=MagicMock(status_code=503)), _HUB_CALLBACK),
+        (None, httpx.ConnectError('down'), _HUB_CALLBACK),
+    ],
+)
+async def test_oidc_callback_url_prefers_custom_domain(
+    keboola_client: KeboolaClient, mocker, api_result, api_error, expected: str
+) -> None:
+    keboola_client.data_science_client.get_auth_callback_urls = mocker.AsyncMock(
+        return_value=api_result, side_effect=api_error
+    )
+    configuration = {'parameters': {'dataApp': {'slug': 'my-app'}}}
+
+    assert await _oidc_callback_url(keboola_client, 'app-1', configuration) == expected
+
+
+@pytest.mark.asyncio
+async def test_oidc_callback_url_skips_the_api_for_a_draft(keboola_client: KeboolaClient, mocker) -> None:
+    keboola_client.data_science_client.get_auth_callback_urls = mocker.AsyncMock()
+    configuration = {'parameters': {'dataApp': {'slug': 'my-app', 'isDraft': True}}}
+
+    assert await _oidc_callback_url(keboola_client, 'app-1', configuration) is None
+    keboola_client.data_science_client.get_auth_callback_urls.assert_not_awaited()

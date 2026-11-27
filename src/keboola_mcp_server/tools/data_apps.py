@@ -673,8 +673,8 @@ class ModifiedDataAppOutput(BaseModel):
     oidc_callback_url: str | None = Field(
         default=None,
         description=(
-            'The OIDC redirect URI of the app (`https://<slug>-<app id>.hub.<stack>/_proxy/callback`). Register it '
-            'at the identity provider before you switch the app to OIDC. None for drafts.'
+            'The OIDC redirect URI of the app (`https://<slug>-<app id>.hub.<stack>/_proxy/callback`, or the one of the custom '
+            'domain when the app has one). Register it at the identity provider before you switch the app to OIDC. None for drafts.'
         ),
     )
     oidc_setup_required: bool = Field(
@@ -695,8 +695,8 @@ class ModifiedPythonJsDataAppOutput(BaseModel):
     oidc_callback_url: str | None = Field(
         default=None,
         description=(
-            'The OIDC redirect URI of the app (`https://<slug>-<app id>.hub.<stack>/_proxy/callback`). Register it '
-            'at the identity provider before you switch the app to OIDC. None for drafts.'
+            'The OIDC redirect URI of the app (`https://<slug>-<app id>.hub.<stack>/_proxy/callback`, or the one of the custom '
+            'domain when the app has one). Register it at the identity provider before you switch the app to OIDC. None for drafts.'
         ),
     )
     oidc_setup_required: bool = Field(
@@ -1007,7 +1007,7 @@ async def modify_streamlit_data_app(
                 change_summary='\n'.join(note for note in (folder_hint, oidc_hint) if note) or None,
                 data_app=DataAppSummary.model_validate(data_app.model_dump()),
                 links=links,
-                oidc_callback_url=_oidc_callback_url(client, data_app_pre.data_app_id, updated_config),
+                oidc_callback_url=await _oidc_callback_url(client, data_app_pre.data_app_id, updated_config),
                 oidc_setup_required=_oidc_setup_required(written_authorization),
             )
         except Exception:
@@ -1066,7 +1066,7 @@ async def modify_streamlit_data_app(
                 change_summary=folder_hint,
                 data_app=DataAppSummary.from_api_response(data_app_resp, config_version),
                 links=links,
-                oidc_callback_url=_oidc_callback_url(client, data_app_resp.id, config),
+                oidc_callback_url=await _oidc_callback_url(client, data_app_resp.id, config),
             )
         except Exception:
             LOG.exception(
@@ -1492,7 +1492,7 @@ async def modify_python_js_data_app(
             )
         data_app = fetched
         written_authorization = updated_config.get('authorization') or {}
-        oidc_callback_url = _oidc_callback_url(client, data_app.data_app_id, updated_config)
+        oidc_callback_url = await _oidc_callback_url(client, data_app.data_app_id, updated_config)
         # Without an explicit `slug`, a new slug is a never-deployed app's slug following its name.
         if new_slug is None:
             slug_hint = None
@@ -1680,7 +1680,7 @@ async def modify_python_js_data_app(
             repo_url=repo_url,
             branch=app_branch,
             links=links,
-            oidc_callback_url=_oidc_callback_url(
+            oidc_callback_url=await _oidc_callback_url(
                 client, data_app_resp.id, config.model_dump(by_alias=True, exclude_none=True)
             ),
         )
@@ -3378,11 +3378,22 @@ def _app_url(client: KeboolaClient, data_app_id: str, configuration: Mapping[str
     return _hub_url(client, data_app_id, slug)
 
 
-def _oidc_callback_url(client: KeboolaClient, data_app_id: str, configuration: Mapping[str, Any]) -> str | None:
-    """The OIDC redirect URI of a prod app; None for a draft (drafts cannot use OIDC) or without a slug."""
+async def _oidc_callback_url(client: KeboolaClient, data_app_id: str, configuration: Mapping[str, Any]) -> str | None:
+    """The OIDC redirect URI of a prod app; None for a draft (drafts cannot use OIDC) or without a slug.
+
+    A custom domain's callback URL wins. The sandboxes-service lists them before the `.hub` one, so a single
+    entry is the `.hub` URL of the app's current slug; the configuration's slug can be newer and then decides.
+    """
     slug = _config_slug(configuration)
     if not slug or _is_draft_config(configuration):
         return None
+    try:
+        urls = await client.data_science_client.get_auth_callback_urls(data_app_id)
+    except Exception as e:
+        LOG.info(f'Custom-domain callback URLs of data app {data_app_id} are unavailable: {e!r}')
+        urls = []
+    if isinstance(urls, list) and len(urls) > 1 and isinstance(urls[0], str):
+        return urls[0]
     return f'{_hub_url(client, data_app_id, slug)}/_proxy/callback'
 
 

@@ -627,3 +627,28 @@ async def test_list_app_runs_filters_by_deployment() -> None:
     client.get.assert_awaited_once_with(
         endpoint='v2/apps/app-1/runs', params={'limit': 1, 'offset': 0, 'deploymentId': 'dep-2'}
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('response', 'expected'),
+    [
+        (
+            {
+                'enabled': True,
+                'authCallbackUrls': ['https://a.example.com/_proxy/callback', 'https://h/_proxy/callback'],
+            },
+            ['https://a.example.com/_proxy/callback', 'https://h/_proxy/callback'],
+        ),
+        ({'enabled': False}, []),
+        ({'authCallbackUrls': None}, []),
+        ({'authCallbackUrls': 'oops'}, []),
+        ({'authCallbackUrls': ['ok', 3]}, ['ok']),
+    ],
+)
+async def test_get_auth_callback_urls(response: dict, expected: list[str]) -> None:
+    client = DataScienceClient.create('https://api.example.com', token=None)
+    client.get = AsyncMock(return_value=response)  # type: ignore[assignment]
+
+    assert await client.get_auth_callback_urls('app-123') == expected
+    client.get.assert_awaited_once_with(endpoint='v2/apps/app-123/custom-domains')
